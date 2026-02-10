@@ -30,6 +30,12 @@ extern "C"
     CAP_E_INTERNAL = -100
   } cap_result_t;
 
+  typedef enum
+  {
+    CAP_MODE_SINGLE = 0,
+    CAP_MODE_CONTINUOUS = 1
+  } cap_mode_t;
+
   typedef void (*cap_video_cb_t)(
       const uint8_t *buf,
       int width,
@@ -43,7 +49,7 @@ extern "C"
   CAPSDK_API cap_result_t cap_init(cap_handle_t h, int width, int height);
   CAPSDK_API cap_result_t cap_uninit(cap_handle_t h);
 
-  CAPSDK_API cap_result_t cap_start_capture(cap_handle_t h, cap_video_cb_t cb, void *user);
+  CAPSDK_API cap_result_t cap_start_capture(cap_handle_t h, cap_mode_t mode, cap_video_cb_t cb, void *user);
   CAPSDK_API cap_result_t cap_stop_capture(cap_handle_t h);
 
 #ifdef __cplusplus

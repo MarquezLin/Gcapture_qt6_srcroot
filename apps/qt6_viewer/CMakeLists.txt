@@ -34,12 +34,20 @@ else()
   add_executable(qt6_viewer ${VIEWER_SOURCES})
 endif()
 
-# Optional backend: CaptureSDK.dll (loaded via LoadLibrary; no .lib required)
+# CaptureSDK backend (Windows): link against CaptureSDK.lib and use CaptureSDK.dll at runtime.
 if (WIN32)
   target_sources(qt6_viewer PRIVATE
     capturesdk/capture_sdk_source.h
     capturesdk/capture_sdk_source.cpp
   )
+
+  # Import library
+  set(CAPTURESDK_LIB "${CMAKE_CURRENT_SOURCE_DIR}/third_party/capturesdk/lib/x64/CaptureSDK.lib")
+  if (EXISTS "${CAPTURESDK_LIB}")
+    target_link_libraries(qt6_viewer PRIVATE "${CAPTURESDK_LIB}")
+  else()
+    message(FATAL_ERROR "CaptureSDK.lib not found: ${CAPTURESDK_LIB}")
+  endif()
 endif()
 
 # Includes
@@ -92,13 +100,18 @@ add_custom_command(TARGET qt6_viewer POST_BUILD
     $<TARGET_FILE_DIR:qt6_viewer>
 )
 
-# Copy optional CaptureSDK.dll next to qt6_viewer.exe
+# Copy CaptureSDK.dll next to qt6_viewer.exe (Windows)
 if (WIN32)
-  add_custom_command(TARGET qt6_viewer POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/capturesdk/bin/CaptureSDK.dll
-      $<TARGET_FILE_DIR:qt6_viewer>
-  )
+  set(CAPTURESDK_DLL "${CMAKE_CURRENT_SOURCE_DIR}/third_party/capturesdk/bin/CaptureSDK.dll")
+  if (EXISTS "${CAPTURESDK_DLL}")
+    add_custom_command(TARGET qt6_viewer POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CAPTURESDK_DLL}"
+        $<TARGET_FILE_DIR:qt6_viewer>
+    )
+  else()
+    message(WARNING "CaptureSDK.dll not found: ${CAPTURESDK_DLL} (skip copy)")
+  endif()
 endif()
 
 # Optional: copy external edid-decode.exe next to qt6_viewer.exe
