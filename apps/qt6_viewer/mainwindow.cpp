@@ -209,7 +209,7 @@ void MainWindow::onStart()
 #ifdef _WIN32
     if (backend == 100)
     {
-        usingCaptureSdk_ = capSdk_ && capSdk_->start(0, 0);
+        usingCaptureSdk_ = capSdk_ && capSdk_->start(1920, 1080);
         if (!usingCaptureSdk_)
         {
             QMessageBox::warning(this, "CaptureSDK",

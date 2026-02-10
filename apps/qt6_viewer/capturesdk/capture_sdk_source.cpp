@@ -1,4 +1,6 @@
 #include "capture_sdk_source.h"
+#include <QDebug>
+#include <QThread>
 
 // Uses linked CaptureSDK API (capture_sdk.h)
 
@@ -57,21 +59,16 @@ bool CaptureSdkSource::start(int width, int height)
     if (h < 0) h = 0;
 
     cap_result_t rc = cap_init(handle_, w, h);
+    qDebug() << "[cap] init ret=" << rc;
     if (rc != CAP_OK)
     {
-        // Fallback: a sane default if SDK doesn't accept 0,0.
-        if (w == 0 && h == 0)
-            rc = cap_init(handle_, 1920, 1080);
-
-        if (rc != CAP_OK)
-        {
-            setError(QStringLiteral("cap_init failed (%1)").arg((int)rc));
-            return false;
-        }
+        setError(QStringLiteral("cap_init failed (%1)").arg((int)rc));
+        return false;
     }
 
     // Use continuous mode for live preview.
     rc = cap_start_capture(handle_, CAP_MODE_CONTINUOUS, &CaptureSdkSource::s_video_cb, this);
+    qDebug() << "[cap] start ret=" << rc;
     if (rc != CAP_OK)
     {
         setError(QStringLiteral("cap_start_capture failed (%1)").arg((int)rc));
@@ -100,17 +97,27 @@ void CaptureSdkSource::stop()
     handle_ = nullptr;
 }
 
-void CaptureSdkSource::s_video_cb(const uint8_t *buf,
-                                 int width,
-                                 int height,
-                                 int bytes_per_pixel,
-                                 void *user)
+void __stdcall CaptureSdkSource::s_video_cb(const uint8_t *buf,
+                                            int width,
+                                            int height,
+                                            int bytes_per_pixel,
+                                            void *user)
 {
+    static std::atomic<uint64_t> cbCount{0};
+    auto n = ++cbCount;
+
+    qDebug() << "[cap] video_cb n=" << n
+             << " w=" << width << " h=" << height
+             << " bpp=" << bytes_per_pixel
+             << " buf=" << (const void*)buf;
+
     auto *self = reinterpret_cast<CaptureSdkSource *>(user);
     if (!self)
         return;
+
     self->onVideo(buf, width, height, bytes_per_pixel);
 }
+
 
 void CaptureSdkSource::onVideo(const uint8_t *buf, int width, int height, int bpp)
 {

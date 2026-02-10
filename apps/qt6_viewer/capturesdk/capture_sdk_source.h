@@ -38,11 +38,11 @@ signals:
 private:
     void setError(const QString &msg);
 
-    static void s_video_cb(const uint8_t *buf,
-                           int width,
-                           int height,
-                           int bytes_per_pixel,
-                           void *user);
+static void __stdcall s_video_cb(const uint8_t *buf,
+                                 int width,
+                                 int height,
+                                 int bytes_per_pixel,
+                                 void *user);
     void onVideo(const uint8_t *buf, int width, int height, int bpp);
 
     cap_handle_t handle_ = nullptr;
