@@ -1,5 +1,9 @@
 /build/
 /bin/
+!/third_party/
+!/third_party/capturesdk/
+!/third_party/capturesdk/bin/
+!/third_party/capturesdk/bin/CaptureSDK.dll
 /lib/
 
 # Qt Creator / CMake
