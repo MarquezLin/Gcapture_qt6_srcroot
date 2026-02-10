@@ -1,0 +1,23 @@
+LIBRARY gcapture
+EXPORTS
+    gcap_enumerate
+    gcap_open
+    gcap_set_profile
+    gcap_set_buffers
+    gcap_set_callbacks
+    gcap_start
+    gcap_start_recording
+    gcap_stop_recording
+    gcap_enumerate_audio_devices
+    gcap_set_recording_audio_device
+    gcap_set_backend
+    gcap_set_d3d_adapter
+    gcap_get_device_props
+    gcap_get_signal_status
+    gcap_set_processing
+    gcap_stop
+    gcap_close
+    gcap_strerror
+    gcap_get_audio_device_count
+    gcap_enum_audio_devices
+

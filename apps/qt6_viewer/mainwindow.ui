@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>800</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QGridLayout" name="gridLayout">
+    <item row="0" column="0" colspan="2">
+     <widget class="QComboBox" name="comboDevice"/>
+    </item>
+    <item row="0" column="2">
+     <widget class="QPushButton" name="btnStart">
+      <property name="text">
+       <string>Start</string>
+      </property>
+     </widget>
+    </item>
+    <item row="1" column="2">
+     <widget class="QPushButton" name="btnShowEdid">
+      <property name="text">
+       <string>EDID</string>
+      </property>
+     </widget>
+    </item>
+    <item row="4" column="0" colspan="5">
+     <widget class="QLabel" name="labelView">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
+      <property name="text">
+       <string/>
+      </property>
+     </widget>
+    </item>
+    <item row="2" column="0" colspan="5">
+     <widget class="QLabel" name="labelinfo1">
+      <property name="text">
+       <string>info1</string>
+      </property>
+     </widget>
+    </item>
+    <item row="1" column="4">
+     <widget class="QPushButton" name="btnRecord">
+      <property name="enabled">
+       <bool>true</bool>
+      </property>
+      <property name="text">
+       <string>Record</string>
+      </property>
+     </widget>
+    </item>
+    <item row="1" column="1">
+     <widget class="QComboBox" name="comboGpu"/>
+    </item>
+    <item row="1" column="0">
+     <widget class="QComboBox" name="comboBackend"/>
+    </item>
+    <item row="1" column="3">
+     <widget class="QPushButton" name="btnSnapshot">
+      <property name="text">
+       <string>Snapshot</string>
+      </property>
+     </widget>
+    </item>
+    <item row="0" column="3">
+     <widget class="QPushButton" name="btnStop">
+      <property name="text">
+       <string>Stop</string>
+      </property>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>800</width>
+     <height>21</height>
+    </rect>
+   </property>
+   <widget class="QMenu" name="menuView">
+    <property name="title">
+     <string>View</string>
+    </property>
+    <addaction name="actionDebugLog"/>
+    <addaction name="actionInputInfo"/>
+    <addaction name="actionDisplayInfo"/>
+   </widget>
+   <widget class="QMenu" name="menuOpen">
+    <property name="title">
+     <string>Open</string>
+    </property>
+    <addaction name="actionOpenRecordFolder"/>
+    <addaction name="actionOpenLogFolder"/>
+    <addaction name="actionOpenSnapshot"/>
+   </widget>
+   <addaction name="menuView"/>
+   <addaction name="menuOpen"/>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+  <action name="actionDebugLog">
+   <property name="text">
+    <string>Debug Log</string>
+   </property>
+  </action>
+  <action name="actionOpenLogFolder">
+   <property name="text">
+    <string>Log Folder</string>
+   </property>
+  </action>
+  <action name="actionInputInfo">
+   <property name="text">
+    <string>Input Info</string>
+   </property>
+  </action>
+  <action name="actionOpenSnapshot">
+   <property name="text">
+    <string>Snapshot Folder</string>
+   </property>
+  </action>
+  <action name="actionDisplayInfo">
+   <property name="text">
+    <string>Display Info</string>
+   </property>
+  </action>
+  <action name="actionOpenRecordFolder">
+   <property name="text">
+    <string>Record folder</string>
+   </property>
+  </action>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

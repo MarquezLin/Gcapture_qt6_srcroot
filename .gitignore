@@ -1,0 +1,37 @@
+/build/
+/bin/
+/lib/
+
+# Qt Creator / CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.ninja
+*.ninja_deps
+*.ninja_log
+
+# Visual Studio / MSVC
+*.obj
+*.exe
+*.pdb
+*.user
+*.aps
+*.pch
+*.vspscc
+*_i.c
+*_p.c
+*.ncb
+*.suo
+*.tlb
+*.tlh
+*.bak
+*.cache
+*.ilk
+*.log
+
+# Local build folders
+/apps/qt6_viewer/build/
+
+# Third-party submodules (optional)
+/third_party/edid-decode
