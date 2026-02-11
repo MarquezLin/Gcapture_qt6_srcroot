@@ -272,6 +272,28 @@ extern "C"
         return h->mgr.setProcessing(*opts);
     }
 
+    GCAP_API gcap_status_t gcap_set_procamp(gcap_handle h, const gcap_procamp_t *p)
+    {
+        if (!h)
+            return GCAP_EINVAL;
+
+        // nullptr means reset to neutral
+        gcap_procamp_t v{};
+        if (p)
+        {
+            v = *p;
+        }
+        else
+        {
+            v.brightness = 128;
+            v.contrast = 128;
+            v.hue = 128;
+            v.saturation = 128;
+            v.sharpness = 128;
+        }
+        return h->mgr.setProcAmp(v);
+    }
+
     GCAP_API void gcap_set_backend(int backend)
     {
         CaptureManager::setBackendInt(backend);

@@ -15,6 +15,7 @@ EXPORTS
     gcap_get_device_props
     gcap_get_signal_status
     gcap_set_processing
+    gcap_set_procamp
     gcap_stop
     gcap_close
     gcap_strerror

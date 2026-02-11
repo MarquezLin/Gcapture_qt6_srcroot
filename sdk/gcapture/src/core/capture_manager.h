@@ -84,6 +84,13 @@ struct ICaptureProvider
         (void)opts;
         return false;
     }
+
+    // --- ProcAmp ---
+    virtual bool setProcAmp(const gcap_procamp_t &p)
+    {
+        (void)p;
+        return false;
+    }
 };
 
 /**
@@ -113,6 +120,7 @@ public:
     gcap_status_t getDeviceProps(gcap_device_props_t &out);
     gcap_status_t getSignalStatus(gcap_signal_status_t &out);
     gcap_status_t setProcessing(const gcap_processing_opts_t &opts);
+    gcap_status_t setProcAmp(const gcap_procamp_t &p);
 
     static void setBackendInt(int v);
     static void setD3dAdapterInt(int index);

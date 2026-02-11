@@ -253,6 +253,19 @@ bool WinMFProvider::setProcessing(const gcap_processing_opts_t &opts)
     return false;
 }
 
+bool WinMFProvider::setProcAmp(const gcap_procamp_t &p)
+{
+    // Clamp to 0..255 just in case caller passes out-of-range.
+    auto clamp255 = [](int v) -> int { return std::clamp(v, 0, 255); };
+
+    procamp_.brightness = clamp255(p.brightness);
+    procamp_.contrast = clamp255(p.contrast);
+    procamp_.hue = clamp255(p.hue);
+    procamp_.saturation = clamp255(p.saturation);
+    procamp_.sharpness = clamp255(p.sharpness);
+    return true;
+}
+
 // ---- logging helpers (for negotiated media type / stride debug) ----
 static const char *mf_subtype_name(const GUID &g)
 {
@@ -1218,9 +1231,52 @@ Texture2D texY   : register(t0);
 Texture2D texUV  : register(t1);
 SamplerState samL: register(s0);
 
+
+cbuffer ProcAmp : register(b0)
+{
+    uint  width;
+    uint  height;
+    float invW;
+    float invH;
+
+    float br;     // brightness offset (normalized, about [-0.5..0.5])
+    float ct;     // contrast factor (1.0 = neutral)
+    float sat;    // saturation factor (1.0 = neutral)
+    float hueSin; // sin(hue)
+
+    float hueCos;   // cos(hue)
+    float sharpAmt; // [-1..+1], 0 = neutral
+    float pad0;
+    float pad1;
+};
+
+static float3 apply_rgb_procamp(float3 rgb)
+{
+    // contrast + brightness
+    rgb = (rgb - 0.5) * ct + 0.5 + br;
+
+    // saturation
+    float l = dot(rgb, float3(0.299, 0.587, 0.114));
+    rgb = lerp(float3(l, l, l), rgb, sat);
+
+    return saturate(rgb);
+}
+
+static float2 rotate_uv(float2 uv01)
+{
+    // uv01 is 0..1, convert to signed around 0
+    float2 uv = uv01 - 0.5;
+    float u = uv.x;
+    float v = uv.y;
+    float u2 = u * hueCos - v * hueSin;
+    float v2 = u * hueSin + v * hueCos;
+    return float2(u2, v2) + 0.5;
+}
+
+
 float3 yuv_to_rgb709(float y, float u, float v)
 {
-    // y,u,v already normalized 0..1, assume limited->full & BT.709
+    // y,u,v are normalized 0..1, assume limited->full & BT.709
     y = y * 255.0;
     u = (u - 0.5) * 255.0;
     v = (v - 0.5) * 255.0;
@@ -1230,14 +1286,31 @@ float3 yuv_to_rgb709(float y, float u, float v)
     float r = 1.164383 * c + 1.792741 * e;
     float g = 1.164383 * c - 0.213249 * d - 0.532909 * e;
     float b = 1.164383 * c + 2.112402 * d;
-    return saturate(float3(r,g,b)/255.0);
+    return float3(r,g,b)/255.0;
+}
+
+float sampleY(float2 uv)
+{
+    return texY.Sample(samL, uv).r;
 }
 
 float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
 {
-    float y  = texY .Sample(samL, uv).r;
-    float2 uv2= texUV.Sample(samL, uv).rg;
+    // ---- Sharpness on luma (Y) via small unsharp mask ----
+    float yC = sampleY(uv);
+    float yL = sampleY(uv + float2(-invW, 0));
+    float yR = sampleY(uv + float2( invW, 0));
+    float yU = sampleY(uv + float2(0, -invH));
+    float yD = sampleY(uv + float2(0,  invH));
+
+    float blur = (yC*4.0 + yL + yR + yU + yD) / 8.0;
+    float y  = saturate(yC + sharpAmt * (yC - blur));
+
+    float2 uv2 = texUV.Sample(samL, uv).rg;
+    uv2 = rotate_uv(uv2);
+
     float3 rgb = yuv_to_rgb709(y, uv2.x, uv2.y);
+    rgb = apply_rgb_procamp(rgb);
     return float4(rgb, 1.0);
 }
 )";
@@ -1247,6 +1320,49 @@ Texture2D<uint>  texY16   : register(t0);
 Texture2D<uint2> texUV16  : register(t1);
 SamplerState samL: register(s0);
 
+
+cbuffer ProcAmp : register(b0)
+{
+    uint  width;
+    uint  height;
+    float invW;
+    float invH;
+
+    float br;     // brightness offset (normalized, about [-0.5..0.5])
+    float ct;     // contrast factor (1.0 = neutral)
+    float sat;    // saturation factor (1.0 = neutral)
+    float hueSin; // sin(hue)
+
+    float hueCos;   // cos(hue)
+    float sharpAmt; // [-1..+1], 0 = neutral
+    float pad0;
+    float pad1;
+};
+
+static float3 apply_rgb_procamp(float3 rgb)
+{
+    // contrast + brightness
+    rgb = (rgb - 0.5) * ct + 0.5 + br;
+
+    // saturation
+    float l = dot(rgb, float3(0.299, 0.587, 0.114));
+    rgb = lerp(float3(l, l, l), rgb, sat);
+
+    return saturate(rgb);
+}
+
+static float2 rotate_uv(float2 uv01)
+{
+    // uv01 is 0..1, convert to signed around 0
+    float2 uv = uv01 - 0.5;
+    float u = uv.x;
+    float v = uv.y;
+    float u2 = u * hueCos - v * hueSin;
+    float v2 = u * hueSin + v * hueCos;
+    return float2(u2, v2) + 0.5;
+}
+
+
 float3 yuv_to_rgb709(float y, float u, float v)
 {
     y = y * 255.0;
@@ -1258,17 +1374,38 @@ float3 yuv_to_rgb709(float y, float u, float v)
     float r = 1.164383 * c + 1.792741 * e;
     float g = 1.164383 * c - 0.213249 * d - 0.532909 * e;
     float b = 1.164383 * c + 2.112402 * d;
-    return saturate(float3(r,g,b)/255.0);
+    return float3(r,g,b)/255.0;
+}
+
+float loadY(int2 ip)
+{
+    ip.x = clamp(ip.x, 0, (int)width - 1);
+    ip.y = clamp(ip.y, 0, (int)height - 1);
+    uint yy = texY16.Load(int3(ip, 0)).r;
+    return (float)((yy >> 6) & 1023) / 1023.0;
 }
 
 float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
 {
-    uint yy = texY16.Load(int3(pos.xy,0)).r;
-    uint2 uvv= texUV16.Load(int3(pos.xy,0)).rg;
-    float y = (float)((yy >> 6) & 1023) / 1023.0;
+    int2 ip = int2(pos.xy);
+
+    // Sharpness on luma
+    float yC = loadY(ip);
+    float yL = loadY(ip + int2(-1, 0));
+    float yR = loadY(ip + int2( 1, 0));
+    float yU = loadY(ip + int2( 0,-1));
+    float yD = loadY(ip + int2( 0, 1));
+    float blur = (yC*4.0 + yL + yR + yU + yD) / 8.0;
+    float y = saturate(yC + sharpAmt * (yC - blur));
+
+    uint2 uvv = texUV16.Load(int3(ip, 0)).rg;
     float u = (float)((uvv.x >> 6) & 1023) / 1023.0;
     float v = (float)((uvv.y >> 6) & 1023) / 1023.0;
-    float3 rgb = yuv_to_rgb709(y, u, v);
+
+    float2 uv2 = rotate_uv(float2(u, v));
+
+    float3 rgb = yuv_to_rgb709(y, uv2.x, uv2.y);
+    rgb = apply_rgb_procamp(rgb);
     return float4(rgb, 1.0);
 }
 )";
@@ -1278,7 +1415,53 @@ float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
 //   R=Y0, G=U, B=Y1, A=V
 // texture width = ceil(w/2)
 static const char *g_ps_yuy2 = R"(
+// YUY2 (4:2:2 packed):
+// Each texel packs 2 pixels: R=Y0, G=U, B=Y1, A=V
+// texture width = ceil(w/2)
 Texture2D<uint4> texP : register(t0);
+
+
+cbuffer ProcAmp : register(b0)
+{
+    uint  width;
+    uint  height;
+    float invW;
+    float invH;
+
+    float br;     // brightness offset (normalized, about [-0.5..0.5])
+    float ct;     // contrast factor (1.0 = neutral)
+    float sat;    // saturation factor (1.0 = neutral)
+    float hueSin; // sin(hue)
+
+    float hueCos;   // cos(hue)
+    float sharpAmt; // [-1..+1], 0 = neutral
+    float pad0;
+    float pad1;
+};
+
+static float3 apply_rgb_procamp(float3 rgb)
+{
+    // contrast + brightness
+    rgb = (rgb - 0.5) * ct + 0.5 + br;
+
+    // saturation
+    float l = dot(rgb, float3(0.299, 0.587, 0.114));
+    rgb = lerp(float3(l, l, l), rgb, sat);
+
+    return saturate(rgb);
+}
+
+static float2 rotate_uv(float2 uv01)
+{
+    // uv01 is 0..1, convert to signed around 0
+    float2 uv = uv01 - 0.5;
+    float u = uv.x;
+    float v = uv.y;
+    float u2 = u * hueCos - v * hueSin;
+    float v2 = u * hueSin + v * hueCos;
+    return float2(u2, v2) + 0.5;
+}
+
 
 float3 yuv_to_rgb709(float y, float u, float v)
 {
@@ -1291,7 +1474,26 @@ float3 yuv_to_rgb709(float y, float u, float v)
     float r = 1.164383 * c + 1.792741 * e;
     float g = 1.164383 * c - 0.213249 * d - 0.532909 * e;
     float b = 1.164383 * c + 2.112402 * d;
-    return saturate(float3(r,g,b)/255.0);
+    return float3(r,g,b)/255.0;
+}
+
+float loadY(int x, int y)
+{
+    x = clamp(x, 0, (int)width - 1);
+    y = clamp(y, 0, (int)height - 1);
+    uint4 p = texP.Load(int3(x >> 1, y, 0));
+    uint yy = ((x & 1) != 0) ? p.b : p.r;
+    return (float)yy / 255.0;
+}
+
+float2 loadUV01(int x, int y)
+{
+    x = clamp(x, 0, (int)width - 1);
+    y = clamp(y, 0, (int)height - 1);
+    uint4 p = texP.Load(int3(x >> 1, y, 0));
+    float u = (float)p.g / 255.0;
+    float v = (float)p.a / 255.0;
+    return float2(u, v);
 }
 
 float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
@@ -1300,42 +1502,85 @@ float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
     int px = ip.x;
     int py = ip.y;
 
-    // 每兩個像素共用一組 U/V
-    uint4 p = texP.Load(int3(px >> 1, py, 0)); // 0..255
-    float y = ((px & 1) != 0 ? p.b : p.r) / 255.0;
-    float u = (p.g / 255.0);
-    float v = (p.a / 255.0);
+    // Sharpness on luma
+    float yC = loadY(px, py);
+    float yL = loadY(px - 1, py);
+    float yR = loadY(px + 1, py);
+    float yU = loadY(px, py - 1);
+    float yD = loadY(px, py + 1);
+    float blur = (yC*4.0 + yL + yR + yU + yD) / 8.0;
+    float y = saturate(yC + sharpAmt * (yC - blur));
 
-    float3 rgb = yuv_to_rgb709(y, u, v);
+    float2 uv01 = loadUV01(px, py);
+    uv01 = rotate_uv(uv01);
+
+    float3 rgb = yuv_to_rgb709(y, uv01.x, uv01.y);
+    rgb = apply_rgb_procamp(rgb);
     return float4(rgb, 1.0);
 }
 )";
 
 // NV12 → RGBA 的 Compute Shader 版本
 static const char *g_cs_nv12 = R"(
-Texture2D<float>  texY    : register(t0);  // Y 平面（R8_UNORM → 0..1）
-Texture2D<float2> texUV   : register(t1);  // UV 平面（R8G8_UNORM → 0..1）
-RWTexture2D<float4> texOut : register(u0); // 輸出 RGBA8
+Texture2D<float>   texY    : register(t0);
+Texture2D<float2>  texUV   : register(t1);
+RWTexture2D<float4> texOut : register(u0);
 
-cbuffer Params : register(b0)
+cbuffer ProcAmp : register(b0)
 {
-    uint width;
-    uint height;
+    uint  width;
+    uint  height;
+    float invW;
+    float invH;
+
+    float br;
+    float ct;
+    float sat;
+    float hueSin;
+
+    float hueCos;
+    float sharpAmt;
+    float pad0;
+    float pad1;
 };
+
+static float3 apply_rgb_procamp(float3 rgb)
+{
+    rgb = (rgb - 0.5) * ct + 0.5 + br;
+    float l = dot(rgb, float3(0.299, 0.587, 0.114));
+    rgb = lerp(float3(l,l,l), rgb, sat);
+    return saturate(rgb);
+}
+
+static float2 rotate_uv(float2 uv01)
+{
+    float2 uv = uv01 - 0.5;
+    float u = uv.x;
+    float v = uv.y;
+    float u2 = u * hueCos - v * hueSin;
+    float v2 = u * hueSin + v * hueCos;
+    return float2(u2, v2) + 0.5;
+}
 
 [numthreads(16, 16, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
 {
     uint x = tid.x;
     uint y = tid.y;
+    if (x >= width || y >= height) return;
 
-    if (x >= width || y >= height)
-        return;
+    float yC = texY.Load(int3(x, y, 0));
+    float yL = texY.Load(int3((int)max((int)x - 1, 0), (int)y, 0));
+    float yR = texY.Load(int3((int)min((int)x + 1, (int)width - 1), (int)y, 0));
+    float yU = texY.Load(int3((int)x, (int)max((int)y - 1, 0), 0));
+    float yD = texY.Load(int3((int)x, (int)min((int)y + 1, (int)height - 1), 0));
+    float blur = (yC*4.0 + yL + yR + yU + yD) / 8.0;
+    float yNorm = saturate(yC + sharpAmt * (yC - blur));
 
-    // 讀取 Y / UV（NV12：2x2 共用一組 UV）
-    float  yNorm = texY .Load(int3(x, y, 0));         // 0..1
-    float2 uvNorm= texUV.Load(int3(x / 2, y / 2, 0)); // 0..1
+    float2 uvNorm = texUV.Load(int3(x / 2, y / 2, 0));
+    uvNorm = rotate_uv(uvNorm);
 
+    // Convert to RGB (BT.709 limited->full)
     float Y = yNorm * 255.0;
     float U = (uvNorm.x - 0.5) * 255.0;
     float V = (uvNorm.y - 0.5) * 255.0;
@@ -1349,7 +1594,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     float b = 1.164383 * c + 2.112402 * d;
 
     float3 rgb = float3(r, g, b) / 255.0;
-    rgb = saturate(rgb);
+    rgb = apply_rgb_procamp(rgb);
 
     texOut[uint2(x, y)] = float4(rgb, 1.0);
 }
@@ -1411,6 +1656,19 @@ bool WinMFProvider::create_shaders_and_states()
     ss.AddressU = ss.AddressV = ss.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     if (FAILED(d3d_->CreateSamplerState(&ss, &samp_)))
         return false;
+
+    // ProcAmp constant buffer (shared by PS/CS). Layout must match shader cbuffer Params.
+    if (!cs_params_)
+    {
+        D3D11_BUFFER_DESC cbd{};
+        cbd.ByteWidth = 64; // 48 bytes used, round up to 64
+        cbd.Usage = D3D11_USAGE_DYNAMIC;
+        cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(d3d_->CreateBuffer(&cbd, nullptr, &cs_params_)))
+            return false;
+    }
+
     return true;
 }
 
@@ -1557,6 +1815,58 @@ bool WinMFProvider::render_yuv_to_rgba(ID3D11Texture2D *yuvTex)
         (cur_subtype_ == MFVideoFormat_NV12)   ? ps_nv12_.Get()
         : (cur_subtype_ == MFVideoFormat_P010) ? ps_p010_.Get()
                                                : ps_yuy2_.Get();
+
+    // 更新 ProcAmp constant buffer（width/height + B/C/H/S/Sharp）
+    if (cs_params_)
+    {
+        struct CB
+        {
+            uint32_t width;
+            uint32_t height;
+            float invW;
+            float invH;
+            float brightness;
+            float contrast;
+            float saturation;
+            float hueSin;
+            float hueCos;
+            float sharpAmount;
+            float pad0;
+            float pad1;
+        } cb;
+
+        cb.width = (uint32_t)cur_w_;
+        cb.height = (uint32_t)cur_h_;
+        cb.invW = (cur_w_ > 0) ? (1.0f / (float)cur_w_) : 0.0f;
+        cb.invH = (cur_h_ > 0) ? (1.0f / (float)cur_h_) : 0.0f;
+
+        cb.brightness = ((float)procamp_.brightness - 128.0f) / 128.0f * 0.5f;
+        cb.contrast = (float)procamp_.contrast / 128.0f;
+        cb.saturation = (float)procamp_.saturation / 128.0f;
+
+        const float ang = ((float)procamp_.hue - 128.0f) / 128.0f * 3.14159265f;
+        cb.hueSin = sinf(ang);
+        cb.hueCos = cosf(ang);
+
+        cb.sharpAmount = ((float)procamp_.sharpness - 128.0f) / 128.0f;
+        cb.pad0 = cb.pad1 = 0.0f;
+
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        HRESULT hrMap = ctx_->Map(cs_params_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        if (SUCCEEDED(hrMap))
+        {
+            memcpy(mapped.pData, &cb, sizeof(cb));
+            ctx_->Unmap(cs_params_.Get(), 0);
+        }
+    }
+
+    // Bind ProcAmp constant buffer to PS(b0)
+    if (cs_params_)
+    {
+        ID3D11Buffer *cb0[1] = {cs_params_.Get()};
+        ctx_->PSSetConstantBuffers(0, 1, cb0);
+    }
+
     ctx_->PSSetShader(ps, nullptr, 0);
 
     if (cur_subtype_ == MFVideoFormat_YUY2)
@@ -1814,8 +2124,16 @@ void WinMFProvider::loop()
                 if (cpu_argb_.size() < needed)
                     cpu_argb_.resize(needed);
 
+                // CPU conversion path supports ProcAmp (Brightness/Contrast/Hue/Saturation/Sharpness)
+                gcap::ProcAmpParams pp;
+                pp.brightness = procamp_.brightness;
+                pp.contrast = procamp_.contrast;
+                pp.hue = procamp_.hue;
+                pp.saturation = procamp_.saturation;
+                pp.sharpness = procamp_.sharpness;
+
                 gcap::nv12_to_argb(y, uv, cur_w_, cur_h_, yStride, uvStride,
-                                   cpu_argb_.data(), cur_w_ * 4);
+                                   cpu_argb_.data(), cur_w_ * 4, pp);
 
                 f.format = GCAP_FMT_ARGB;
                 f.data[0] = cpu_argb_.data();
@@ -1833,8 +2151,15 @@ void WinMFProvider::loop()
                 if (cpu_argb_.size() < needed)
                     cpu_argb_.resize(needed);
 
+                gcap::ProcAmpParams pp;
+                pp.brightness = procamp_.brightness;
+                pp.contrast = procamp_.contrast;
+                pp.hue = procamp_.hue;
+                pp.saturation = procamp_.saturation;
+                pp.sharpness = procamp_.sharpness;
+
                 gcap::yuy2_to_argb(yuy2, cur_w_, cur_h_, yuy2Stride,
-                                   cpu_argb_.data(), cur_w_ * 4);
+                                   cpu_argb_.data(), cur_w_ * 4, pp);
 
                 f.format = GCAP_FMT_ARGB;
                 f.data[0] = cpu_argb_.data();
@@ -2319,18 +2644,22 @@ bool WinMFProvider::ensure_compute_shader()
         return false;
     }
 
-    // constant buffer：存 width/height
-    D3D11_BUFFER_DESC bd{};
-    bd.ByteWidth = sizeof(uint32_t) * 4;
-    bd.Usage = D3D11_USAGE_DYNAMIC;
-    bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-
-    hr = d3d_->CreateBuffer(&bd, nullptr, &cs_params_);
-    if (FAILED(hr))
+    // ProcAmp constant buffer is created in create_shaders_and_states().
+    // Keep a fallback here just in case.
+    if (!cs_params_)
     {
-        MDBG("DXGI: CreateBuffer(cs_params_) failed", hr);
-        return false;
+        D3D11_BUFFER_DESC bd{};
+        bd.ByteWidth = 64; // 48 bytes used, round up to 64
+        bd.Usage = D3D11_USAGE_DYNAMIC;
+        bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+        hr = d3d_->CreateBuffer(&bd, nullptr, &cs_params_);
+        if (FAILED(hr))
+        {
+            MDBG("DXGI: CreateBuffer(cs_params_) failed", hr);
+            return false;
+        }
     }
 
     return true;
@@ -2357,7 +2686,45 @@ bool WinMFProvider::render_nv12_to_rgba_cs(ID3D11ShaderResourceView *srvY,
         }
     }
 
-    // 更新 constant buffer（寬、高）
+    // 更新 ProcAmp constant buffer（width/height + B/C/H/S/Sharp）
+    struct ProcAmpCB
+    {
+        uint32_t width;
+        uint32_t height;
+        float invW;
+        float invH;
+        float brightness;   // [-0.5, +0.5] in RGB domain
+        float contrast;     // [0..2]
+        float saturation;   // [0..2]
+        float hueSin;
+        float hueCos;
+        float sharpAmount;  // [-1..+1]
+        float pad0;
+        float pad1;
+    };
+
+    const float invW = (cur_w_ > 0) ? (1.0f / float(cur_w_)) : 0.0f;
+    const float invH = (cur_h_ > 0) ? (1.0f / float(cur_h_)) : 0.0f;
+    const float br = (float(procamp_.brightness) - 128.0f) / 128.0f * 0.5f;
+    const float ct = float(procamp_.contrast) / 128.0f;
+    const float sat = float(procamp_.saturation) / 128.0f;
+    const float ang = (float(procamp_.hue) - 128.0f) / 128.0f * 3.1415926535f;
+    const float hs = sinf(ang);
+    const float hc = cosf(ang);
+    const float sh = (float(procamp_.sharpness) - 128.0f) / 128.0f; // -1..+1
+
+    ProcAmpCB cb{};
+    cb.width = static_cast<uint32_t>(cur_w_);
+    cb.height = static_cast<uint32_t>(cur_h_);
+    cb.invW = invW;
+    cb.invH = invH;
+    cb.brightness = br;
+    cb.contrast = ct;
+    cb.saturation = sat;
+    cb.hueSin = hs;
+    cb.hueCos = hc;
+    cb.sharpAmount = sh;
+
     D3D11_MAPPED_SUBRESOURCE mapped{};
     HRESULT hrMap = ctx_->Map(cs_params_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
     if (FAILED(hrMap))
@@ -2365,10 +2732,9 @@ bool WinMFProvider::render_nv12_to_rgba_cs(ID3D11ShaderResourceView *srvY,
         MDBG("DXGI: Map(cs_params_) failed", hrMap);
         return false;
     }
-    auto *p = reinterpret_cast<uint32_t *>(mapped.pData);
-    p[0] = static_cast<uint32_t>(cur_w_);
-    p[1] = static_cast<uint32_t>(cur_h_);
+    memcpy(mapped.pData, &cb, sizeof(cb));
     ctx_->Unmap(cs_params_.Get(), 0);
+
 
     ID3D11ShaderResourceView *srvs[2] = {srvY, srvUV};
     ID3D11UnorderedAccessView *uavs[1] = {rt_uav_.Get()};

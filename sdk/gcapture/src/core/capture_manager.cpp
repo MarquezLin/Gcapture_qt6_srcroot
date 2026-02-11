@@ -229,3 +229,10 @@ gcap_status_t CaptureManager::setProcessing(const gcap_processing_opts_t &opts)
         return GCAP_ENOTSUP;
     return provider_->setProcessing(opts) ? GCAP_OK : GCAP_ENOTSUP;
 }
+
+gcap_status_t CaptureManager::setProcAmp(const gcap_procamp_t &p)
+{
+    if (!provider_)
+        return GCAP_ENOTSUP;
+    return provider_->setProcAmp(p) ? GCAP_OK : GCAP_ENOTSUP;
+}
