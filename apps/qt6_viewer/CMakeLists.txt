@@ -29,7 +29,9 @@ set(VIEWER_SOURCES
 )
 
 if (QT_VERSION_MAJOR GREATER_EQUAL 6)
-  qt_add_executable(qt6_viewer MANUAL_FINALIZATION ${VIEWER_SOURCES})
+  qt_add_executable(qt6_viewer MANUAL_FINALIZATION ${VIEWER_SOURCES}
+    resources.qrc
+    app.rc)
 else()
   add_executable(qt6_viewer ${VIEWER_SOURCES})
 endif()

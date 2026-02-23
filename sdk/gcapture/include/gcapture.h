@@ -117,6 +117,19 @@ extern "C"
         gcap_range_t force_range; // unknown=auto
     } gcap_processing_opts_t;
 
+    // ----------------------------
+    // ProcAmp (Brightness/Contrast/Hue/Saturation/Sharpness)
+    // UI uses 0..255, where 128 is neutral.
+    // ----------------------------
+    typedef struct
+    {
+        int brightness; // 0..255, 128 neutral
+        int contrast;   // 0..255, 128 neutral
+        int hue;        // 0..255, 128 neutral
+        int saturation; // 0..255, 128 neutral
+        int sharpness;  // 0..255, 128 neutral
+    } gcap_procamp_t;
+
     typedef struct
     {
         int width, height;
@@ -165,6 +178,10 @@ extern "C"
     gcap_status_t gcap_get_device_props(gcap_handle h, gcap_device_props_t *out);
     gcap_status_t gcap_get_signal_status(gcap_handle h, gcap_signal_status_t *out);
     gcap_status_t gcap_set_processing(gcap_handle h, const gcap_processing_opts_t *opts);
+
+    // Apply ProcAmp on CPU conversion path (NV12/YUY2->ARGB).
+    // Passing nullptr resets to neutral.
+    GCAP_API gcap_status_t gcap_set_procamp(gcap_handle h, const gcap_procamp_t *p);
 
     // 回傳系統可用的 audio capture device 數量
     GCAP_API int gcap_get_audio_device_count(void);

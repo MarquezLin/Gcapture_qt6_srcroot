@@ -52,6 +52,43 @@ MainWindow::MainWindow(QWidget *parent)
     ui->actionDebugLog->setCheckable(true);
     ui->actionDebugLog->setChecked(false);
 
+    // ProcAmp dialog
+    m_currentProcAmp = {128, 128, 128, 128, 128};
+    if (ui->actionProcAmp)
+        connect(ui->actionProcAmp, &QAction::triggered, this, [this]()
+                {
+            // Create dialog lazily
+            if (!procampDlg_)
+            {
+                procampDlg_ = new ProcAmp(this);
+                procampDlg_->setWindowTitle(tr("ProcAmp"));
+                procampDlg_->setValues(m_currentProcAmp);
+
+                // Live preview.
+//                 connect(procampDlg_, &ProcAmp::valuesChanged, this, [this](const gcap_procamp_t& p) {
+//     if (h_) gcap_set_procamp(h_, &m_currentProcAmp);
+// });
+
+connect(procampDlg_, &ProcAmp::valuesChanged,
+        this,
+        [this](const gcap_procamp_t& p)
+{
+    m_currentProcAmp = p;
+
+    if (h_)
+        gcap_set_procamp(h_, &p);
+});
+            }
+
+            // Enable/disable based on backend support
+            const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
+            const bool supported = (backend == 0 || backend == 1); // WinMF CPU/GPU
+            procampDlg_->setControlsEnabled(supported);
+            procampDlg_->setValues(m_currentProcAmp);
+            procampDlg_->show();
+            procampDlg_->raise();
+            procampDlg_->activateWindow(); });
+
     ui->comboBackend->addItem("WinMF GPU", 1);
     ui->comboBackend->addItem("WinMF CPU", 0);
     // ui->comboBackend->addItem("DirectShow", 2);
@@ -238,6 +275,11 @@ void MainWindow::onStart()
     currentProfile_ = {};
     gcap_set_buffers(h_, 6, 0);
     gcap_set_callbacks(h_, &MainWindow::s_vcb, &MainWindow::s_ecb, this);
+
+    // Apply ProcAmp (WinMF GPU/CPU). Other backends may ignore it.
+    if (backend == 0 || backend == 1)
+        gcap_set_procamp(h_, &m_currentProcAmp);
+
     gcap_start(h_);
 }
 

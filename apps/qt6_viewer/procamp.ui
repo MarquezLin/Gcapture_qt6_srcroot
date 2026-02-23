@@ -22,14 +22,14 @@
     </widget>
    </item>
    <item row="0" column="1" colspan="2">
-    <widget class="QSlider" name="horizontalSlider">
+    <widget class="QSlider" name="sldBrightness">
      <property name="orientation">
       <enum>Qt::Orientation::Horizontal</enum>
      </property>
     </widget>
    </item>
    <item row="0" column="3">
-    <widget class="QLabel" name="label_6">
+    <widget class="QLabel" name="lblBrightnessVal">
      <property name="text">
       <string>128</string>
      </property>
@@ -43,14 +43,14 @@
     </widget>
    </item>
    <item row="1" column="1" colspan="2">
-    <widget class="QSlider" name="horizontalSlider_2">
+    <widget class="QSlider" name="sldContrast">
      <property name="orientation">
       <enum>Qt::Orientation::Horizontal</enum>
      </property>
     </widget>
    </item>
    <item row="1" column="3">
-    <widget class="QLabel" name="label_7">
+    <widget class="QLabel" name="lblContrastVal">
      <property name="text">
       <string>128</string>
      </property>
@@ -64,14 +64,14 @@
     </widget>
    </item>
    <item row="2" column="1" colspan="2">
-    <widget class="QSlider" name="horizontalSlider_3">
+    <widget class="QSlider" name="sldHue">
      <property name="orientation">
       <enum>Qt::Orientation::Horizontal</enum>
      </property>
     </widget>
    </item>
    <item row="2" column="3">
-    <widget class="QLabel" name="label_8">
+    <widget class="QLabel" name="lblHueVal">
      <property name="text">
       <string>128</string>
      </property>
@@ -85,14 +85,14 @@
     </widget>
    </item>
    <item row="3" column="1" colspan="2">
-    <widget class="QSlider" name="horizontalSlider_4">
+    <widget class="QSlider" name="sldSaturation">
      <property name="orientation">
       <enum>Qt::Orientation::Horizontal</enum>
      </property>
     </widget>
    </item>
    <item row="3" column="3">
-    <widget class="QLabel" name="label_9">
+    <widget class="QLabel" name="lblSaturationVal">
      <property name="text">
       <string>128</string>
      </property>
@@ -106,14 +106,14 @@
     </widget>
    </item>
    <item row="4" column="2">
-    <widget class="QSlider" name="horizontalSlider_5">
+    <widget class="QSlider" name="sldSharpness">
      <property name="orientation">
       <enum>Qt::Orientation::Horizontal</enum>
      </property>
     </widget>
    </item>
    <item row="4" column="3">
-    <widget class="QLabel" name="label_10">
+    <widget class="QLabel" name="lblSharpnessVal">
      <property name="text">
       <string>128</string>
      </property>

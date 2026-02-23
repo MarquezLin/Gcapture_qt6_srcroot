@@ -71,6 +71,7 @@ public:
     bool getDeviceProps(gcap_device_props_t &out) override;
     bool getSignalStatus(gcap_signal_status_t &out) override;
     bool setProcessing(const gcap_processing_opts_t &opts) override;
+    bool setProcAmp(const gcap_procamp_t &p) override;
 
     bool isUsingGpu() const { return use_dxgi_ && !cpu_path_; }
 
@@ -94,6 +95,10 @@ private:
     uint64_t last_pts_ns_ = 0;
     bool use_dxgi_ = false;
     bool cpu_path_ = true;
+
+    // ---- ProcAmp (CPU conversion path) ----
+    // Default is neutral (128).
+    gcap_procamp_t procamp_{128, 128, 128, 128, 128};
 
     // ---- MF objects ----
     ComPtr<IMFMediaSource> source_;

@@ -11,7 +11,11 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>MainWindow</string>
+   <string>Gigabyte</string>
+  </property>
+  <property name="windowIcon">
+   <iconset resource="resources.qrc">
+    <normaloff>:/new/prefix1/image/gigabyte.png</normaloff>:/new/prefix1/image/gigabyte.png</iconset>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QGridLayout" name="gridLayout">
@@ -100,6 +104,7 @@
     <addaction name="actionDebugLog"/>
     <addaction name="actionInputInfo"/>
     <addaction name="actionDisplayInfo"/>
+    <addaction name="actionProcAmp"/>
    </widget>
    <widget class="QMenu" name="menuOpen">
     <property name="title">
@@ -138,12 +143,19 @@
     <string>Display Info</string>
    </property>
   </action>
+  <action name="actionProcAmp">
+   <property name="text">
+    <string>ProcAmp</string>
+   </property>
+  </action>
   <action name="actionOpenRecordFolder">
    <property name="text">
     <string>Record folder</string>
    </property>
   </action>
  </widget>
- <resources/>
+ <resources>
+  <include location="resources.qrc"/>
+ </resources>
  <connections/>
 </ui>

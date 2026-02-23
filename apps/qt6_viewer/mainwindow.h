@@ -12,6 +12,7 @@
 #include <cstdint>
 #include "inputinfodialog.h"
 #include "displayinfodialog.h"
+#include "procamp.h"
 #include "info/capture_device_info.h"
 #include "info/display_output_info.h"
 
@@ -92,6 +93,8 @@ private:
 
     inputinfodialog *infoDlg_ = nullptr;
     DisplayInfoDialog *DpinfoDlg_ = nullptr;
+    ProcAmp *procampDlg_ = nullptr;
+    gcap_procamp_t m_currentProcAmp{};
     QString lastInfoText_;
     QString lastCapturePropsText_;
     CaptureDeviceInfo captureInfo_;
