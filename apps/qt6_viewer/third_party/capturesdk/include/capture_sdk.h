@@ -157,10 +157,13 @@ extern "C"
    * @param user User pointer forwarded to the callback.
    * @return CAP_OK on success; otherwise an error code.
    *
-   * @note In CAP_MODE_CONTINUOUS, the callback may be invoked from an internal
-   *       worker thread (implementation-dependent). Keep the callback lightweight.
+   * @note In CAP_MODE_CONTINUOUS, this SDK does not create internal threads.
+   *       The application must call cap_capture_step() repeatedly to pump frames.
+   *       The callback will be invoked in the caller thread of cap_capture_step().
    */
   CAPSDK_API cap_result_t cap_start_capture(cap_handle_t h, cap_mode_t mode, cap_video_cb_t cb, void *user);
+
+  CAPSDK_API cap_result_t cap_capture_step(cap_handle_t h);
 
   /**
    * @brief Stop capturing.

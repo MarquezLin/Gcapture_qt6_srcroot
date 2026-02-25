@@ -1,6 +1,11 @@
 #include "capture_sdk_source.h"
 #include <QDebug>
 #include <QThread>
+#include <chrono>
+#ifdef _WIN32
+  #include <windows.h>
+  #include <objbase.h>   // CoInitializeEx, CoUninitialize, COINIT_*
+#endif
 
 // Uses linked CaptureSDK API (capture_sdk.h)
 
@@ -77,6 +82,34 @@ bool CaptureSdkSource::start(int width, int height)
     }
 
     capturing_ = true;
+
+    // Threadless continuous mode: pump frames from an application-owned thread.
+    running_ = true;
+    pumpThread_ = std::thread([this]{
+#ifdef _WIN32
+    // 很多 capture pipeline (MF/DShow) 都是 COM 物件，thread 必須初始化 COM
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    qDebug() << "[cap] pump CoInitializeEx hr=0x" << Qt::hex << (uint)hr;
+#endif
+
+    uint64_t n = 0;
+    while (running_)
+    {
+        const cap_result_t stepRc = cap_capture_step(handle_);
+
+        if ((++n % 300) == 0) {
+            qDebug() << "[cap] step" << n << "rc=" << stepRc;
+        }
+
+        if (stepRc != CAP_OK)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+#ifdef _WIN32
+    if (SUCCEEDED(hr)) CoUninitialize();
+#endif
+});
+
     return true;
 }
 
@@ -87,11 +120,17 @@ void CaptureSdkSource::stop()
 
     if (capturing_)
     {
+        // Stop the pump thread first.
+        running_ = false;
+
         cap_stop_capture(handle_);
         capturing_ = false;
     }
 
     cap_uninit(handle_);
+
+    if (pumpThread_.joinable())
+        pumpThread_.join();
 
     cap_destroy(handle_);
     handle_ = nullptr;

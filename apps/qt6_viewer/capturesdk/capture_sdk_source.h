@@ -5,6 +5,8 @@
 #include <QMutex>
 #include <QString>
 #include <cstdint>
+#include <atomic>
+#include <thread>
 
 // Linked CaptureSDK API
 #include "capture_sdk.h"
@@ -13,7 +15,9 @@
 //
 // - Linked against CaptureSDK.lib (VS2022 x64).
 // - Requires CaptureSDK.dll at runtime (copied next to qt6_viewer.exe).
-// - SDK delivers frames via callback on an internal thread.
+// - In CAP_MODE_CONTINUOUS, this SDK is threadless: the app pumps frames by
+//   calling cap_capture_step(). The callback is invoked in the caller thread of
+//   cap_capture_step().
 // - Frames are copied into QImage and delivered via the frameReady() signal.
 class CaptureSdkSource : public QObject
 {
@@ -47,6 +51,9 @@ static void __stdcall s_video_cb(const uint8_t *buf,
 
     cap_handle_t handle_ = nullptr;
     bool capturing_ = false;
+
+    std::atomic<bool> running_{false};
+    std::thread pumpThread_;
 
     mutable QMutex mtx_;
     QString lastError_;
