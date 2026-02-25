@@ -10,6 +10,7 @@
 
 // Linked CaptureSDK API
 #include "capture_sdk.h"
+#include "capture_sdk_log.h"
 
 // A Qt-friendly wrapper for CaptureSDK.
 //
@@ -42,15 +43,19 @@ signals:
 private:
     void setError(const QString &msg);
 
-static void __stdcall s_video_cb(const uint8_t *buf,
-                                 int width,
-                                 int height,
-                                 int bytes_per_pixel,
-                                 void *user);
+    static void __stdcall s_video_cb(const uint8_t *buf,
+                                     int width,
+                                     int height,
+                                     int bytes_per_pixel,
+                                     void *user);
     void onVideo(const uint8_t *buf, int width, int height, int bpp);
 
     cap_handle_t handle_ = nullptr;
     bool capturing_ = false;
+
+    // Optional timeout-capable step API (resolved from the DLL at runtime).
+    using cap_capture_step_timeout_fn = cap_result_t (*)(cap_handle_t, int);
+    cap_capture_step_timeout_fn stepTimeout_ = nullptr;
 
     std::atomic<bool> running_{false};
     std::thread pumpThread_;

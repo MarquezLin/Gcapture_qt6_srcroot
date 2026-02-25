@@ -65,7 +65,10 @@ extern "C"
     CAP_E_OPEN_DEVICE = -3,
 
     /** Unspecified internal error. */
-    CAP_E_INTERNAL = -100
+    CAP_E_INTERNAL = -100,
+
+    /** Operation timed out (e.g., waiting for a frame/event). */
+    CAP_E_TIMEOUT = -101
   } cap_result_t;
 
   /**
@@ -175,6 +178,29 @@ extern "C"
    *       on the SDK implementation) or uninitialize via cap_uninit().
    */
   CAPSDK_API cap_result_t cap_stop_capture(cap_handle_t h);
+
+  /**
+   * @brief Pump one capture step.
+   *
+   * In CAP_MODE_CONTINUOUS, the SDK is threadless. The application must call this
+   * function repeatedly (typically from its own worker thread) to receive frames.
+   *
+   * @param h Handle created by cap_create().
+   * @return CAP_OK on success; otherwise an error code.
+   */
+  CAPSDK_API cap_result_t cap_capture_step(cap_handle_t h);
+
+  /**
+   * @brief Pump one capture step with timeout.
+   *
+   * This function waits up to @p timeout_ms for the next frame/event.
+   * If the timeout expires, it returns CAP_E_TIMEOUT.
+   *
+   * @param h          Handle created by cap_create().
+   * @param timeout_ms Timeout in milliseconds. Use 0 for non-blocking poll.
+   * @return CAP_OK on success; CAP_E_TIMEOUT on timeout; otherwise an error code.
+   */
+  CAPSDK_API cap_result_t cap_capture_step_timeout(cap_handle_t h, int timeout_ms);
 
 #ifdef __cplusplus
 }
