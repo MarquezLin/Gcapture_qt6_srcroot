@@ -125,6 +125,11 @@ private:
     ComPtr<IMFDXGIDeviceManager> dxgi_mgr_;
     UINT dxgi_token_ = 0;
 
+    // High precision intermediate target (scheme B stage 1)
+    ComPtr<ID3D11Texture2D> rt_fp16_;
+    ComPtr<ID3D11RenderTargetView> rtv_fp16_;
+    ComPtr<ID3D11ShaderResourceView> srv_fp16_;
+
     // Render target (RGBA8) + staging for readback
     ComPtr<ID3D11Texture2D> rt_rgba_;
     ComPtr<ID3D11RenderTargetView> rtv_rgba_;
@@ -148,6 +153,7 @@ private:
     ComPtr<ID3D11PixelShader> ps_nv12_;
     ComPtr<ID3D11PixelShader> ps_p010_;
     ComPtr<ID3D11PixelShader> ps_yuy2_;
+    ComPtr<ID3D11PixelShader> ps_fp16_to_rgba8_;
     ComPtr<ID3D11InputLayout> il_;
     ComPtr<ID3D11Buffer> vb_;
     ComPtr<ID3D11SamplerState> samp_;
@@ -176,7 +182,8 @@ private:
     // rendering
     bool ensure_rt_and_pipeline(int w, int h);
     bool create_shaders_and_states();
-    bool render_yuv_to_rgba(ID3D11Texture2D *yuvTex);
+    bool render_yuv_to_fp16(ID3D11Texture2D *yuvTex);
+    bool blit_fp16_to_rgba8();
     bool gpu_overlay_text(const wchar_t *text);
 
     // 確保 upload_yuv_ 尺寸 / format 正確

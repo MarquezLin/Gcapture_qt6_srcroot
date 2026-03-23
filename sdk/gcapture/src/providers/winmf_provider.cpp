@@ -773,6 +773,9 @@ void WinMFProvider::close()
     reader_.Reset();
     source_.Reset();
     d2d_bitmap_rt_.Reset();
+    srv_fp16_.Reset();
+    rtv_fp16_.Reset();
+    rt_fp16_.Reset();
     rtv_rgba_.Reset();
     rt_rgba_.Reset();
     rt_stage_.Reset();
@@ -787,6 +790,7 @@ void WinMFProvider::close()
     ps_nv12_.Reset();
     ps_p010_.Reset();
     ps_yuy2_.Reset();
+    ps_fp16_to_rgba8_.Reset();
     cs_nv12_.Reset();
     cs_params_.Reset();
     rt_uav_.Reset();
@@ -1599,10 +1603,28 @@ void main(uint3 tid : SV_DispatchThreadID)
 }
 )";
 
+
+static const char *g_ps_fp16_to_rgba8 = R"(
+Texture2D<float4> tex0 : register(t0);
+SamplerState samL : register(s0);
+
+struct PSIn
+{
+    float4 pos : SV_Position;
+    float2 uv  : TEXCOORD0;
+};
+
+float4 main(PSIn i) : SV_Target
+{
+    float4 c = tex0.Sample(samL, i.uv);
+    return saturate(c);
+}
+)";
+
 bool WinMFProvider::create_shaders_and_states()
 {
     // Compile shaders
-    ComPtr<ID3DBlob> vsb, psb1, psb2, psb3, err;
+    ComPtr<ID3DBlob> vsb, psb1, psb2, psb3, psb4, err;
     if (FAILED(D3DCompile(g_vs_src, strlen(g_vs_src), nullptr, nullptr, nullptr,
                           "main", "vs_5_0", 0, 0, &vsb, &err)))
         return false;
@@ -1632,6 +1654,12 @@ bool WinMFProvider::create_shaders_and_states()
                           "main", "ps_5_0", 0, 0, &psb3, &err)))
         return false;
     if (FAILED(d3d_->CreatePixelShader(psb3->GetBufferPointer(), psb3->GetBufferSize(), nullptr, &ps_yuy2_)))
+        return false;
+
+    if (FAILED(D3DCompile(g_ps_fp16_to_rgba8, strlen(g_ps_fp16_to_rgba8), nullptr, nullptr, nullptr,
+                          "main", "ps_5_0", 0, 0, &psb4, &err)))
+        return false;
+    if (FAILED(d3d_->CreatePixelShader(psb4->GetBufferPointer(), psb4->GetBufferSize(), nullptr, &ps_fp16_to_rgba8_)))
         return false;
 
     // Fullscreen quad (two triangles)
@@ -1671,31 +1699,45 @@ bool WinMFProvider::create_shaders_and_states()
     return true;
 }
 
+
 bool WinMFProvider::ensure_rt_and_pipeline(int w, int h)
 {
-    // RGBA RT
+    // 1) High precision intermediate target
     D3D11_TEXTURE2D_DESC td{};
     td.Width = w;
     td.Height = h;
     td.MipLevels = 1;
     td.ArraySize = 1;
-    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     td.SampleDesc = {1, 0};
     td.Usage = D3D11_USAGE_DEFAULT;
+    td.CPUAccessFlags = 0;
+    td.MiscFlags = 0;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    td.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+    if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &rt_fp16_)))
+        return false;
+    if (FAILED(d3d_->CreateRenderTargetView(rt_fp16_.Get(), nullptr, &rtv_fp16_)))
+        return false;
+    if (FAILED(d3d_->CreateShaderResourceView(rt_fp16_.Get(), nullptr, &srv_fp16_)))
+        return false;
+
+    // 2) RGBA8 target for overlay/readback/current compatibility
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
     if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &rt_rgba_)))
         return false;
     if (FAILED(d3d_->CreateRenderTargetView(rt_rgba_.Get(), nullptr, &rtv_rgba_)))
         return false;
 
-    // staging for readback
+    // 3) staging for readback
     td.BindFlags = 0;
     td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     td.Usage = D3D11_USAGE_STAGING;
     if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &rt_stage_)))
         return false;
 
-    // D2D target binding
+    // 4) D2D target stays on RGBA8 output
     ComPtr<IDXGISurface> surf;
     rt_rgba_.As(&surf);
     D2D1_BITMAP_PROPERTIES1 bp = {};
@@ -1753,7 +1795,7 @@ WinMFProvider::createSRV_P010(ID3D11Device *dev, ID3D11Texture2D *tex, bool uv)
     return s;
 }
 
-bool WinMFProvider::render_yuv_to_rgba(ID3D11Texture2D *yuvTex)
+bool WinMFProvider::render_yuv_to_fp16(ID3D11Texture2D *yuvTex)
 {
     if (!yuvTex)
         return false;
@@ -1886,7 +1928,7 @@ bool WinMFProvider::render_yuv_to_rgba(ID3D11Texture2D *yuvTex)
     ctx_->PSSetSamplers(0, 1, &ss);
 
     float clear[4] = {0, 0, 0, 1};
-    ID3D11RenderTargetView *rtv = rtv_rgba_.Get();
+    ID3D11RenderTargetView *rtv = rtv_fp16_.Get();
     // 設定 Viewport，否則 Draw 會跑在「沒有 viewport」的狀態下，畫面是 undefined（現在你看到的黑畫面＋D3D11 WARNING）
     D3D11_VIEWPORT vp{};
     vp.TopLeftX = 0.0f;
@@ -1911,6 +1953,50 @@ bool WinMFProvider::render_yuv_to_rgba(ID3D11Texture2D *yuvTex)
         ID3D11ShaderResourceView *nulls[2] = {nullptr, nullptr};
         ctx_->PSSetShaderResources(0, 2, nulls);
     }
+
+    return true;
+}
+
+
+bool WinMFProvider::blit_fp16_to_rgba8()
+{
+    if (!rtv_rgba_ || !srv_fp16_ || !vs_ || !ps_fp16_to_rgba8_)
+        return false;
+
+    UINT stride = sizeof(float) * 4, offset = 0;
+    ID3D11Buffer *pVB = vb_.Get();
+    ctx_->IASetVertexBuffers(0, 1, &pVB, &stride, &offset);
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx_->IASetInputLayout(il_.Get());
+
+    ID3D11RenderTargetView *rtv = rtv_rgba_.Get();
+    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+
+    D3D11_VIEWPORT vp{};
+    vp.TopLeftX = 0.0f;
+    vp.TopLeftY = 0.0f;
+    vp.Width = static_cast<FLOAT>(cur_w_);
+    vp.Height = static_cast<FLOAT>(cur_h_);
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    ctx_->RSSetViewports(1, &vp);
+
+    float clear[4] = {0, 0, 0, 1};
+    ctx_->ClearRenderTargetView(rtv_rgba_.Get(), clear);
+
+    ctx_->VSSetShader(vs_.Get(), nullptr, 0);
+    ctx_->PSSetShader(ps_fp16_to_rgba8_.Get(), nullptr, 0);
+
+    ID3D11ShaderResourceView *srvs[1] = {srv_fp16_.Get()};
+    ctx_->PSSetShaderResources(0, 1, srvs);
+
+    ID3D11SamplerState *ss = samp_.Get();
+    ctx_->PSSetSamplers(0, 1, &ss);
+
+    ctx_->Draw(6, 0);
+
+    ID3D11ShaderResourceView *nullSrv[1] = {nullptr};
+    ctx_->PSSetShaderResources(0, 1, nullSrv);
 
     return true;
 }
@@ -2454,9 +2540,15 @@ void WinMFProvider::loop()
         if (!yuvTex)
             continue;
 
-        if (!render_yuv_to_rgba(yuvTex.Get()))
+        if (!render_yuv_to_fp16(yuvTex.Get()))
         {
-            MDBG("DXGI: render_yuv_to_rgba failed", E_FAIL);
+            MDBG("DXGI: render_yuv_to_fp16 failed", E_FAIL);
+            continue;
+        }
+
+        if (!blit_fp16_to_rgba8())
+        {
+            MDBG("DXGI: blit_fp16_to_rgba8 failed", E_FAIL);
             continue;
         }
 
