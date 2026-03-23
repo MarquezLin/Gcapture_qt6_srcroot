@@ -30,6 +30,11 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
+    previewWindow_ = new previewwindow();
+    previewWindow_->setWindowTitle(QStringLiteral("Preview"));
+    previewWindow_->resize(1280, 720);
+    previewWindow_->show();
+
     // if (ui->statusbar)
     //     ui->statusbar->showMessage(QStringLiteral("Record mode：Media Foundation (Sink Writer)"));
 
@@ -228,11 +233,32 @@ MainWindow::~MainWindow()
 {
     if (g_mainWindow == this)
         g_mainWindow = nullptr;
+    delete previewWindow_;
     delete ui;
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    if (previewWindow_) {
+        previewWindow_->close();
+    }
+
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::onStart()
 {
+    qDebug() << "MainWindow::onStart";
+
+    if (!previewWindow_) {
+        previewWindow_ = new previewwindow();
+        previewWindow_->setWindowTitle(QStringLiteral("Preview"));
+        previewWindow_->resize(1280, 720);
+        previewWindow_->show();
+    }
+
+    void *hwnd = previewWindow_->previewHwnd();
+    qDebug() << "preview hwnd =" << hwnd;
     // If either backend is running, ignore.
     if (h_
 #ifdef _WIN32

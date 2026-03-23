@@ -31,7 +31,10 @@ set(VIEWER_SOURCES
 if (QT_VERSION_MAJOR GREATER_EQUAL 6)
   qt_add_executable(qt6_viewer MANUAL_FINALIZATION ${VIEWER_SOURCES}
     resources.qrc
-    app.rc)
+    app.rc
+    d3dpreviewwidget.h d3dpreviewwidget.cpp
+    previewwindow.h previewwindow.cpp previewwindow.ui
+  )
 else()
   add_executable(qt6_viewer ${VIEWER_SOURCES})
 endif()

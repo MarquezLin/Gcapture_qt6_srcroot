@@ -15,6 +15,7 @@
 #include "procamp.h"
 #include "info/capture_device_info.h"
 #include "info/display_output_info.h"
+#include "previewwindow.h"
 
 #ifdef _WIN32
 #include "capturesdk/capture_sdk_source.h"
@@ -28,6 +29,7 @@ namespace Ui
 QT_END_NAMESPACE
 
 class inputinfodialog;
+class previewwindow;
 
 class MainWindow : public QMainWindow
 {
@@ -36,6 +38,9 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void onStart();
@@ -99,6 +104,7 @@ private:
     QString lastCapturePropsText_;
     CaptureDeviceInfo captureInfo_;
     DisplayOutputInfo displayInfo_;
+    previewwindow *previewWindow_ = nullptr;
 
     qint64 lastPropsQueryMs_ = 0;
 
