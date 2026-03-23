@@ -10,7 +10,7 @@ previewwindow::previewwindow(QWidget *parent)
     auto *layout = new QVBoxLayout(ui->previewHost);
     layout->setContentsMargins(0,0,0,0);
 
-    auto *w = new d3dpreviewwidget(this);
+    auto *w = new d3dpreviewwidget(ui->previewHost);
     layout->addWidget(w);
 
     previewWidget_ = w;

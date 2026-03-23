@@ -36,10 +36,10 @@ MainWindow::MainWindow(QWidget *parent)
     previewWindow_->show();
 
     // if (ui->statusbar)
-    //     ui->statusbar->showMessage(QStringLiteral("Record mode：Media Foundation (Sink Writer)"));
+    //     ui->statCCusbar->showMessage(QStringLiteral("Record mode：Media Foundation (Sink Writer)"));
 
-    ui->labelView->setMinimumSize(640, 360);
-    ui->labelView->setAlignment(Qt::AlignCenter);
+    // ui->labelView->setMinimumSize(640, 360);
+    // ui->labelView->setAlignment(Qt::AlignCenter);
 
     // --- Debug Log Dock ---
     debugDock_ = new QDockWidget(tr("Debug Log"), this);
@@ -239,7 +239,8 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (previewWindow_) {
+    if (previewWindow_)
+    {
         previewWindow_->close();
     }
 
@@ -250,7 +251,8 @@ void MainWindow::onStart()
 {
     qDebug() << "MainWindow::onStart";
 
-    if (!previewWindow_) {
+    if (!previewWindow_)
+    {
         previewWindow_ = new previewwindow();
         previewWindow_->setWindowTitle(QStringLiteral("Preview"));
         previewWindow_->resize(1280, 720);
@@ -306,7 +308,28 @@ void MainWindow::onStart()
     if (backend == 0 || backend == 1)
         gcap_set_procamp(h_, &m_currentProcAmp);
 
-    gcap_start(h_);
+    gcap_preview_desc_t pv{};
+    pv.hwnd = hwnd;
+    pv.enable_preview = 1;
+    pv.use_fp16_pipeline = 0;
+    pv.swapchain_10bit = 0;
+
+    st = gcap_set_preview(h_, &pv);
+    if (st != GCAP_OK)
+    {
+        QMessageBox::warning(this, "gcapture",
+                             QString("set preview fail: %1").arg(gcap_strerror(st)));
+    }
+
+    st = gcap_start(h_);
+    if (st != GCAP_OK)
+    {
+        QMessageBox::warning(this, "gcapture",
+                             QString("start fail: %1").arg(gcap_strerror(st)));
+        gcap_close(h_);
+        h_ = nullptr;
+        return;
+    }
 }
 
 void MainWindow::onStop()
@@ -579,14 +602,10 @@ void MainWindow::onFrameArrived(const QImage &img)
 {
     lastFrameImage_ = img;
 
-    // 1. Render
-    ui->labelView->setPixmap(
-        QPixmap::fromImage(img).scaled(
-            ui->labelView->size(),
-            Qt::KeepAspectRatio,
-            Qt::SmoothTransformation));
+    lastFrameImage_ = img;
 
-    // 2. Capture device signal (every frame)
+    // 主畫面不再顯示 labelView，改由 previewwindow 做 native preview
+
     if (h_)
     {
         gcap_signal_status_t sig{};
@@ -594,7 +613,6 @@ void MainWindow::onFrameArrived(const QImage &img)
             captureInfo_.signal = sig;
     }
 
-    // 3. Capture device properties (1 Hz)
     if (h_)
     {
         qint64 nowMs = QDateTime::currentMSecsSinceEpoch();

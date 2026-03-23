@@ -72,6 +72,7 @@ public:
     bool getSignalStatus(gcap_signal_status_t &out) override;
     bool setProcessing(const gcap_processing_opts_t &opts) override;
     bool setProcAmp(const gcap_procamp_t &p) override;
+    bool setPreview(const gcap_preview_desc_t &desc) override;
 
     bool isUsingGpu() const { return use_dxgi_ && !cpu_path_; }
 
@@ -214,4 +215,20 @@ private:
 
     // 全域：目前偏好的 Adapter index（由 UI/C API 設定）
     static std::atomic<int> s_adapter_index_;
+
+    // ---- Native preview ----
+    void *preview_hwnd_ = nullptr;
+    bool preview_enabled_ = false;
+    bool preview_use_fp16_ = false;
+    bool preview_swapchain_10bit_ = false;
+    int preview_w_ = 0;
+    int preview_h_ = 0;
+
+    ComPtr<IDXGISwapChain1> preview_swapchain_;
+    ComPtr<ID3D11Texture2D> preview_backbuf_;
+    ComPtr<ID3D11RenderTargetView> preview_rtv_;
+
+    bool ensure_preview_swapchain(int w, int h);
+    void release_preview_swapchain();
+    bool present_preview();
 };

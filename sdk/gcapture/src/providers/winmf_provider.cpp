@@ -46,7 +46,7 @@ static std::string hr_msg(HRESULT hr)
 {
     _com_error ce(hr);
 
-    const wchar_t* wmsg =
+    const wchar_t *wmsg =
         ce.ErrorMessage() ? ce.ErrorMessage() : L"unknown";
 
     // wchar_t → UTF-8 std::string
@@ -54,16 +54,14 @@ static std::string hr_msg(HRESULT hr)
         CP_UTF8, 0,
         wmsg, -1,
         nullptr, 0,
-        nullptr, nullptr
-        );
+        nullptr, nullptr);
 
     std::string msg(len - 1, '\0');
     WideCharToMultiByte(
         CP_UTF8, 0,
         wmsg, -1,
         msg.data(), len,
-        nullptr, nullptr
-        );
+        nullptr, nullptr);
 
     std::ostringstream oss;
     oss << "hr=0x"
@@ -71,7 +69,6 @@ static std::string hr_msg(HRESULT hr)
         << " (" << msg << ")";
     return oss.str();
 }
-
 
 // --- local helper: wide string -> UTF-8 string ---
 static std::string wide_to_utf8(const std::wstring &ws)
@@ -256,7 +253,8 @@ bool WinMFProvider::setProcessing(const gcap_processing_opts_t &opts)
 bool WinMFProvider::setProcAmp(const gcap_procamp_t &p)
 {
     // Clamp to 0..255 just in case caller passes out-of-range.
-    auto clamp255 = [](int v) -> int { return std::clamp(v, 0, 255); };
+    auto clamp255 = [](int v) -> int
+    { return std::clamp(v, 0, 255); };
 
     procamp_.brightness = clamp255(p.brightness);
     procamp_.contrast = clamp255(p.contrast);
@@ -766,6 +764,7 @@ void WinMFProvider::stop()
     running_ = false;
     if (th_.joinable())
         th_.join();
+    release_preview_swapchain();
 }
 
 void WinMFProvider::close()
@@ -2505,6 +2504,14 @@ void WinMFProvider::loop()
                  (unsigned long long)frame_id_);
         gpu_overlay_text(line);
 
+        if (preview_enabled_)
+        {
+            if (ensure_preview_swapchain(cur_w_, cur_h_))
+            {
+                present_preview();
+            }
+        }
+
         // Readback -> staging -> map
         ctx_->CopyResource(rt_stage_.Get(), rt_rgba_.Get());
         D3D11_MAPPED_SUBRESOURCE m{};
@@ -2693,12 +2700,12 @@ bool WinMFProvider::render_nv12_to_rgba_cs(ID3D11ShaderResourceView *srvY,
         uint32_t height;
         float invW;
         float invH;
-        float brightness;   // [-0.5, +0.5] in RGB domain
-        float contrast;     // [0..2]
-        float saturation;   // [0..2]
+        float brightness; // [-0.5, +0.5] in RGB domain
+        float contrast;   // [0..2]
+        float saturation; // [0..2]
         float hueSin;
         float hueCos;
-        float sharpAmount;  // [-1..+1]
+        float sharpAmount; // [-1..+1]
         float pad0;
         float pad1;
     };
@@ -2735,7 +2742,6 @@ bool WinMFProvider::render_nv12_to_rgba_cs(ID3D11ShaderResourceView *srvY,
     memcpy(mapped.pData, &cb, sizeof(cb));
     ctx_->Unmap(cs_params_.Get(), 0);
 
-
     ID3D11ShaderResourceView *srvs[2] = {srvY, srvUV};
     ID3D11UnorderedAccessView *uavs[1] = {rt_uav_.Get()};
     ID3D11Buffer *cbs[1] = {cs_params_.Get()};
@@ -2760,4 +2766,119 @@ bool WinMFProvider::render_nv12_to_rgba_cs(ID3D11ShaderResourceView *srvY,
     ctx_->CSSetConstantBuffers(0, 1, nullCb);
 
     return true;
+}
+
+bool WinMFProvider::setPreview(const gcap_preview_desc_t &desc)
+{
+    preview_hwnd_ = desc.hwnd;
+    preview_enabled_ = (desc.enable_preview != 0);
+    preview_use_fp16_ = (desc.use_fp16_pipeline != 0);
+    preview_swapchain_10bit_ = (desc.swapchain_10bit != 0);
+
+    release_preview_swapchain();
+    return true;
+}
+
+void WinMFProvider::release_preview_swapchain()
+{
+    preview_rtv_.Reset();
+    preview_backbuf_.Reset();
+    preview_swapchain_.Reset();
+    preview_w_ = 0;
+    preview_h_ = 0;
+}
+
+bool WinMFProvider::ensure_preview_swapchain(int w, int h)
+{
+    if (!preview_enabled_ || !preview_hwnd_ || !d3d_)
+        return false;
+
+    if (w <= 0 || h <= 0)
+        return false;
+
+    ComPtr<IDXGIDevice> dxgiDev;
+    if (FAILED(d3d_.As(&dxgiDev)) || !dxgiDev)
+        return false;
+
+    ComPtr<IDXGIAdapter> adapter;
+    if (FAILED(dxgiDev->GetAdapter(&adapter)) || !adapter)
+        return false;
+
+    ComPtr<IDXGIFactory2> factory;
+    if (FAILED(adapter->GetParent(__uuidof(IDXGIFactory2),
+                                  reinterpret_cast<void **>(factory.GetAddressOf()))) ||
+        !factory)
+        return false;
+
+    if (!preview_swapchain_)
+    {
+        DXGI_SWAP_CHAIN_DESC1 sd{};
+        sd.Width = (UINT)w;
+        sd.Height = (UINT)h;
+        sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        sd.SampleDesc.Count = 1;
+        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        sd.BufferCount = 2;
+        sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        sd.Scaling = DXGI_SCALING_STRETCH;
+        sd.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+
+        HRESULT hr = factory->CreateSwapChainForHwnd(
+            d3d_.Get(),
+            (HWND)preview_hwnd_,
+            &sd,
+            nullptr,
+            nullptr,
+            &preview_swapchain_);
+
+        if (FAILED(hr) || !preview_swapchain_)
+            return false;
+
+        factory->MakeWindowAssociation((HWND)preview_hwnd_, DXGI_MWA_NO_ALT_ENTER);
+    }
+    else if (preview_w_ != w || preview_h_ != h)
+    {
+        preview_rtv_.Reset();
+        preview_backbuf_.Reset();
+
+        HRESULT hr = preview_swapchain_->ResizeBuffers(
+            0,
+            (UINT)w,
+            (UINT)h,
+            DXGI_FORMAT_UNKNOWN,
+            0);
+
+        if (FAILED(hr))
+            return false;
+    }
+
+    if (!preview_backbuf_)
+    {
+        if (FAILED(preview_swapchain_->GetBuffer(0, IID_PPV_ARGS(&preview_backbuf_))) || !preview_backbuf_)
+            return false;
+    }
+
+    if (!preview_rtv_)
+    {
+        if (FAILED(d3d_->CreateRenderTargetView(preview_backbuf_.Get(), nullptr, &preview_rtv_)) || !preview_rtv_)
+            return false;
+    }
+
+    preview_w_ = w;
+    preview_h_ = h;
+    return true;
+}
+
+bool WinMFProvider::present_preview()
+{
+    if (!preview_enabled_ || !preview_swapchain_ || !preview_backbuf_ || !rt_rgba_)
+        return false;
+
+    ID3D11RenderTargetView *nullRTV = nullptr;
+    ctx_->OMSetRenderTargets(1, &nullRTV, nullptr);
+
+    ctx_->CopyResource(preview_backbuf_.Get(), rt_rgba_.Get());
+
+    HRESULT hr = preview_swapchain_->Present(1, 0);
+    return SUCCEEDED(hr);
 }

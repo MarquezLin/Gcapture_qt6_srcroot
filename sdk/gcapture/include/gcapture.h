@@ -149,6 +149,14 @@ extern "C"
         uint64_t frame_id;
     } gcap_frame_t;
 
+    typedef struct
+    {
+        void *hwnd;         // native HWND
+        int enable_preview; // 0/1
+        int use_fp16_pipeline;
+        int swapchain_10bit;
+    } gcap_preview_desc_t;
+
     typedef void (*gcap_on_video_cb)(const gcap_frame_t *frame, void *user);
     typedef void (*gcap_on_error_cb)(gcap_status_t code, const char *msg, void *user);
 
@@ -191,6 +199,7 @@ extern "C"
     GCAP_API int gcap_enum_audio_devices(gcap_audio_device_t *out_devices, int max_devices);
 
     const char *gcap_strerror(gcap_status_t);
+    GCAP_API gcap_status_t gcap_set_preview(gcap_handle h, const gcap_preview_desc_t *desc);
 
 #ifdef __cplusplus
 }

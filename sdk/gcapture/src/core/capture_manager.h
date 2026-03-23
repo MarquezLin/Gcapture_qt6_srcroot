@@ -91,6 +91,12 @@ struct ICaptureProvider
         (void)p;
         return false;
     }
+
+    virtual bool setPreview(const gcap_preview_desc_t &desc)
+    {
+        (void)desc;
+        return false;
+    }
 };
 
 /**
@@ -121,6 +127,7 @@ public:
     gcap_status_t getSignalStatus(gcap_signal_status_t &out);
     gcap_status_t setProcessing(const gcap_processing_opts_t &opts);
     gcap_status_t setProcAmp(const gcap_procamp_t &p);
+    gcap_status_t setPreview(const gcap_preview_desc_t &desc);
 
     static void setBackendInt(int v);
     static void setD3dAdapterInt(int index);

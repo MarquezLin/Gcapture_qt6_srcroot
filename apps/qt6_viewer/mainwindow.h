@@ -59,7 +59,7 @@ private slots:
 
 private:
     Ui::MainWindow *ui;
-    QLabel *view_;
+    // QLabel *view_;
     gcap_handle h_{};
     int deviceIndex_ = 0;
     bool recording_ = false;

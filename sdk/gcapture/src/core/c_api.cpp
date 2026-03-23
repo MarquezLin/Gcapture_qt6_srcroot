@@ -304,6 +304,14 @@ extern "C"
         CaptureManager::setD3dAdapterInt(adapter_index);
     }
 
+    GCAP_API gcap_status_t gcap_set_preview(gcap_handle h, const gcap_preview_desc_t *desc)
+    {
+        if (!h || !desc)
+            return GCAP_EINVAL;
+
+        return h->mgr.setPreview(*desc);
+    }
+
     extern "C" GCAP_API int gcap_get_audio_device_count(void)
     {
         auto list = gcap::audio::enumerate_devices();

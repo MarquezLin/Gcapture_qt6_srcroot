@@ -236,3 +236,11 @@ gcap_status_t CaptureManager::setProcAmp(const gcap_procamp_t &p)
         return GCAP_ENOTSUP;
     return provider_->setProcAmp(p) ? GCAP_OK : GCAP_ENOTSUP;
 }
+
+gcap_status_t CaptureManager::setPreview(const gcap_preview_desc_t &desc)
+{
+    if (!provider_)
+        return GCAP_ESTATE;
+
+    return provider_->setPreview(desc) ? GCAP_OK : GCAP_ENOTSUP;
+}
