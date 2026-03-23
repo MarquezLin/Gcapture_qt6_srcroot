@@ -311,8 +311,8 @@ void MainWindow::onStart()
     gcap_preview_desc_t pv{};
     pv.hwnd = hwnd;
     pv.enable_preview = 1;
-    pv.use_fp16_pipeline = 0;
-    pv.swapchain_10bit = 0;
+    pv.use_fp16_pipeline = 1;
+    pv.swapchain_10bit = 1;
 
     st = gcap_set_preview(h_, &pv);
     if (st != GCAP_OK)

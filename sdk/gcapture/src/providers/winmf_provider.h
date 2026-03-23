@@ -154,6 +154,7 @@ private:
     ComPtr<ID3D11PixelShader> ps_p010_;
     ComPtr<ID3D11PixelShader> ps_yuy2_;
     ComPtr<ID3D11PixelShader> ps_fp16_to_rgba8_;
+    ComPtr<ID3D11PixelShader> ps_fp16_to_preview_;
     ComPtr<ID3D11InputLayout> il_;
     ComPtr<ID3D11Buffer> vb_;
     ComPtr<ID3D11SamplerState> samp_;

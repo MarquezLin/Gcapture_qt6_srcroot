@@ -791,6 +791,7 @@ void WinMFProvider::close()
     ps_p010_.Reset();
     ps_yuy2_.Reset();
     ps_fp16_to_rgba8_.Reset();
+    ps_fp16_to_preview_.Reset();
     cs_nv12_.Reset();
     cs_params_.Reset();
     rt_uav_.Reset();
@@ -1603,7 +1604,6 @@ void main(uint3 tid : SV_DispatchThreadID)
 }
 )";
 
-
 static const char *g_ps_fp16_to_rgba8 = R"(
 Texture2D<float4> tex0 : register(t0);
 SamplerState samL : register(s0);
@@ -1621,10 +1621,27 @@ float4 main(PSIn i) : SV_Target
 }
 )";
 
+static const char *g_ps_fp16_to_preview = R"(
+Texture2D<float4> tex0 : register(t0);
+SamplerState samL : register(s0);
+
+struct PSIn
+{
+    float4 pos : SV_Position;
+    float2 uv  : TEXCOORD0;
+};
+
+float4 main(PSIn i) : SV_Target
+{
+    float4 c = tex0.Sample(samL, i.uv);
+    return float4(saturate(c.rgb), 1.0);
+}
+)";
+
 bool WinMFProvider::create_shaders_and_states()
 {
     // Compile shaders
-    ComPtr<ID3DBlob> vsb, psb1, psb2, psb3, psb4, err;
+    ComPtr<ID3DBlob> vsb, psb1, psb2, psb3, psb4, psb5, err;
     if (FAILED(D3DCompile(g_vs_src, strlen(g_vs_src), nullptr, nullptr, nullptr,
                           "main", "vs_5_0", 0, 0, &vsb, &err)))
         return false;
@@ -1660,6 +1677,12 @@ bool WinMFProvider::create_shaders_and_states()
                           "main", "ps_5_0", 0, 0, &psb4, &err)))
         return false;
     if (FAILED(d3d_->CreatePixelShader(psb4->GetBufferPointer(), psb4->GetBufferSize(), nullptr, &ps_fp16_to_rgba8_)))
+        return false;
+
+    if (FAILED(D3DCompile(g_ps_fp16_to_preview, strlen(g_ps_fp16_to_preview), nullptr, nullptr, nullptr,
+                          "main", "ps_5_0", 0, 0, &psb5, &err)))
+        return false;
+    if (FAILED(d3d_->CreatePixelShader(psb5->GetBufferPointer(), psb5->GetBufferSize(), nullptr, &ps_fp16_to_preview_)))
         return false;
 
     // Fullscreen quad (two triangles)
@@ -1698,7 +1721,6 @@ bool WinMFProvider::create_shaders_and_states()
 
     return true;
 }
-
 
 bool WinMFProvider::ensure_rt_and_pipeline(int w, int h)
 {
@@ -1839,10 +1861,10 @@ bool WinMFProvider::render_yuv_to_fp16(ID3D11Texture2D *yuvTex)
             return false;
     }
 
-    if (use_compute_nv12_ && cur_subtype_ == MFVideoFormat_NV12)
-    {
-        return render_nv12_to_rgba_cs(srvY.Get(), srvUV.Get());
-    }
+    // if (use_compute_nv12_ && cur_subtype_ == MFVideoFormat_NV12)
+    // {
+    //     return render_nv12_to_rgba_cs(srvY.Get(), srvUV.Get());
+    // }
 
     // Set pipeline
     UINT stride = sizeof(float) * 4, offset = 0;
@@ -1956,7 +1978,6 @@ bool WinMFProvider::render_yuv_to_fp16(ID3D11Texture2D *yuvTex)
 
     return true;
 }
-
 
 bool WinMFProvider::blit_fp16_to_rgba8()
 {
@@ -2907,7 +2928,9 @@ bool WinMFProvider::ensure_preview_swapchain(int w, int h)
         DXGI_SWAP_CHAIN_DESC1 sd{};
         sd.Width = (UINT)w;
         sd.Height = (UINT)h;
-        sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        sd.Format = preview_swapchain_10bit_
+                        ? DXGI_FORMAT_R10G10B10A2_UNORM
+                        : DXGI_FORMAT_B8G8R8A8_UNORM;
         sd.SampleDesc.Count = 1;
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         sd.BufferCount = 2;
@@ -2963,13 +2986,59 @@ bool WinMFProvider::ensure_preview_swapchain(int w, int h)
 
 bool WinMFProvider::present_preview()
 {
-    if (!preview_enabled_ || !preview_swapchain_ || !preview_backbuf_ || !rt_rgba_)
+    if (!preview_enabled_ || !preview_swapchain_ || !preview_backbuf_ || !ctx_)
         return false;
 
     ID3D11RenderTargetView *nullRTV = nullptr;
     ctx_->OMSetRenderTargets(1, &nullRTV, nullptr);
 
-    ctx_->CopyResource(preview_backbuf_.Get(), rt_rgba_.Get());
+    if (!preview_swapchain_10bit_)
+    {
+        if (!rt_rgba_)
+            return false;
+
+        ctx_->CopyResource(preview_backbuf_.Get(), rt_rgba_.Get());
+        HRESULT hr = preview_swapchain_->Present(1, 0);
+        return SUCCEEDED(hr);
+    }
+
+    if (!preview_rtv_ || !srv_fp16_ || !vs_ || !ps_fp16_to_preview_)
+        return false;
+
+    UINT stride = sizeof(float) * 4, offset = 0;
+    ID3D11Buffer *pVB = vb_.Get();
+    ctx_->IASetVertexBuffers(0, 1, &pVB, &stride, &offset);
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx_->IASetInputLayout(il_.Get());
+
+    D3D11_VIEWPORT vp{};
+    vp.TopLeftX = 0.0f;
+    vp.TopLeftY = 0.0f;
+    vp.Width = static_cast<FLOAT>(preview_w_);
+    vp.Height = static_cast<FLOAT>(preview_h_);
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    ctx_->RSSetViewports(1, &vp);
+
+    ID3D11RenderTargetView *rtv = preview_rtv_.Get();
+    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+
+    const float clear[4] = {0, 0, 0, 1};
+    ctx_->ClearRenderTargetView(preview_rtv_.Get(), clear);
+
+    ctx_->VSSetShader(vs_.Get(), nullptr, 0);
+    ctx_->PSSetShader(ps_fp16_to_preview_.Get(), nullptr, 0);
+
+    ID3D11ShaderResourceView *srvs[1] = {srv_fp16_.Get()};
+    ctx_->PSSetShaderResources(0, 1, srvs);
+
+    ID3D11SamplerState *ss = samp_.Get();
+    ctx_->PSSetSamplers(0, 1, &ss);
+
+    ctx_->Draw(6, 0);
+
+    ID3D11ShaderResourceView *nullSrv[1] = {nullptr};
+    ctx_->PSSetShaderResources(0, 1, nullSrv);
 
     HRESULT hr = preview_swapchain_->Present(1, 0);
     return SUCCEEDED(hr);
