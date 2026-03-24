@@ -129,6 +129,12 @@ private:
     ComPtr<ID3D11Texture2D> rt_fp16_;
     ComPtr<ID3D11RenderTargetView> rtv_fp16_;
     ComPtr<ID3D11ShaderResourceView> srv_fp16_;
+
+    // OBS-style composited scene target: base FP16 frame + overlay texture
+    ComPtr<ID3D11Texture2D> rt_scene_fp16_;
+    ComPtr<ID3D11RenderTargetView> rtv_scene_fp16_;
+    ComPtr<ID3D11ShaderResourceView> srv_scene_fp16_;
+
     ComPtr<ID3D11ShaderResourceView> srv_rgba_;
     ComPtr<ID3D11PixelShader> ps_rgba8_to_preview_;
 
@@ -160,11 +166,12 @@ private:
     ComPtr<ID3D11PixelShader> ps_y210_;
     ComPtr<ID3D11PixelShader> ps_fp16_to_rgba8_;
     ComPtr<ID3D11PixelShader> ps_fp16_to_preview_;
+    ComPtr<ID3D11PixelShader> ps_composite_overlay_fp16_;
     ComPtr<ID3D11InputLayout> il_;
     ComPtr<ID3D11Buffer> vb_;
     ComPtr<ID3D11SamplerState> samp_;
 
-    // D2D/DWrite for GPU text overlay
+    // D2D/DWrite overlay texture (draw in BGRA8, then composite into FP16 scene)
     ComPtr<ID2D1Factory1> d2d_factory_;
     ComPtr<ID2D1Device> d2d_device_;
     ComPtr<ID2D1DeviceContext> d2d_ctx_;
@@ -172,6 +179,9 @@ private:
     ComPtr<ID2D1SolidColorBrush> d2d_white_;
     ComPtr<ID2D1SolidColorBrush> d2d_black_;
     ComPtr<ID2D1Bitmap1> d2d_bitmap_rt_;
+    ComPtr<ID3D11Texture2D> overlay_rgba_;
+    ComPtr<ID3D11RenderTargetView> overlay_rtv_;
+    ComPtr<ID3D11ShaderResourceView> overlay_srv_;
 
     // --- internal helpers ---
     void loop();
@@ -189,6 +199,7 @@ private:
     bool ensure_rt_and_pipeline(int w, int h);
     bool create_shaders_and_states();
     bool render_yuv_to_fp16(ID3D11Texture2D *yuvTex);
+    bool composite_overlay_to_scene_fp16();
     bool blit_fp16_to_rgba8();
     bool gpu_overlay_text(const wchar_t *text);
 

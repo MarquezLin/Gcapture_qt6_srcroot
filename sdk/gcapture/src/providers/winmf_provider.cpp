@@ -778,6 +778,12 @@ void WinMFProvider::close()
     reader_.Reset();
     source_.Reset();
     d2d_bitmap_rt_.Reset();
+    overlay_srv_.Reset();
+    overlay_rtv_.Reset();
+    overlay_rgba_.Reset();
+    srv_scene_fp16_.Reset();
+    rtv_scene_fp16_.Reset();
+    rt_scene_fp16_.Reset();
     srv_fp16_.Reset();
     rtv_fp16_.Reset();
     rt_fp16_.Reset();
@@ -798,6 +804,7 @@ void WinMFProvider::close()
     ps_y210_.Reset();
     ps_fp16_to_rgba8_.Reset();
     ps_fp16_to_preview_.Reset();
+    ps_composite_overlay_fp16_.Reset();
     cs_nv12_.Reset();
     cs_params_.Reset();
     rt_uav_.Reset();
@@ -1748,6 +1755,27 @@ float4 main(PSIn i) : SV_Target
 }
 )";
 
+static const char *g_ps_composite_overlay_fp16 = R"(
+Texture2D<float4> texBase    : register(t0);
+Texture2D<float4> texOverlay : register(t1);
+SamplerState samL : register(s0);
+
+struct PSIn
+{
+    float4 pos : SV_Position;
+    float2 uv  : TEXCOORD0;
+};
+
+float4 main(PSIn i) : SV_Target
+{
+    float4 base = texBase.Sample(samL, i.uv);
+    float4 ov   = texOverlay.Sample(samL, i.uv);
+    float a = saturate(ov.a);
+    float3 rgb = ov.rgb + base.rgb * (1.0 - a);
+    return float4(rgb, 1.0);
+}
+)";
+
 static const char *g_ps_rgba8_to_preview = R"(
 Texture2D<float4> tex0 : register(t0);
 SamplerState samL : register(s0);
@@ -1769,7 +1797,7 @@ float4 main(PSIn i) : SV_Target
 bool WinMFProvider::create_shaders_and_states()
 {
     // Compile shaders
-    ComPtr<ID3DBlob> vsb, psb1, psb2, psb3, psb4, psb5, psb6, err;
+    ComPtr<ID3DBlob> vsb, psb1, psb2, psb3, psb4, psb5, psb6, psb7, err;
     if (FAILED(D3DCompile(g_vs_src, strlen(g_vs_src), nullptr, nullptr, nullptr,
                           "main", "vs_5_0", 0, 0, &vsb, &err)))
         return false;
@@ -1827,6 +1855,15 @@ bool WinMFProvider::create_shaders_and_states()
                                        psb6->GetBufferSize(),
                                        nullptr,
                                        &ps_rgba8_to_preview_)))
+        return false;
+    if (FAILED(D3DCompile(g_ps_composite_overlay_fp16, strlen(g_ps_composite_overlay_fp16),
+                          nullptr, nullptr, nullptr,
+                          "main", "ps_5_0", 0, 0, &psb7, &err)))
+        return false;
+    if (FAILED(d3d_->CreatePixelShader(psb7->GetBufferPointer(),
+                                       psb7->GetBufferSize(),
+                                       nullptr,
+                                       &ps_composite_overlay_fp16_)))
         return false;
 
     // Fullscreen quad (two triangles)
@@ -1891,7 +1928,17 @@ bool WinMFProvider::ensure_rt_and_pipeline(int w, int h)
     // rt 尺寸/格式若重建，compute path 的 UAV 也要跟著重建
     rt_uav_.Reset();
 
-    // 2) RGBA8 target for overlay/readback/current compatibility
+    // 2) Composited FP16 scene target (base FP16 + overlay)
+    td.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &rt_scene_fp16_)))
+        return false;
+    if (FAILED(d3d_->CreateRenderTargetView(rt_scene_fp16_.Get(), nullptr, &rtv_scene_fp16_)))
+        return false;
+    if (FAILED(d3d_->CreateShaderResourceView(rt_scene_fp16_.Get(), nullptr, &srv_scene_fp16_)))
+        return false;
+
+    // 3) RGBA8 target for CPU readback / compatibility output
     td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
     if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &rt_rgba_)))
@@ -1901,16 +1948,24 @@ bool WinMFProvider::ensure_rt_and_pipeline(int w, int h)
     if (FAILED(d3d_->CreateShaderResourceView(rt_rgba_.Get(), nullptr, &srv_rgba_)))
         return false;
 
-    // 3) staging for readback
+    // 4) Overlay texture for D2D/DWrite (premultiplied BGRA8)
+    if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &overlay_rgba_)))
+        return false;
+    if (FAILED(d3d_->CreateRenderTargetView(overlay_rgba_.Get(), nullptr, &overlay_rtv_)))
+        return false;
+    if (FAILED(d3d_->CreateShaderResourceView(overlay_rgba_.Get(), nullptr, &overlay_srv_)))
+        return false;
+
+    // 5) staging for readback
     td.BindFlags = 0;
     td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     td.Usage = D3D11_USAGE_STAGING;
     if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &rt_stage_)))
         return false;
 
-    // 4) D2D target stays on RGBA8 output
+    // 6) D2D target now stays on dedicated overlay texture, not the final preview/readback surface
     ComPtr<IDXGISurface> surf;
-    rt_rgba_.As(&surf);
+    overlay_rgba_.As(&surf);
     D2D1_BITMAP_PROPERTIES1 bp = {};
     bp.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
     bp.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
@@ -2145,9 +2200,52 @@ bool WinMFProvider::render_yuv_to_fp16(ID3D11Texture2D *yuvTex)
     return true;
 }
 
+bool WinMFProvider::composite_overlay_to_scene_fp16()
+{
+    if (!rtv_scene_fp16_ || !srv_fp16_ || !overlay_srv_ || !vs_ || !ps_composite_overlay_fp16_)
+        return false;
+
+    UINT stride = sizeof(float) * 4, offset = 0;
+    ID3D11Buffer *pVB = vb_.Get();
+    ctx_->IASetVertexBuffers(0, 1, &pVB, &stride, &offset);
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx_->IASetInputLayout(il_.Get());
+
+    ID3D11RenderTargetView *rtv = rtv_scene_fp16_.Get();
+    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+
+    D3D11_VIEWPORT vp{};
+    vp.TopLeftX = 0.0f;
+    vp.TopLeftY = 0.0f;
+    vp.Width = static_cast<FLOAT>(cur_w_);
+    vp.Height = static_cast<FLOAT>(cur_h_);
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    ctx_->RSSetViewports(1, &vp);
+
+    const float clear[4] = {0, 0, 0, 1};
+    ctx_->ClearRenderTargetView(rtv_scene_fp16_.Get(), clear);
+
+    ctx_->VSSetShader(vs_.Get(), nullptr, 0);
+    ctx_->PSSetShader(ps_composite_overlay_fp16_.Get(), nullptr, 0);
+
+    ID3D11ShaderResourceView *srvs[2] = {srv_fp16_.Get(), overlay_srv_.Get()};
+    ctx_->PSSetShaderResources(0, 2, srvs);
+
+    ID3D11SamplerState *ss = samp_.Get();
+    ctx_->PSSetSamplers(0, 1, &ss);
+
+    ctx_->Draw(6, 0);
+
+    ID3D11ShaderResourceView *nullSrv[2] = {nullptr, nullptr};
+    ctx_->PSSetShaderResources(0, 2, nullSrv);
+
+    return true;
+}
+
 bool WinMFProvider::blit_fp16_to_rgba8()
 {
-    if (!rtv_rgba_ || !srv_fp16_ || !vs_ || !ps_fp16_to_rgba8_)
+    if (!rtv_rgba_ || !srv_scene_fp16_ || !vs_ || !ps_fp16_to_rgba8_)
         return false;
 
     UINT stride = sizeof(float) * 4, offset = 0;
@@ -2174,7 +2272,7 @@ bool WinMFProvider::blit_fp16_to_rgba8()
     ctx_->VSSetShader(vs_.Get(), nullptr, 0);
     ctx_->PSSetShader(ps_fp16_to_rgba8_.Get(), nullptr, 0);
 
-    ID3D11ShaderResourceView *srvs[1] = {srv_fp16_.Get()};
+    ID3D11ShaderResourceView *srvs[1] = {srv_scene_fp16_.Get()};
     ctx_->PSSetShaderResources(0, 1, srvs);
 
     ID3D11SamplerState *ss = samp_.Get();
@@ -2195,6 +2293,7 @@ bool WinMFProvider::gpu_overlay_text(const wchar_t *text)
 
     d2d_ctx_->BeginDraw();
     d2d_ctx_->SetTransform(D2D1::Matrix3x2F::Identity());
+    d2d_ctx_->Clear(D2D1::ColorF(0, 0, 0, 0));
 
     // ---------- 建立 TextFormat ----------
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fmt;
@@ -2795,13 +2894,10 @@ void WinMFProvider::loop()
             continue;
         }
 
-        if (!blit_fp16_to_rgba8())
-        {
-            MDBG("DXGI: blit_fp16_to_rgba8 failed", E_FAIL);
-            continue;
-        }
-
-        // ★後面原本的 GPU overlay / CopyResource / Map / vcb_ 全部保留
+        // OBS-style overlay path:
+        //   1) D2D draws into a transparent BGRA overlay texture
+        //   2) shader composites overlay texture into FP16 scene target
+        //   3) final scene is blitted to RGBA8 only for CPU readback / compatibility
 
         // GPU overlay
         wchar_t wdev[256] = L"";
@@ -2844,7 +2940,25 @@ void WinMFProvider::loop()
                  fmtName,
                  bitDepth,
                  (unsigned long long)frame_id_);
+        if (overlay_rtv_)
+        {
+            const float clearOverlay[4] = {0, 0, 0, 0};
+            ctx_->ClearRenderTargetView(overlay_rtv_.Get(), clearOverlay);
+        }
+
         gpu_overlay_text(line);
+
+        if (!composite_overlay_to_scene_fp16())
+        {
+            MDBG("DXGI: composite_overlay_to_scene_fp16 failed", E_FAIL);
+            continue;
+        }
+
+        if (!blit_fp16_to_rgba8())
+        {
+            MDBG("DXGI: blit_fp16_to_rgba8 failed", E_FAIL);
+            continue;
+        }
 
         if (preview_enabled_)
         {
@@ -3335,11 +3449,11 @@ bool WinMFProvider::present_preview()
     ID3D11ShaderResourceView *srv = nullptr;
     if (preview_swapchain_10bit_)
     {
-        if (!srv_fp16_ || !ps_fp16_to_preview_)
+        if (!srv_scene_fp16_ || !ps_fp16_to_preview_)
             return false;
 
         ctx_->PSSetShader(ps_fp16_to_preview_.Get(), nullptr, 0);
-        srv = srv_fp16_.Get();
+        srv = srv_scene_fp16_.Get();
     }
     else
     {
