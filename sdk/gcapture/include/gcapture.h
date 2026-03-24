@@ -46,6 +46,7 @@ extern "C"
         GCAP_FMT_YUY2,
         GCAP_FMT_ARGB,
         GCAP_FMT_P010,
+        GCAP_FMT_Y210,
         GCAP_FMT_V210,
         GCAP_FMT_R210
     } gcap_pixfmt_t;

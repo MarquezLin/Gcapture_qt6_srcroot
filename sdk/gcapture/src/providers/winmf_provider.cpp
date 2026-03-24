@@ -105,6 +105,8 @@ static gcap_pixfmt_t mfsub_to_gcap(const GUID &sub)
         return GCAP_FMT_YUY2;
     if (sub == MFVideoFormat_P010)
         return GCAP_FMT_P010;
+    if (sub == MFVideoFormat_Y210)
+        return GCAP_FMT_Y210;
     if (sub == MFVideoFormat_ARGB32)
         return GCAP_FMT_ARGB;
     return GCAP_FMT_ARGB; // fallback（你也可改成 NV12）
@@ -115,6 +117,7 @@ static int pixfmt_bitdepth(gcap_pixfmt_t f)
     switch (f)
     {
     case GCAP_FMT_P010:
+    case GCAP_FMT_Y210:
     case GCAP_FMT_R210:
     case GCAP_FMT_V210:
         return 10;
@@ -273,6 +276,8 @@ static const char *mf_subtype_name(const GUID &g)
         return "P010";
     if (g == MFVideoFormat_YUY2)
         return "YUY2";
+    if (g == MFVideoFormat_Y210)
+        return "Y210";
     if (g == MFVideoFormat_ARGB32)
         return "ARGB32";
     if (g == MFVideoFormat_RGB32)
@@ -790,12 +795,14 @@ void WinMFProvider::close()
     ps_nv12_.Reset();
     ps_p010_.Reset();
     ps_yuy2_.Reset();
+    ps_y210_.Reset();
     ps_fp16_to_rgba8_.Reset();
     ps_fp16_to_preview_.Reset();
     cs_nv12_.Reset();
     cs_params_.Reset();
     rt_uav_.Reset();
     upload_yuy2_packed_.Reset();
+    upload_y210_packed_.Reset();
 
     if (dxgi_mgr_)
         dxgi_mgr_.Reset();
@@ -1109,9 +1116,9 @@ bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn
         if (FAILED(t->GetGUID(MF_MT_SUBTYPE, &s)))
             continue;
 
-        // 收 P010/NV12/YUY2/MJPG
+        // 收 P010/NV12/Y210/YUY2/MJPG
         if (!(s == MFVideoFormat_P010 || s == MFVideoFormat_NV12 ||
-              s == MFVideoFormat_YUY2 || s == MFVideoFormat_MJPG))
+              s == MFVideoFormat_Y210 || s == MFVideoFormat_YUY2 || s == MFVideoFormat_MJPG))
             continue;
 
         UINT32 cw = 0, ch = 0, fnum = 0, fden = 1;
@@ -1120,7 +1127,8 @@ bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn
         MFGetAttributeRatio(t.Get(), MF_MT_FRAME_RATE, &fnum, &fden);
         double fps = fden ? (double)fnum / fden : 0.0;
 
-        int pref = (s == MFVideoFormat_P010) ? 3 : (s == MFVideoFormat_NV12) ? 2
+        int pref = (s == MFVideoFormat_P010) ? 4 : (s == MFVideoFormat_Y210) ? 3
+                                               : (s == MFVideoFormat_NV12)   ? 2
                                                : (s == MFVideoFormat_YUY2)   ? 1
                                                                              : 0;
         long long score = (long long)cw * ch * 100000 + (long long)(fps * 1000) * 100 + pref;
@@ -1133,8 +1141,9 @@ bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn
               { return a.score > b.score; });
     const auto &best = list[0];
 
-    // 1) 原生就是 P010/NV12 → 直接套用
-    if (best.sub == MFVideoFormat_P010 || best.sub == MFVideoFormat_NV12)
+    // 1) 原生就是 P010/NV12，或在 GPU 路徑下的 Y210 → 直接套用
+    if (best.sub == MFVideoFormat_P010 || best.sub == MFVideoFormat_NV12 ||
+        (best.sub == MFVideoFormat_Y210 && use_dxgi_))
     {
         HRESULT hr = reader_->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, best.mt.Get());
         if (FAILED(hr))
@@ -1159,6 +1168,8 @@ bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn
             {
                 if (rsub == MFVideoFormat_P010)
                     cur_stride_ = (int)rw * 2;
+                else if (rsub == MFVideoFormat_Y210)
+                    cur_stride_ = (int)rw * 4;
                 else
                     cur_stride_ = (int)rw;
             }
@@ -1525,6 +1536,105 @@ float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
 )";
 
 // NV12 → RGBA 的 Compute Shader 版本
+
+// Y210（4:2:2 packed, 10-bit in 16-bit container）：
+// 每個 texel 打包 2 個像素：R=Y0, G=U, B=Y1, A=V
+// texture width = ceil(w/2), format = R16G16B16A16_UINT
+static const char *g_ps_y210 = R"(
+Texture2D<uint4> texP : register(t0);
+
+cbuffer ProcAmp : register(b0)
+{
+    uint  width;
+    uint  height;
+    float invW;
+    float invH;
+
+    float br;
+    float ct;
+    float sat;
+    float hueSin;
+
+    float hueCos;
+    float sharpAmt;
+    float pad0;
+    float pad1;
+};
+
+static float3 apply_rgb_procamp(float3 rgb)
+{
+    rgb = (rgb - 0.5) * ct + 0.5 + br;
+    float l = dot(rgb, float3(0.299, 0.587, 0.114));
+    rgb = lerp(float3(l, l, l), rgb, sat);
+    return saturate(rgb);
+}
+
+static float2 rotate_uv(float2 uv01)
+{
+    float2 uv = uv01 - 0.5;
+    float u = uv.x;
+    float v = uv.y;
+    float u2 = u * hueCos - v * hueSin;
+    float v2 = u * hueSin + v * hueCos;
+    return float2(u2, v2) + 0.5;
+}
+
+float3 yuv_to_rgb709(float y, float u, float v)
+{
+    y = y * 255.0;
+    u = (u - 0.5) * 255.0;
+    v = (v - 0.5) * 255.0;
+    float c = y - 16.0;
+    float d = u;
+    float e = v;
+    float r = 1.164383 * c + 1.792741 * e;
+    float g = 1.164383 * c - 0.213249 * d - 0.532909 * e;
+    float b = 1.164383 * c + 2.112402 * d;
+    return float3(r,g,b)/255.0;
+}
+
+float loadY(int x, int y)
+{
+    x = clamp(x, 0, (int)width - 1);
+    y = clamp(y, 0, (int)height - 1);
+    uint4 p = texP.Load(int3(x >> 1, y, 0));
+    uint yy = ((x & 1) != 0) ? p.b : p.r;
+    return (float)(yy & 1023) / 1023.0;
+}
+
+float2 loadUV01(int x, int y)
+{
+    x = clamp(x, 0, (int)width - 1);
+    y = clamp(y, 0, (int)height - 1);
+    uint4 p = texP.Load(int3(x >> 1, y, 0));
+    float u = (float)(p.g & 1023) / 1023.0;
+    float v = (float)(p.a & 1023) / 1023.0;
+    return float2(u, v);
+}
+
+float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
+{
+    int2 ip = int2(pos.xy);
+    int px = ip.x;
+    int py = ip.y;
+
+    float yC = loadY(px, py);
+    float yL = loadY(px - 1, py);
+    float yR = loadY(px + 1, py);
+    float yU = loadY(px, py - 1);
+    float yD = loadY(px, py + 1);
+    float blur = (yC*4.0 + yL + yR + yU + yD) / 8.0;
+    float y = saturate(yC + sharpAmt * (yC - blur));
+
+    float2 uv01 = loadUV01(px, py);
+    uv01 = rotate_uv(uv01);
+
+    float3 rgb = yuv_to_rgb709(y, uv01.x, uv01.y);
+    rgb = apply_rgb_procamp(rgb);
+    return float4(rgb, 1.0);
+}
+)";
+
 static const char *g_cs_nv12 = R"(
 Texture2D<float>   texY    : register(t0);
 Texture2D<float2>  texUV   : register(t1);
@@ -1689,6 +1799,13 @@ bool WinMFProvider::create_shaders_and_states()
                           "main", "ps_5_0", 0, 0, &psb3, &err)))
         return false;
     if (FAILED(d3d_->CreatePixelShader(psb3->GetBufferPointer(), psb3->GetBufferSize(), nullptr, &ps_yuy2_)))
+        return false;
+
+    ComPtr<ID3DBlob> psbY210;
+    if (FAILED(D3DCompile(g_ps_y210, strlen(g_ps_y210), nullptr, nullptr, nullptr,
+                          "main", "ps_5_0", 0, 0, &psbY210, &err)))
+        return false;
+    if (FAILED(d3d_->CreatePixelShader(psbY210->GetBufferPointer(), psbY210->GetBufferSize(), nullptr, &ps_y210_)))
         return false;
 
     if (FAILED(D3DCompile(g_ps_fp16_to_rgba8, strlen(g_ps_fp16_to_rgba8), nullptr, nullptr, nullptr,
@@ -1877,12 +1994,22 @@ bool WinMFProvider::render_yuv_to_fp16(ID3D11Texture2D *yuvTex)
         if (FAILED(d3d_->CreateShaderResourceView(yuvTex, &sd, &srvP)))
             return false;
     }
+    else if (cur_subtype_ == MFVideoFormat_Y210)
+    {
+        // Y210：yuvTex 會是 upload_y210_packed_（R16G16B16A16_UINT）
+        D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+        sd.Format = DXGI_FORMAT_R16G16B16A16_UINT;
+        sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        sd.Texture2D.MipLevels = 1;
+        if (FAILED(d3d_->CreateShaderResourceView(yuvTex, &sd, &srvP)))
+            return false;
+    }
     else
     {
         return false;
     }
 
-    if (cur_subtype_ == MFVideoFormat_YUY2)
+    if (cur_subtype_ == MFVideoFormat_YUY2 || cur_subtype_ == MFVideoFormat_Y210)
     {
         if (!srvP)
             return false;
@@ -1906,10 +2033,17 @@ bool WinMFProvider::render_yuv_to_fp16(ID3D11Texture2D *yuvTex)
     ctx_->IASetInputLayout(il_.Get());
     ctx_->VSSetShader(vs_.Get(), nullptr, 0);
 
-    ID3D11PixelShader *ps =
-        (cur_subtype_ == MFVideoFormat_NV12)   ? ps_nv12_.Get()
-        : (cur_subtype_ == MFVideoFormat_P010) ? ps_p010_.Get()
-                                               : ps_yuy2_.Get();
+    ID3D11PixelShader *ps = nullptr;
+    if (cur_subtype_ == MFVideoFormat_NV12)
+        ps = ps_nv12_.Get();
+    else if (cur_subtype_ == MFVideoFormat_P010)
+        ps = ps_p010_.Get();
+    else if (cur_subtype_ == MFVideoFormat_YUY2)
+        ps = ps_yuy2_.Get();
+    else if (cur_subtype_ == MFVideoFormat_Y210)
+        ps = ps_y210_.Get();
+    else
+        return false;
 
     // 更新 ProcAmp constant buffer（width/height + B/C/H/S/Sharp）
     if (cs_params_)
@@ -1964,7 +2098,7 @@ bool WinMFProvider::render_yuv_to_fp16(ID3D11Texture2D *yuvTex)
 
     ctx_->PSSetShader(ps, nullptr, 0);
 
-    if (cur_subtype_ == MFVideoFormat_YUY2)
+    if (cur_subtype_ == MFVideoFormat_YUY2 || cur_subtype_ == MFVideoFormat_Y210)
     {
         ID3D11ShaderResourceView *srvs0[1] = {srvP.Get()};
         ctx_->PSSetShaderResources(0, 1, srvs0);
@@ -1997,7 +2131,7 @@ bool WinMFProvider::render_yuv_to_fp16(ID3D11Texture2D *yuvTex)
     ctx_->Draw(6, 0);
 
     // unbind SRVs (avoid hazard)
-    if (cur_subtype_ == MFVideoFormat_YUY2)
+    if (cur_subtype_ == MFVideoFormat_YUY2 || cur_subtype_ == MFVideoFormat_Y210)
     {
         ID3D11ShaderResourceView *null0[1] = {nullptr};
         ctx_->PSSetShaderResources(0, 1, null0);
@@ -2577,6 +2711,68 @@ void WinMFProvider::loop()
 
                 yuvTex = upload_yuy2_packed_.Get();
             }
+            else if (cur_subtype_ == MFVideoFormat_Y210)
+            {
+                const int srcStride = (locked2d && srcPitchLong > 0) ? (int)srcPitchLong
+                                                                     : (cur_stride_ > 0 ? cur_stride_ : (w * 4));
+                const size_t rowBytes = (size_t)w * 4; // Y210 每像素 4 bytes（16-bit container）
+
+                if (!ensure_upload_yuv(w, h))
+                {
+                    if (locked2d)
+                        buf2d->Unlock2D();
+                    else
+                        buf->Unlock();
+                    continue;
+                }
+
+                D3D11_MAPPED_SUBRESOURCE mapped{};
+                HRESULT hrMap = ctx_->Map(upload_y210_packed_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+                if (FAILED(hrMap))
+                {
+                    MDBG("DXGI: Map(upload_y210_packed_) failed", hrMap);
+                    if (locked2d)
+                        buf2d->Unlock2D();
+                    else
+                        buf->Unlock();
+                    continue;
+                }
+
+                uint8_t *dst = (uint8_t *)mapped.pData;
+                const int w2 = (w + 1) / 2;
+                for (int yy = 0; yy < h; ++yy)
+                {
+                    const uint8_t *srcRow = pData + (size_t)srcStride * (size_t)yy;
+                    uint8_t *dstRow = dst + (size_t)mapped.RowPitch * (size_t)yy;
+                    const uint16_t *src16 = reinterpret_cast<const uint16_t *>(srcRow);
+                    uint16_t *dst16 = reinterpret_cast<uint16_t *>(dstRow);
+                    const int rowWords = (int)(rowBytes / 2);
+
+                    // 每 4 個 uint16（Y0 U Y1 V）→ 寫成 1 個 R16G16B16A16_UINT texel
+                    for (int x = 0; x < w2; ++x)
+                    {
+                        const int srcX = x * 4;
+                        const uint16_t Y0 = src16[srcX + 0];
+                        const uint16_t U = src16[srcX + 1];
+                        const uint16_t Y1 = (srcX + 2 < rowWords) ? src16[srcX + 2] : Y0;
+                        const uint16_t V = (srcX + 3 < rowWords) ? src16[srcX + 3] : U;
+
+                        uint16_t *d4 = dst16 + x * 4;
+                        d4[0] = Y0;
+                        d4[1] = U;
+                        d4[2] = Y1;
+                        d4[3] = V;
+                    }
+                }
+
+                ctx_->Unmap(upload_y210_packed_.Get(), 0);
+                if (locked2d)
+                    buf2d->Unlock2D();
+                else
+                    buf->Unlock();
+
+                yuvTex = upload_y210_packed_.Get();
+            }
 
             if (cur_subtype_ == MFVideoFormat_NV12 || cur_subtype_ == MFVideoFormat_P010)
             {
@@ -2623,12 +2819,13 @@ void WinMFProvider::loop()
             (cur_subtype_ == MFVideoFormat_P010)     ? L"P010"
             : (cur_subtype_ == MFVideoFormat_NV12)   ? L"NV12"
             : (cur_subtype_ == MFVideoFormat_YUY2)   ? L"YUY2"
+            : (cur_subtype_ == MFVideoFormat_Y210)   ? L"Y210"
             : (cur_subtype_ == MFVideoFormat_ARGB32) ? L"ARGB32"
                                                      : L"?";
 
         const wchar_t *bitDepth =
-            (cur_subtype_ == MFVideoFormat_P010) ? L"10-bit"
-                                                 : L"8-bit"; // NV12 / ARGB32 皆 8-bit
+            (cur_subtype_ == MFVideoFormat_P010 || cur_subtype_ == MFVideoFormat_Y210) ? L"10-bit"
+                                                                                        : L"8-bit"; // NV12 / YUY2 / ARGB32 皆 8-bit
 
         double fps_show = fps_avg_ > 0.0 ? fps_avg_ : 0.0;
 
@@ -2686,6 +2883,10 @@ bool WinMFProvider::ensure_upload_yuv(int w, int h)
     if (cur_subtype_ == MFVideoFormat_YUY2)
     {
         return ensure_upload_yuy2_packed(w, h);
+    }
+    if (cur_subtype_ == MFVideoFormat_Y210)
+    {
+        return ensure_upload_y210_packed(w, h);
     }
 
     if (upload_yuv_)
@@ -2755,6 +2956,42 @@ bool WinMFProvider::ensure_upload_yuy2_packed(int w, int h)
 }
 
 // 建立/快取 Compute Shader 與 constant buffer
+bool WinMFProvider::ensure_upload_y210_packed(int w, int h)
+{
+    if (!d3d_)
+        return false;
+
+    const int w2 = (w + 1) / 2;
+    if (upload_y210_packed_)
+    {
+        D3D11_TEXTURE2D_DESC desc{};
+        upload_y210_packed_->GetDesc(&desc);
+        if ((int)desc.Width == w2 && (int)desc.Height == h && desc.Format == DXGI_FORMAT_R16G16B16A16_UINT)
+            return true;
+        upload_y210_packed_.Reset();
+    }
+
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = (UINT)w2;
+    td.Height = (UINT)h;
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.SampleDesc.Count = 1;
+    td.Format = DXGI_FORMAT_R16G16B16A16_UINT; // 給 Texture2D<uint4>.Load 用
+    td.Usage = D3D11_USAGE_DYNAMIC;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    td.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    td.MiscFlags = 0;
+
+    HRESULT hr = d3d_->CreateTexture2D(&td, nullptr, &upload_y210_packed_);
+    if (FAILED(hr))
+    {
+        MDBG("DXGI: Create upload Y210 packed texture failed", hr);
+        return false;
+    }
+    return true;
+}
+
 bool WinMFProvider::ensure_compute_shader()
 {
     if (cs_nv12_)

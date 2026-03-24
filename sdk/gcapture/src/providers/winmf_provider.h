@@ -114,7 +114,7 @@ private:
     int cur_fps_num_ = 0;
     int cur_fps_den_ = 1;
     int cur_stride_ = 0;
-    GUID cur_subtype_ = GUID_NULL; // MFVideoFormat_NV12 or MFVideoFormat_P010 or MFVideoFormat_YUY2
+    GUID cur_subtype_ = GUID_NULL; // MFVideoFormat_NV12 / MFVideoFormat_P010 / MFVideoFormat_YUY2 / MFVideoFormat_Y210
 
     // ---- D3D11 / DXGI ----
     ComPtr<ID3D11Device> d3d_;
@@ -137,10 +137,12 @@ private:
     ComPtr<ID3D11RenderTargetView> rtv_rgba_;
     ComPtr<ID3D11Texture2D> rt_stage_;
 
-    // CPU→GPU 上傳用的 NV12 / P010 / YUY2  texture
+    // CPU→GPU 上傳用的 NV12 / P010 texture
     Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_yuv_;
     // CPU→GPU 上傳用的 YUY2（打包成 RGBA8_UINT，寬度 = ceil(w/2)）
     Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_yuy2_packed_;
+    // CPU→GPU 上傳用的 Y210（打包成 R16G16B16A16_UINT，寬度 = ceil(w/2)）
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_y210_packed_;
 
     // +++ Compute shader (NV12 → RGBA) + UAV for output
     Microsoft::WRL::ComPtr<ID3D11ComputeShader> cs_nv12_;
@@ -155,6 +157,7 @@ private:
     ComPtr<ID3D11PixelShader> ps_nv12_;
     ComPtr<ID3D11PixelShader> ps_p010_;
     ComPtr<ID3D11PixelShader> ps_yuy2_;
+    ComPtr<ID3D11PixelShader> ps_y210_;
     ComPtr<ID3D11PixelShader> ps_fp16_to_rgba8_;
     ComPtr<ID3D11PixelShader> ps_fp16_to_preview_;
     ComPtr<ID3D11InputLayout> il_;
@@ -193,6 +196,8 @@ private:
     bool ensure_upload_yuv(int w, int h);
     // 確保 upload_yuy2_packed_ 尺寸 / format 正確（寬度 = ceil(w/2)）
     bool ensure_upload_yuy2_packed(int w, int h);
+    // 確保 upload_y210_packed_ 尺寸 / format 正確（寬度 = ceil(w/2)）
+    bool ensure_upload_y210_packed(int w, int h);
 
     // Compute shader 相關 helper
     bool ensure_compute_shader();
