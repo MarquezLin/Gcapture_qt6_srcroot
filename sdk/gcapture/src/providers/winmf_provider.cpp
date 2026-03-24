@@ -1659,7 +1659,7 @@ float4 main(PSIn i) : SV_Target
 bool WinMFProvider::create_shaders_and_states()
 {
     // Compile shaders
-    ComPtr<ID3DBlob> vsb, psb1, psb2, psb3, psb4, psb5, err;
+    ComPtr<ID3DBlob> vsb, psb1, psb2, psb3, psb4, psb5, psb6, err;
     if (FAILED(D3DCompile(g_vs_src, strlen(g_vs_src), nullptr, nullptr, nullptr,
                           "main", "vs_5_0", 0, 0, &vsb, &err)))
         return false;
@@ -1700,7 +1700,16 @@ bool WinMFProvider::create_shaders_and_states()
     if (FAILED(D3DCompile(g_ps_fp16_to_preview, strlen(g_ps_fp16_to_preview), nullptr, nullptr, nullptr,
                           "main", "ps_5_0", 0, 0, &psb5, &err)))
         return false;
+    if (FAILED(D3DCompile(g_ps_rgba8_to_preview, strlen(g_ps_rgba8_to_preview),
+                          nullptr, nullptr, nullptr,
+                          "main", "ps_5_0", 0, 0, &psb6, &err)))
+        return false;
     if (FAILED(d3d_->CreatePixelShader(psb5->GetBufferPointer(), psb5->GetBufferSize(), nullptr, &ps_fp16_to_preview_)))
+        return false;
+    if (FAILED(d3d_->CreatePixelShader(psb6->GetBufferPointer(),
+                                       psb6->GetBufferSize(),
+                                       nullptr,
+                                       &ps_rgba8_to_preview_)))
         return false;
 
     // Fullscreen quad (two triangles)
