@@ -1638,6 +1638,24 @@ float4 main(PSIn i) : SV_Target
 }
 )";
 
+static const char *g_ps_rgba8_to_preview = R"(
+Texture2D<float4> tex0 : register(t0);
+SamplerState samL : register(s0);
+
+struct PSIn
+{
+    float4 pos : SV_Position;
+    float2 uv  : TEXCOORD0;
+};
+
+float4 main(PSIn i) : SV_Target
+{
+    float4 c = tex0.Sample(samL, i.uv);
+    c.rgb = saturate(c.rgb);
+    return c;
+}
+)";
+
 bool WinMFProvider::create_shaders_and_states()
 {
     // Compile shaders
@@ -1750,6 +1768,8 @@ bool WinMFProvider::ensure_rt_and_pipeline(int w, int h)
     if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &rt_rgba_)))
         return false;
     if (FAILED(d3d_->CreateRenderTargetView(rt_rgba_.Get(), nullptr, &rtv_rgba_)))
+        return false;
+    if (FAILED(d3d_->CreateShaderResourceView(rt_rgba_.Get(), nullptr, &srv_rgba_)))
         return false;
 
     // 3) staging for readback
@@ -3002,7 +3022,8 @@ bool WinMFProvider::present_preview()
         return SUCCEEDED(hr);
     }
 
-    if (!preview_rtv_ || !srv_fp16_ || !vs_ || !ps_fp16_to_preview_)
+    // 10-bit preview：改吃 rt_rgba_，這樣 OSD 才會一起進 preview
+    if (!preview_rtv_ || !srv_rgba_ || !vs_ || !ps_rgba8_to_preview_)
         return false;
 
     UINT stride = sizeof(float) * 4, offset = 0;
@@ -3027,9 +3048,9 @@ bool WinMFProvider::present_preview()
     ctx_->ClearRenderTargetView(preview_rtv_.Get(), clear);
 
     ctx_->VSSetShader(vs_.Get(), nullptr, 0);
-    ctx_->PSSetShader(ps_fp16_to_preview_.Get(), nullptr, 0);
+    ctx_->PSSetShader(ps_rgba8_to_preview_.Get(), nullptr, 0);
 
-    ID3D11ShaderResourceView *srvs[1] = {srv_fp16_.Get()};
+    ID3D11ShaderResourceView *srvs[1] = {srv_rgba_.Get()};
     ctx_->PSSetShaderResources(0, 1, srvs);
 
     ID3D11SamplerState *ss = samp_.Get();

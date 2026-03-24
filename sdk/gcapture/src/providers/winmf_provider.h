@@ -129,6 +129,8 @@ private:
     ComPtr<ID3D11Texture2D> rt_fp16_;
     ComPtr<ID3D11RenderTargetView> rtv_fp16_;
     ComPtr<ID3D11ShaderResourceView> srv_fp16_;
+    ComPtr<ID3D11ShaderResourceView> srv_rgba_;
+    ComPtr<ID3D11PixelShader> ps_rgba8_to_preview_;
 
     // Render target (RGBA8) + staging for readback
     ComPtr<ID3D11Texture2D> rt_rgba_;
@@ -196,6 +198,7 @@ private:
     bool ensure_compute_shader();
     bool render_nv12_to_rgba_cs(ID3D11ShaderResourceView *srvY,
                                 ID3D11ShaderResourceView *srvUV);
+    bool blit_rgba8_to_preview10bit();
 
     // utils
     static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>
