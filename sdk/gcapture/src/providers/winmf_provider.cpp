@@ -1761,7 +1761,7 @@ bool WinMFProvider::ensure_rt_and_pipeline(int w, int h)
     td.Usage = D3D11_USAGE_DEFAULT;
     td.CPUAccessFlags = 0;
     td.MiscFlags = 0;
-    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
     td.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
     if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &rt_fp16_)))
@@ -1770,6 +1770,9 @@ bool WinMFProvider::ensure_rt_and_pipeline(int w, int h)
         return false;
     if (FAILED(d3d_->CreateShaderResourceView(rt_fp16_.Get(), nullptr, &srv_fp16_)))
         return false;
+
+    // rt 尺寸/格式若重建，compute path 的 UAV 也要跟著重建
+    rt_uav_.Reset();
 
     // 2) RGBA8 target for overlay/readback/current compatibility
     td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -1890,10 +1893,10 @@ bool WinMFProvider::render_yuv_to_fp16(ID3D11Texture2D *yuvTex)
             return false;
     }
 
-    // if (use_compute_nv12_ && cur_subtype_ == MFVideoFormat_NV12)
-    // {
-    //     return render_nv12_to_rgba_cs(srvY.Get(), srvUV.Get());
-    // }
+    if (use_compute_nv12_ && cur_subtype_ == MFVideoFormat_NV12)
+    {
+        return render_nv12_to_rgba_cs(srvY.Get(), srvUV.Get());
+    }
 
     // Set pipeline
     UINT stride = sizeof(float) * 4, offset = 0;
@@ -2814,23 +2817,23 @@ bool WinMFProvider::ensure_compute_shader()
     return true;
 }
 
-// 用 Compute Shader 把 NV12 轉成 rt_rgba_（RGBA8）
+// 用 Compute Shader 把 NV12 轉成 rt_fp16_（RGBA16F）
 bool WinMFProvider::render_nv12_to_rgba_cs(ID3D11ShaderResourceView *srvY,
                                            ID3D11ShaderResourceView *srvUV)
 {
-    if (!srvY || !srvUV || !rt_rgba_ || !ctx_)
+    if (!srvY || !srvUV || !rt_fp16_ || !ctx_)
         return false;
     if (!ensure_compute_shader())
         return false;
 
-    // 建立/快取 rt_rgba_ 對應的 UAV
+    // 建立/快取 rt_fp16_ 對應的 UAV
     if (!rt_uav_)
     {
-        // 讓 D3D 幫我們用這張貼圖本來的格式建立 UAV
-        HRESULT hr = d3d_->CreateUnorderedAccessView(rt_rgba_.Get(), nullptr, &rt_uav_);
+        // 讓 D3D 依 rt_fp16_ 原本格式建立 typed UAV（R16G16B16A16_FLOAT）
+        HRESULT hr = d3d_->CreateUnorderedAccessView(rt_fp16_.Get(), nullptr, &rt_uav_);
         if (FAILED(hr))
         {
-            MDBG("DXGI: CreateUnorderedAccessView(rt_rgba_) failed", hr);
+            MDBG("DXGI: CreateUnorderedAccessView(rt_fp16_) failed", hr);
             return false;
         }
     }

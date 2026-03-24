@@ -145,7 +145,7 @@ private:
     // +++ Compute shader (NV12 → RGBA) + UAV for output
     Microsoft::WRL::ComPtr<ID3D11ComputeShader> cs_nv12_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> cs_params_;           // 存 width/height
-    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> rt_uav_; // rt_rgba_ 對應的 UAV
+    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> rt_uav_; // NV12 compute path 對應的 UAV（目前綁 rt_fp16_）
 
     // 是否啟用 NV12 的 compute 路徑（之後你也可以拉成 UI 開關）
     bool use_compute_nv12_ = true; // 先預設開啟
