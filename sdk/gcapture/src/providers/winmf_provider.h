@@ -96,6 +96,16 @@ private:
     uint64_t last_pts_ns_ = 0;
     bool use_dxgi_ = false;
     bool cpu_path_ = true;
+    int current_index_ = -1;
+
+    // ---- True input signal probe (prefer DirectShow metadata over MF negotiated subtype) ----
+    bool signal_valid_ = false;
+    int signal_w_ = 0;
+    int signal_h_ = 0;
+    int signal_fps_num_ = 0;
+    int signal_fps_den_ = 1;
+    GUID signal_subtype_ = GUID_NULL;
+    uint64_t last_signal_probe_ms_ = 0;
 
     // ---- ProcAmp (CPU conversion path) ----
     // Default is neutral (128).
@@ -224,6 +234,7 @@ private:
     createSRV_P010(ID3D11Device *dev, ID3D11Texture2D *tex, bool uv);
 
     bool create_reader_cpu_only(int devIndex);
+    bool refresh_signal_probe(bool force);
 
     // ---- Recording (Media Foundation Sink Writer) ----
     struct MfRecorder;

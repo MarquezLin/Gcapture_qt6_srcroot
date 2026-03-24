@@ -21,6 +21,8 @@
 
 #include <setupapi.h>
 #include <devpkey.h>
+#include <dshow.h>
+#include <dvdmedia.h>
 #include <cmath>
 namespace
 {
@@ -41,6 +43,169 @@ namespace
 #include "../core/frame_converter.h"
 
 using Microsoft::WRL::ComPtr;
+
+struct DShowSignalProbeResult
+{
+    bool ok = false;
+    int width = 0;
+    int height = 0;
+    int fps_num = 0;
+    int fps_den = 1;
+    GUID subtype = GUID_NULL;
+};
+
+static bool dshow_extract_media_type(const AM_MEDIA_TYPE &mt, DShowSignalProbeResult &out)
+{
+    if (!mt.pbFormat)
+        return false;
+
+    LONG width = 0;
+    LONG height = 0;
+    REFERENCE_TIME avg = 0;
+
+    if ((mt.formattype == FORMAT_VideoInfo || mt.formattype == FORMAT_VideoInfo2) &&
+        mt.cbFormat >= sizeof(VIDEOINFOHEADER) && mt.pbFormat)
+    {
+        if (mt.formattype == FORMAT_VideoInfo2 && mt.cbFormat >= sizeof(VIDEOINFOHEADER2))
+        {
+            auto *vih2 = reinterpret_cast<const VIDEOINFOHEADER2 *>(mt.pbFormat);
+            width = vih2->bmiHeader.biWidth;
+            height = vih2->bmiHeader.biHeight;
+            avg = vih2->AvgTimePerFrame;
+        }
+        else
+        {
+            auto *vih = reinterpret_cast<const VIDEOINFOHEADER *>(mt.pbFormat);
+            width = vih->bmiHeader.biWidth;
+            height = vih->bmiHeader.biHeight;
+            avg = vih->AvgTimePerFrame;
+        }
+    }
+
+    out.width = (int)width;
+    out.height = (int)std::abs(height);
+    out.subtype = mt.subtype;
+    out.fps_den = 1;
+    out.fps_num = (avg > 0) ? (int)((10000000LL + avg / 2) / avg) : 0;
+    out.ok = (out.width > 0 && out.height > 0);
+    return out.ok;
+}
+
+static void dshow_free_media_type(AM_MEDIA_TYPE &mt)
+{
+    if (mt.cbFormat != 0 && mt.pbFormat)
+    {
+        CoTaskMemFree(mt.pbFormat);
+        mt.cbFormat = 0;
+        mt.pbFormat = nullptr;
+    }
+    if (mt.pUnk)
+    {
+        mt.pUnk->Release();
+        mt.pUnk = nullptr;
+    }
+}
+
+static bool dshow_probe_current_signal_by_index(int devIndex, DShowSignalProbeResult &out)
+{
+    out = {};
+
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool need_uninit = SUCCEEDED(hr);
+    if (hr != S_OK && hr != S_FALSE && hr != RPC_E_CHANGED_MODE)
+        return false;
+
+    bool ok = false;
+    do
+    {
+        ComPtr<ICreateDevEnum> devEnum;
+        hr = CoCreateInstance(CLSID_SystemDeviceEnum, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&devEnum));
+        if (FAILED(hr))
+            break;
+
+        ComPtr<IEnumMoniker> enumMoniker;
+        hr = devEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &enumMoniker, 0);
+        if (hr != S_OK)
+            break;
+
+        ComPtr<IMoniker> moniker;
+        ULONG fetched = 0;
+        int cur = 0;
+        while (enumMoniker->Next(1, &moniker, &fetched) == S_OK)
+        {
+            if (cur == devIndex)
+                break;
+            moniker.Reset();
+            ++cur;
+        }
+        if (!moniker)
+            break;
+
+        ComPtr<IBaseFilter> sourceFilter;
+        hr = moniker->BindToObject(nullptr, nullptr, IID_PPV_ARGS(&sourceFilter));
+        if (FAILED(hr))
+            break;
+
+        ComPtr<IGraphBuilder> graph;
+        hr = CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&graph));
+        if (FAILED(hr))
+            break;
+
+        hr = graph->AddFilter(sourceFilter.Get(), L"VideoCapture");
+        if (FAILED(hr))
+            break;
+
+        ComPtr<ICaptureGraphBuilder2> capBuilder;
+        hr = CoCreateInstance(CLSID_CaptureGraphBuilder2, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&capBuilder));
+        if (FAILED(hr))
+            break;
+        capBuilder->SetFiltergraph(graph.Get());
+
+        ComPtr<IAMStreamConfig> cfg;
+        hr = capBuilder->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video, sourceFilter.Get(), IID_PPV_ARGS(&cfg));
+        if (FAILED(hr) || !cfg)
+            break;
+
+        AM_MEDIA_TYPE *pmt = nullptr;
+        hr = cfg->GetFormat(&pmt);
+        if (SUCCEEDED(hr) && pmt)
+        {
+            ok = dshow_extract_media_type(*pmt, out);
+            dshow_free_media_type(*pmt);
+            CoTaskMemFree(pmt);
+            if (ok)
+                break;
+        }
+
+        int count = 0, capSize = 0;
+        hr = cfg->GetNumberOfCapabilities(&count, &capSize);
+        if (FAILED(hr) || count <= 0 || capSize <= 0)
+            break;
+
+        std::vector<unsigned char> caps((size_t)capSize);
+        for (int i = 0; i < count; ++i)
+        {
+            AM_MEDIA_TYPE *capsMt = nullptr;
+            if (FAILED(cfg->GetStreamCaps(i, &capsMt, caps.data())) || !capsMt)
+                continue;
+
+            if (dshow_extract_media_type(*capsMt, out))
+            {
+                dshow_free_media_type(*capsMt);
+                CoTaskMemFree(capsMt);
+                ok = true;
+                break;
+            }
+
+            dshow_free_media_type(*capsMt);
+            CoTaskMemFree(capsMt);
+        }
+    } while (false);
+
+    if (need_uninit)
+        CoUninitialize();
+    return ok;
+}
 
 static std::string hr_msg(HRESULT hr)
 {
@@ -231,19 +396,52 @@ bool WinMFProvider::getDeviceProps(gcap_device_props_t &out)
     return true;
 }
 
+bool WinMFProvider::refresh_signal_probe(bool force)
+{
+    if (current_index_ < 0)
+        return false;
+
+    const auto nowMs = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    if (!force && signal_valid_ && (nowMs - last_signal_probe_ms_ < 1000))
+        return true;
+
+    DShowSignalProbeResult probe{};
+    if (dshow_probe_current_signal_by_index(current_index_, probe) && probe.ok)
+    {
+        signal_valid_ = true;
+        signal_w_ = probe.width;
+        signal_h_ = probe.height;
+        signal_fps_num_ = probe.fps_num;
+        signal_fps_den_ = (probe.fps_den > 0) ? probe.fps_den : 1;
+        signal_subtype_ = probe.subtype;
+        last_signal_probe_ms_ = nowMs;
+        return true;
+    }
+
+    signal_valid_ = false;
+    last_signal_probe_ms_ = nowMs;
+    return false;
+}
+
 bool WinMFProvider::getSignalStatus(gcap_signal_status_t &out)
 {
+    refresh_signal_probe(false);
+
     memset(&out, 0, sizeof(out));
-    out.width = cur_w_;
-    out.height = cur_h_;
-    out.fps_num = (cur_fps_num_ > 0) ? cur_fps_num_ : 0;
-    out.fps_den = (cur_fps_den_ > 0) ? cur_fps_den_ : 1;
-    out.pixfmt = mfsub_to_gcap(cur_subtype_);
+
+    const bool useSignal = signal_valid_ && signal_w_ > 0 && signal_h_ > 0;
+    out.width = useSignal ? signal_w_ : cur_w_;
+    out.height = useSignal ? signal_h_ : cur_h_;
+    out.fps_num = useSignal ? signal_fps_num_ : ((cur_fps_num_ > 0) ? cur_fps_num_ : 0);
+    out.fps_den = useSignal ? signal_fps_den_ : ((cur_fps_den_ > 0) ? cur_fps_den_ : 1);
+    out.pixfmt = mfsub_to_gcap(useSignal ? signal_subtype_ : cur_subtype_);
     out.bit_depth = pixfmt_bitdepth(out.pixfmt);
     out.csp = GCAP_CSP_UNKNOWN;
     out.range = GCAP_RANGE_UNKNOWN;
     out.hdr = -1;
-    return (cur_w_ > 0 && cur_h_ > 0);
+    return (out.width > 0 && out.height > 0);
 }
 
 bool WinMFProvider::setProcessing(const gcap_processing_opts_t &opts)
@@ -581,6 +779,13 @@ bool WinMFProvider::create_reader_cpu_only(int devIndex)
 bool WinMFProvider::open(int index)
 {
     ensure_mf();
+    current_index_ = index;
+    signal_valid_ = false;
+    signal_w_ = signal_h_ = 0;
+    signal_fps_num_ = 0;
+    signal_fps_den_ = 1;
+    signal_subtype_ = GUID_NULL;
+    last_signal_probe_ms_ = 0;
 
     if (prefer_gpu_)
     {
@@ -619,6 +824,7 @@ bool WinMFProvider::open(int index)
 
                 ensure_rt_and_pipeline(cur_w_, cur_h_);
 
+                refresh_signal_probe(true);
                 emit_error(GCAP_OK,
                            "[WinMF] Using device default format (OBS-style)");
                 return true;
@@ -708,6 +914,8 @@ bool WinMFProvider::open(int index)
     // 只開第一個視訊串流
     reader_->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
     reader_->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
+
+    refresh_signal_probe(true);
 
     OutputDebugStringA("[WinMF] open(): using CPU pipeline\n");
     emit_error(GCAP_OK, "[WinMF] open(): using CPU pipeline");
@@ -817,6 +1025,14 @@ void WinMFProvider::close()
     d3d1_.Reset();
     ctx_.Reset();
     d3d_.Reset();
+
+    current_index_ = -1;
+    signal_valid_ = false;
+    signal_w_ = signal_h_ = 0;
+    signal_fps_num_ = 0;
+    signal_fps_den_ = 1;
+    signal_subtype_ = GUID_NULL;
+    last_signal_probe_ms_ = 0;
 }
 
 void WinMFProvider::setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user)
@@ -2911,19 +3127,29 @@ void WinMFProvider::loop()
             }
         }
 
+        // refresh_signal_probe(false);
+
+        const GUID osdSubtype = signal_valid_ ? signal_subtype_ : cur_subtype_;
+        const int osdW = signal_valid_ ? signal_w_ : cur_w_;
+        const int osdH = signal_valid_ ? signal_h_ : cur_h_;
+
         const wchar_t *fmtName =
-            (cur_subtype_ == MFVideoFormat_P010)     ? L"P010"
-            : (cur_subtype_ == MFVideoFormat_NV12)   ? L"NV12"
-            : (cur_subtype_ == MFVideoFormat_YUY2)   ? L"YUY2"
-            : (cur_subtype_ == MFVideoFormat_Y210)   ? L"Y210"
-            : (cur_subtype_ == MFVideoFormat_ARGB32) ? L"ARGB32"
-                                                     : L"?";
+            (osdSubtype == MFVideoFormat_P010)     ? L"P010"
+            : (osdSubtype == MFVideoFormat_NV12)   ? L"NV12"
+            : (osdSubtype == MFVideoFormat_YUY2)   ? L"YUY2"
+            : (osdSubtype == MFVideoFormat_Y210)   ? L"Y210"
+            : (osdSubtype == MFVideoFormat_ARGB32) ? L"ARGB32"
+                                                   : L"?";
 
         const wchar_t *bitDepth =
-            (cur_subtype_ == MFVideoFormat_P010 || cur_subtype_ == MFVideoFormat_Y210) ? L"10-bit"
-                                                                                       : L"8-bit"; // NV12 / YUY2 / ARGB32 皆 8-bit
+            (osdSubtype == MFVideoFormat_P010 || osdSubtype == MFVideoFormat_Y210) ? L"10-bit"
+                                                                                   : L"8-bit";
 
-        double fps_show = fps_avg_ > 0.0 ? fps_avg_ : 0.0;
+        double fps_show = 0.0;
+        if (signal_valid_ && signal_fps_num_ > 0 && signal_fps_den_ > 0)
+            fps_show = (double)signal_fps_num_ / (double)signal_fps_den_;
+        else if (fps_avg_ > 0.0)
+            fps_show = fps_avg_;
 
         const wchar_t *gpuName =
             (!gpu_name_w_.empty() ? gpu_name_w_.c_str() : L"(GPU: unknown)");
@@ -2931,11 +3157,11 @@ void WinMFProvider::loop()
         wchar_t line[512];
         swprintf(line,
                  512,
-                 L"%s | GPU: %s | %dx%d @ %.2f fps | %s %s | #%llu",
+                 L"%s | GPU: %s | Signal: %dx%d @ %.2f fps | %s %s | #%llu",
                  (wdev[0] ? wdev : L"Device"),
                  gpuName,
-                 cur_w_,
-                 cur_h_,
+                 osdW,
+                 osdH,
                  fps_show,
                  fmtName,
                  bitDepth,
