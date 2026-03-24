@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>800</width>
-    <height>600</height>
+    <width>695</width>
+    <height>151</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -19,8 +19,19 @@
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QGridLayout" name="gridLayout">
-    <item row="0" column="0" colspan="2">
-     <widget class="QComboBox" name="comboDevice"/>
+    <item row="1" column="2">
+     <widget class="QPushButton" name="btnShowEdid">
+      <property name="text">
+       <string>EDID</string>
+      </property>
+     </widget>
+    </item>
+    <item row="1" column="3">
+     <widget class="QPushButton" name="btnSnapshot">
+      <property name="text">
+       <string>Snapshot</string>
+      </property>
+     </widget>
     </item>
     <item row="0" column="2">
      <widget class="QPushButton" name="btnStart">
@@ -29,28 +40,15 @@
       </property>
      </widget>
     </item>
-    <item row="1" column="2">
-     <widget class="QPushButton" name="btnShowEdid">
+    <item row="0" column="3">
+     <widget class="QPushButton" name="btnStop">
       <property name="text">
-       <string>EDID</string>
+       <string>Stop</string>
       </property>
      </widget>
     </item>
-    <item row="4" column="0" colspan="5">
-     <widget class="QLabel" name="labelView">
-      <property name="enabled">
-       <bool>false</bool>
-      </property>
-      <property name="sizePolicy">
-       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-        <horstretch>0</horstretch>
-        <verstretch>0</verstretch>
-       </sizepolicy>
-      </property>
-      <property name="text">
-       <string/>
-      </property>
-     </widget>
+    <item row="1" column="0">
+     <widget class="QComboBox" name="comboBackend"/>
     </item>
     <item row="2" column="0" colspan="5">
      <widget class="QLabel" name="labelinfo1">
@@ -69,23 +67,16 @@
       </property>
      </widget>
     </item>
+    <item row="0" column="0" colspan="2">
+     <widget class="QComboBox" name="comboDevice"/>
+    </item>
     <item row="1" column="1">
      <widget class="QComboBox" name="comboGpu"/>
     </item>
-    <item row="1" column="0">
-     <widget class="QComboBox" name="comboBackend"/>
-    </item>
-    <item row="1" column="3">
-     <widget class="QPushButton" name="btnSnapshot">
+    <item row="0" column="4">
+     <widget class="QPushButton" name="btnPreview">
       <property name="text">
-       <string>Snapshot</string>
-      </property>
-     </widget>
-    </item>
-    <item row="0" column="3">
-     <widget class="QPushButton" name="btnStop">
-      <property name="text">
-       <string>Stop</string>
+       <string>Show Preview</string>
       </property>
      </widget>
     </item>
@@ -96,7 +87,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>800</width>
+     <width>695</width>
      <height>21</height>
     </rect>
    </property>

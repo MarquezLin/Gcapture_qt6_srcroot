@@ -57,6 +57,8 @@ private slots:
     void onShowDisplayInfo();
     void onSnapshot();
 
+    void on_btnPreview_clicked();
+
 private:
     Ui::MainWindow *ui;
     // QLabel *view_;

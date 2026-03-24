@@ -3,18 +3,19 @@
 #include "ui_previewwindow.h"
 
 previewwindow::previewwindow(QWidget *parent)
-    : QWidget(parent)
-    , ui(new Ui::previewwindow)
+    : QWidget(parent), ui(new Ui::previewwindow)
 {
     ui->setupUi(this);
+
+    setAttribute(Qt::WA_DeleteOnClose, false);
+
     auto *layout = new QVBoxLayout(ui->previewHost);
-    layout->setContentsMargins(0,0,0,0);
+    layout->setContentsMargins(0, 0, 0, 0);
 
     auto *w = new d3dpreviewwidget(ui->previewHost);
     layout->addWidget(w);
 
     previewWidget_ = w;
-
 }
 
 previewwindow::~previewwindow()
@@ -22,7 +23,13 @@ previewwindow::~previewwindow()
     delete ui;
 }
 
-void* previewwindow::previewHwnd() const
+void *previewwindow::previewHwnd() const
 {
-    return reinterpret_cast<void*>(previewWidget_->winId());
+    return reinterpret_cast<void *>(previewWidget_->winId());
+}
+
+void previewwindow::closeEvent(QCloseEvent *event)
+{
+    event->ignore();
+    hide();
 }

@@ -2825,7 +2825,7 @@ void WinMFProvider::loop()
 
         const wchar_t *bitDepth =
             (cur_subtype_ == MFVideoFormat_P010 || cur_subtype_ == MFVideoFormat_Y210) ? L"10-bit"
-                                                                                        : L"8-bit"; // NV12 / YUY2 / ARGB32 皆 8-bit
+                                                                                       : L"8-bit"; // NV12 / YUY2 / ARGB32 皆 8-bit
 
         double fps_show = fps_avg_ > 0.0 ? fps_avg_ : 0.0;
 
@@ -3178,6 +3178,19 @@ bool WinMFProvider::ensure_preview_swapchain(int w, int h)
     if (w <= 0 || h <= 0)
         return false;
 
+    RECT rc{};
+    if (!GetClientRect((HWND)preview_hwnd_, &rc))
+        return false;
+
+    int clientW = rc.right - rc.left;
+    int clientH = rc.bottom - rc.top;
+
+    if (clientW <= 0 || clientH <= 0)
+    {
+        clientW = w;
+        clientH = h;
+    }
+
     ComPtr<IDXGIDevice> dxgiDev;
     if (FAILED(d3d_.As(&dxgiDev)) || !dxgiDev)
         return false;
@@ -3195,8 +3208,8 @@ bool WinMFProvider::ensure_preview_swapchain(int w, int h)
     if (!preview_swapchain_)
     {
         DXGI_SWAP_CHAIN_DESC1 sd{};
-        sd.Width = (UINT)w;
-        sd.Height = (UINT)h;
+        sd.Width = (UINT)clientW;
+        sd.Height = (UINT)clientH;
         sd.Format = preview_swapchain_10bit_
                         ? DXGI_FORMAT_R10G10B10A2_UNORM
                         : DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -3220,15 +3233,15 @@ bool WinMFProvider::ensure_preview_swapchain(int w, int h)
 
         factory->MakeWindowAssociation((HWND)preview_hwnd_, DXGI_MWA_NO_ALT_ENTER);
     }
-    else if (preview_w_ != w || preview_h_ != h)
+    else if (preview_w_ != clientW || preview_h_ != clientH)
     {
         preview_rtv_.Reset();
         preview_backbuf_.Reset();
 
         HRESULT hr = preview_swapchain_->ResizeBuffers(
             0,
-            (UINT)w,
-            (UINT)h,
+            (UINT)clientW,
+            (UINT)clientH,
             DXGI_FORMAT_UNKNOWN,
             0);
 
@@ -3248,8 +3261,8 @@ bool WinMFProvider::ensure_preview_swapchain(int w, int h)
             return false;
     }
 
-    preview_w_ = w;
-    preview_h_ = h;
+    preview_w_ = clientW;
+    preview_h_ = clientH;
     return true;
 }
 
@@ -3261,34 +3274,46 @@ bool WinMFProvider::present_preview()
     ID3D11RenderTargetView *nullRTV = nullptr;
     ctx_->OMSetRenderTargets(1, &nullRTV, nullptr);
 
-    if (!preview_swapchain_10bit_)
-    {
-        if (!rt_rgba_)
-            return false;
-
-        ctx_->CopyResource(preview_backbuf_.Get(), rt_rgba_.Get());
-        HRESULT hr = preview_swapchain_->Present(1, 0);
-        return SUCCEEDED(hr);
-    }
-
-    // 10-bit preview：改吃 rt_rgba_，這樣 OSD 才會一起進 preview
-    if (!preview_rtv_ || !srv_rgba_ || !vs_ || !ps_rgba8_to_preview_)
+    if (!preview_rtv_ || !vs_)
         return false;
 
-    UINT stride = sizeof(float) * 4, offset = 0;
+    const float srcW = static_cast<float>(cur_w_);
+    const float srcH = static_cast<float>(cur_h_);
+    const float dstW = static_cast<float>(preview_w_);
+    const float dstH = static_cast<float>(preview_h_);
+
+    if (srcW <= 0.0f || srcH <= 0.0f || dstW <= 0.0f || dstH <= 0.0f)
+        return false;
+
+    float drawW = dstW;
+    float drawH = dstH;
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+
+    const float srcAspect = srcW / srcH;
+    const float dstAspect = dstW / dstH;
+
+    if (srcAspect > dstAspect)
+    {
+        drawW = dstW;
+        drawH = dstW / srcAspect;
+        offsetX = 0.0f;
+        offsetY = (dstH - drawH) * 0.5f;
+    }
+    else
+    {
+        drawH = dstH;
+        drawW = dstH * srcAspect;
+        offsetX = (dstW - drawW) * 0.5f;
+        offsetY = 0.0f;
+    }
+
+    UINT stride = sizeof(float) * 4;
+    UINT offset = 0;
     ID3D11Buffer *pVB = vb_.Get();
     ctx_->IASetVertexBuffers(0, 1, &pVB, &stride, &offset);
     ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ctx_->IASetInputLayout(il_.Get());
-
-    D3D11_VIEWPORT vp{};
-    vp.TopLeftX = 0.0f;
-    vp.TopLeftY = 0.0f;
-    vp.Width = static_cast<FLOAT>(preview_w_);
-    vp.Height = static_cast<FLOAT>(preview_h_);
-    vp.MinDepth = 0.0f;
-    vp.MaxDepth = 1.0f;
-    ctx_->RSSetViewports(1, &vp);
 
     ID3D11RenderTargetView *rtv = preview_rtv_.Get();
     ctx_->OMSetRenderTargets(1, &rtv, nullptr);
@@ -3296,10 +3321,36 @@ bool WinMFProvider::present_preview()
     const float clear[4] = {0, 0, 0, 1};
     ctx_->ClearRenderTargetView(preview_rtv_.Get(), clear);
 
-    ctx_->VSSetShader(vs_.Get(), nullptr, 0);
-    ctx_->PSSetShader(ps_rgba8_to_preview_.Get(), nullptr, 0);
+    D3D11_VIEWPORT vp{};
+    vp.TopLeftX = offsetX;
+    vp.TopLeftY = offsetY;
+    vp.Width = drawW;
+    vp.Height = drawH;
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    ctx_->RSSetViewports(1, &vp);
 
-    ID3D11ShaderResourceView *srvs[1] = {srv_rgba_.Get()};
+    ctx_->VSSetShader(vs_.Get(), nullptr, 0);
+
+    ID3D11ShaderResourceView *srv = nullptr;
+    if (preview_swapchain_10bit_)
+    {
+        if (!srv_fp16_ || !ps_fp16_to_preview_)
+            return false;
+
+        ctx_->PSSetShader(ps_fp16_to_preview_.Get(), nullptr, 0);
+        srv = srv_fp16_.Get();
+    }
+    else
+    {
+        if (!srv_rgba_ || !ps_rgba8_to_preview_)
+            return false;
+
+        ctx_->PSSetShader(ps_rgba8_to_preview_.Get(), nullptr, 0);
+        srv = srv_rgba_.Get();
+    }
+
+    ID3D11ShaderResourceView *srvs[1] = {srv};
     ctx_->PSSetShaderResources(0, 1, srvs);
 
     ID3D11SamplerState *ss = samp_.Get();

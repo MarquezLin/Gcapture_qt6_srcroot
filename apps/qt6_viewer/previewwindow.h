@@ -2,10 +2,12 @@
 #define PREVIEWWINDOW_H
 
 #include <QWidget>
+#include <QCloseEvent>
 #include "d3dpreviewwidget.h"
 
-namespace Ui {
-class previewwindow;
+namespace Ui
+{
+    class previewwindow;
 }
 
 class d3dpreviewwidget;
@@ -18,7 +20,10 @@ public:
     explicit previewwindow(QWidget *parent = nullptr);
     ~previewwindow();
 
-    void* previewHwnd() const;
+    void *previewHwnd() const;
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private:
     Ui::previewwindow *ui;

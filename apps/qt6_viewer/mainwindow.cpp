@@ -256,8 +256,11 @@ void MainWindow::onStart()
         previewWindow_ = new previewwindow();
         previewWindow_->setWindowTitle(QStringLiteral("Preview"));
         previewWindow_->resize(1280, 720);
-        previewWindow_->show();
     }
+
+    previewWindow_->show();
+    previewWindow_->raise();
+    previewWindow_->activateWindow();
 
     void *hwnd = previewWindow_->previewHwnd();
     qDebug() << "preview hwnd =" << hwnd;
@@ -908,3 +911,18 @@ void MainWindow::appendDebugLog(const QString &line)
     const QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     debugText_->append(QStringLiteral("[%1] %2").arg(ts, line));
 }
+
+void MainWindow::on_btnPreview_clicked()
+{
+    if (!previewWindow_)
+    {
+        previewWindow_ = new previewwindow();
+        previewWindow_->setWindowTitle(QStringLiteral("Preview"));
+        previewWindow_->resize(1280, 720);
+    }
+
+    previewWindow_->show();
+    previewWindow_->raise();
+    previewWindow_->activateWindow();
+}
+
