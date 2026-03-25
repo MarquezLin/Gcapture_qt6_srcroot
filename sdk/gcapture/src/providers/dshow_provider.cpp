@@ -1,98 +1,59 @@
+
+#include <windows.h>
+#include <dshow.h>
+#include <d3d9.h>
+#include <vmr9.h>
+
 #include "dshow_provider.h"
 #include <objbase.h>
 #include <strsafe.h>
 #include <initguid.h>
-#include <dvdmedia.h> // MEDIASUBTYPE_NV12 / YUY2
-#include "../core/frame_converter.h"
+#include <dvdmedia.h>
+#include <stdio.h>
 
 using Microsoft::WRL::ComPtr;
 
-// 放在匿名 namespace 裡，做全域一次性的 COM 初始化
 namespace
 {
-    void global_com_init()
+    std::once_flag g_comOnce;
+    HWND g_previewHwnd = nullptr;
+    long g_previewW = 0;
+    long g_previewH = 0;
+
+    void dshow_log(const char *msg)
     {
-        static std::once_flag flag;
-        std::call_once(flag, []
-                       {
-            HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-            // 和 WinMF 一樣處理：S_OK / S_FALSE / RPC_E_CHANGED_MODE 都當成 OK，用不到就只 log
-            if (hr != S_OK && hr != S_FALSE && hr != RPC_E_CHANGED_MODE)
-            {
-                OutputDebugStringA("[DShow] CoInitializeEx failed\n");
-            } });
-    }
-}
-
-// ------------------------------------------------------------
-// SampleGrabber / NullRenderer CLSID / IID 定義
-// ------------------------------------------------------------
-DEFINE_GUID(CLSID_SampleGrabber,
-            0xc1f400a0, 0x3f08, 0x11d3,
-            0x9f, 0x0b, 0x00, 0x60, 0x08, 0x03, 0x9e, 0x37);
-
-DEFINE_GUID(IID_ISampleGrabber,
-            0x6b652fff, 0x11fe, 0x4fce,
-            0x92, 0xad, 0x02, 0x66, 0xb5, 0xd7, 0xc8, 0x07);
-
-DEFINE_GUID(IID_ISampleGrabberCB,
-            0x0579154a, 0x2b53, 0x4994,
-            0xb0, 0x5f, 0x8f, 0xf8, 0x6c, 0xa0, 0x00, 0x08);
-
-DEFINE_GUID(CLSID_NullRenderer,
-            0xc1f400a4, 0x3f08, 0x11d3,
-            0x9f, 0x0b, 0x00, 0x60, 0x08, 0x03, 0x9e, 0x37);
-
-// ============================================================
-// SampleGrabberCBImpl
-// ============================================================
-
-SampleGrabberCBImpl::SampleGrabberCBImpl(DShowProvider *owner)
-    : owner_(owner)
-{
-}
-
-STDMETHODIMP SampleGrabberCBImpl::QueryInterface(REFIID riid, void **ppv)
-{
-    if (!ppv)
-        return E_POINTER;
-
-    if (riid == IID_IUnknown || riid == IID_ISampleGrabberCB)
-    {
-        *ppv = static_cast<ISampleGrabberCB *>(this);
-        AddRef();
-        return S_OK;
+        OutputDebugStringA(msg);
     }
 
-    *ppv = nullptr;
-    return E_NOINTERFACE;
-}
+    void dshow_log_hr(const char *prefix, HRESULT hr)
+    {
+        char sys[512] = {};
+        FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                       nullptr, static_cast<DWORD>(hr), 0,
+                       sys, static_cast<DWORD>(sizeof(sys)), nullptr);
 
-STDMETHODIMP_(ULONG)
-SampleGrabberCBImpl::AddRef()
-{
-    return ++refCount_;
-}
+        char buf[1024] = {};
+        sprintf_s(buf, "[DShow] %s hr=0x%08X (%s)\n", prefix, static_cast<unsigned>(hr), sys[0] ? sys : "n/a");
+        OutputDebugStringA(buf);
+    }
 
-STDMETHODIMP_(ULONG)
-SampleGrabberCBImpl::Release()
-{
-    ULONG r = --refCount_;
-    if (r == 0)
-        delete this;
-    return r;
+#define HR_CHECK_LOG(x)                              \
+    do                                               \
+    {                                                \
+        HRESULT _hr = (x);                           \
+        if (FAILED(_hr))                             \
+        {                                            \
+            dshow_log_hr(#x, _hr);                   \
+            return false;                            \
+        }                                            \
+        else                                         \
+        {                                            \
+            char _buf[512] = {};                     \
+            sprintf_s(_buf, "[DShow] OK: %s\n", #x); \
+            OutputDebugStringA(_buf);                \
+        }                                            \
+    } while (0)
 }
-
-STDMETHODIMP SampleGrabberCBImpl::BufferCB(double sampleTime, BYTE *buffer, long len)
-{
-    if (owner_)
-        owner_->onSample(sampleTime, buffer, len);
-    return S_OK;
-}
-
-// ============================================================
-// DShowProvider
-// ============================================================
 
 DShowProvider::DShowProvider()
 {
@@ -108,12 +69,14 @@ DShowProvider::~DShowProvider()
 
 void DShowProvider::ensure_com()
 {
-    global_com_init();
+    std::call_once(g_comOnce, []
+                   {
+        HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        dshow_log_hr("COM initialized", hr); });
 }
 
 void DShowProvider::uninit_com()
 {
-    // 不再呼叫 CoUninitialize()，交給系統在 process 結束時清理
 }
 
 void DShowProvider::setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user)
@@ -124,7 +87,46 @@ void DShowProvider::setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, voi
     user_ = user;
 }
 
-// Enumerate devices
+bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    memset(&out, 0, sizeof(out));
+    out.width = width_;
+    out.height = height_;
+    out.fps_num = profile_.fps_num;
+    out.fps_den = profile_.fps_den;
+    out.range = GCAP_RANGE_UNKNOWN;
+    out.csp = GCAP_CSP_UNKNOWN;
+    out.hdr = 0;
+
+    if (subtype_ == MEDIASUBTYPE_NV12)
+    {
+        out.pixfmt = GCAP_FMT_NV12;
+        out.bit_depth = 8;
+    }
+    else if (subtype_ == MEDIASUBTYPE_YUY2)
+    {
+        out.pixfmt = GCAP_FMT_YUY2;
+        out.bit_depth = 8;
+    }
+    else
+    {
+        out.pixfmt = GCAP_FMT_ARGB;
+        out.bit_depth = 8;
+    }
+
+    return (out.width > 0 && out.height > 0);
+}
+
+bool DShowProvider::setPreview(const gcap_preview_desc_t &desc)
+{
+    g_previewHwnd = reinterpret_cast<HWND>(desc.hwnd);
+    char buf[128];
+    sprintf_s(buf, "[DShow] setPreview hwnd=%p\n", g_previewHwnd);
+    OutputDebugStringA(buf);
+    return true;
+}
+
 bool DShowProvider::enumerate(std::vector<gcap_device_info_t> &list)
 {
     ensure_com();
@@ -159,60 +161,56 @@ bool DShowProvider::enumerate(std::vector<gcap_device_info_t> &list)
             {
                 gcap_device_info_t di{};
                 di.index = index;
-
                 char nameBuf[128] = {};
-                WideCharToMultiByte(CP_UTF8, 0,
-                                    varName.bstrVal, -1,
-                                    nameBuf, sizeof(nameBuf),
-                                    nullptr, nullptr);
+                WideCharToMultiByte(CP_UTF8, 0, varName.bstrVal, -1,
+                                    nameBuf, sizeof(nameBuf), nullptr, nullptr);
                 strncpy_s(di.name, nameBuf, sizeof(di.name) - 1);
                 di.caps = 0;
                 di.symbolic_link[0] = '\0';
-
                 list.push_back(di);
+
+                char buf[256] = {};
+                sprintf_s(buf, "[DShow] enumerate device[%d] = %s\n", index, nameBuf);
+                OutputDebugStringA(buf);
                 ++index;
             }
-
             VariantClear(&varName);
         }
-
         moniker.Reset();
     }
 
     return !list.empty();
 }
 
-// Build graph: Source -> SampleGrabber -> NullRenderer
 bool DShowProvider::buildGraphForDevice(int index)
 {
+    dshow_log("[DShow] === buildGraphForDevice begin (VMR9 preview path) ===\n");
+
     graph_.Reset();
     mediaControl_.Reset();
     mediaEvent_.Reset();
     sourceFilter_.Reset();
     grabberFilter_.Reset();
     nullRenderer_.Reset();
-    width_ = height_ = 0;
+    width_ = 0;
+    height_ = 0;
     subtype_ = MEDIASUBTYPE_NULL;
 
-    HRESULT hr = CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_PPV_ARGS(&graph_));
-    if (FAILED(hr))
-        return false;
+    HR_CHECK_LOG(CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&graph_)));
+    HR_CHECK_LOG(graph_.As(&mediaControl_));
+    HR_CHECK_LOG(graph_.As(&mediaEvent_));
 
-    graph_.As(&mediaControl_);
-    graph_.As(&mediaEvent_);
-
-    // find device by index
     ComPtr<ICreateDevEnum> devEnum;
-    hr = CoCreateInstance(CLSID_SystemDeviceEnum, nullptr, CLSCTX_INPROC_SERVER,
-                          IID_PPV_ARGS(&devEnum));
-    if (FAILED(hr))
-        return false;
+    HR_CHECK_LOG(CoCreateInstance(CLSID_SystemDeviceEnum, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&devEnum)));
 
     ComPtr<IEnumMoniker> enumMoniker;
-    hr = devEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &enumMoniker, 0);
+    HRESULT hr = devEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &enumMoniker, 0);
     if (hr != S_OK)
+    {
+        dshow_log_hr("CreateClassEnumerator(CLSID_VideoInputDeviceCategory)", hr);
         return false;
+    }
+    dshow_log("[DShow] OK: CreateClassEnumerator(CLSID_VideoInputDeviceCategory)\n");
 
     ComPtr<IMoniker> moniker;
     ULONG fetched = 0;
@@ -225,115 +223,130 @@ bool DShowProvider::buildGraphForDevice(int index)
         ++cur;
     }
     if (!moniker)
-        return false;
-
-    hr = moniker->BindToObject(nullptr, nullptr, IID_PPV_ARGS(&sourceFilter_));
-    if (FAILED(hr))
-        return false;
-
-    hr = graph_->AddFilter(sourceFilter_.Get(), L"VideoCapture");
-    if (FAILED(hr))
-        return false;
-
-    // SampleGrabber
-    ComPtr<ISampleGrabber> grabber;
-    hr = CoCreateInstance(CLSID_SampleGrabber, nullptr, CLSCTX_INPROC_SERVER,
-                          IID_ISampleGrabber, (void **)&grabber);
-    if (FAILED(hr))
-        return false;
-
-    grabber.As(&grabberFilter_);
-    hr = graph_->AddFilter(grabberFilter_.Get(), L"SampleGrabber");
-    if (FAILED(hr))
-        return false;
-
-    // NullRenderer
-    hr = CoCreateInstance(CLSID_NullRenderer, nullptr, CLSCTX_INPROC_SERVER,
-                          IID_PPV_ARGS(&nullRenderer_));
-    if (FAILED(hr))
-        return false;
-
-    hr = graph_->AddFilter(nullRenderer_.Get(), L"NullRenderer");
-    if (FAILED(hr))
-        return false;
-
-    // Set media type: prefer NV12, fallback YUY2
-    AM_MEDIA_TYPE mt{};
-    mt.majortype = MEDIATYPE_Video;
-    mt.formattype = FORMAT_VideoInfo;
-    mt.subtype = MEDIASUBTYPE_NV12;
-    hr = grabber->SetMediaType(&mt);
-    if (FAILED(hr))
     {
-        mt.subtype = MEDIASUBTYPE_YUY2;
-        grabber->SetMediaType(&mt);
+        dshow_log("[DShow] device moniker not found\n");
+        return false;
     }
 
-    // CaptureGraphBuilder2 to connect pins
-    ComPtr<ICaptureGraphBuilder2> capBuilder;
-    hr = CoCreateInstance(CLSID_CaptureGraphBuilder2, nullptr, CLSCTX_INPROC_SERVER,
-                          IID_PPV_ARGS(&capBuilder));
-    if (FAILED(hr))
-        return false;
-
-    capBuilder->SetFiltergraph(graph_.Get());
-
-    hr = capBuilder->RenderStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
-                                  sourceFilter_.Get(), grabberFilter_.Get(), nullRenderer_.Get());
-    if (FAILED(hr))
-        return false;
-
-    // ---- NEW: set SampleGrabber callback here ----
-    grabberFilter_.As(&grabber);
-    if (!grabber)
-        return false;
-
-    SampleGrabberCBImpl *cb = new SampleGrabberCBImpl(this);
-    grabber->SetCallback(cb, 1); // 1 = BufferCB
-    cb->Release();
-
-    // get connected media type to know real width/height/subtype
-    AM_MEDIA_TYPE cmt{};
-    ZeroMemory(&cmt, sizeof(cmt));
-    if (SUCCEEDED(grabber->GetConnectedMediaType(&cmt)))
     {
-        if (cmt.formattype == FORMAT_VideoInfo &&
-            cmt.cbFormat >= sizeof(VIDEOINFOHEADER) &&
-            cmt.pbFormat)
+        ComPtr<IPropertyBag> propBag;
+        if (SUCCEEDED(moniker->BindToStorage(nullptr, nullptr, IID_PPV_ARGS(&propBag))))
         {
-            VIDEOINFOHEADER *vih = reinterpret_cast<VIDEOINFOHEADER *>(cmt.pbFormat);
-            width_ = vih->bmiHeader.biWidth;
-            height_ = std::abs(vih->bmiHeader.biHeight);
-            subtype_ = cmt.subtype;
+            VARIANT varName;
+            VariantInit(&varName);
+            if (SUCCEEDED(propBag->Read(L"FriendlyName", &varName, nullptr)))
+            {
+                char nameBuf[256] = {};
+                WideCharToMultiByte(CP_UTF8, 0, varName.bstrVal, -1,
+                                    nameBuf, sizeof(nameBuf), nullptr, nullptr);
+                char buf[320] = {};
+                sprintf_s(buf, "[DShow] selected device[%d] = %s\n", index, nameBuf);
+                OutputDebugStringA(buf);
+            }
+            VariantClear(&varName);
         }
-
-        if (cmt.cbFormat && cmt.pbFormat)
-            CoTaskMemFree(cmt.pbFormat);
-        if (cmt.pUnk)
-            cmt.pUnk->Release();
     }
 
-    if (width_ <= 0 || height_ <= 0)
+    HR_CHECK_LOG(moniker->BindToObject(nullptr, nullptr, IID_PPV_ARGS(&sourceFilter_)));
+    HR_CHECK_LOG(graph_->AddFilter(sourceFilter_.Get(), L"VideoCapture"));
+
+    // Use nullRenderer_ member to hold VMR9 filter to avoid changing header.
+    HR_CHECK_LOG(CoCreateInstance(CLSID_VideoMixingRenderer9, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&nullRenderer_)));
+    HR_CHECK_LOG(graph_->AddFilter(nullRenderer_.Get(), L"VMR9"));
+
+    ComPtr<IVMRFilterConfig9> vmrConfig;
+    HR_CHECK_LOG(nullRenderer_.As(&vmrConfig));
+    HR_CHECK_LOG(vmrConfig->SetNumberOfStreams(1));
+    HR_CHECK_LOG(vmrConfig->SetRenderingMode(VMR9Mode_Windowless));
+
+    // ComPtr<IVMRWindowlessControl9> vmrWindowless;
+    HR_CHECK_LOG(nullRenderer_.As(&vmrWindowless));
+    if (!g_previewHwnd)
+    {
+        dshow_log("[DShow] preview hwnd is null\n");
         return false;
+    }
+    HR_CHECK_LOG(vmrWindowless->SetVideoClippingWindow(g_previewHwnd));
+    HR_CHECK_LOG(vmrWindowless->SetAspectRatioMode(VMR9ARMode_LetterBox));
+    RECT rc{};
+    GetClientRect(g_previewHwnd, &rc);
 
-    // configure SampleGrabber
-    grabber->SetOneShot(FALSE);
-    grabber->SetBufferSamples(FALSE);
+    {
+        char buf[256];
+        sprintf_s(buf, "[DShow] client rect = (%ld,%ld)-(%ld,%ld)\n",
+                  rc.left, rc.top, rc.right, rc.bottom);
+        OutputDebugStringA(buf);
+    }
 
-    // callback 之後在 open() 設
+    HR_CHECK_LOG(vmrWindowless->SetVideoPosition(nullptr, &rc));
+    ComPtr<ICaptureGraphBuilder2> capBuilder;
+    HR_CHECK_LOG(CoCreateInstance(CLSID_CaptureGraphBuilder2, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&capBuilder)));
+    HR_CHECK_LOG(capBuilder->SetFiltergraph(graph_.Get()));
+    HR_CHECK_LOG(capBuilder->RenderStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
+                                          sourceFilter_.Get(), nullptr, nullRenderer_.Get()));
+
+    ComPtr<IAMStreamConfig> streamConfig;
+    hr = capBuilder->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
+                                   sourceFilter_.Get(), IID_PPV_ARGS(&streamConfig));
+    if (SUCCEEDED(hr) && streamConfig)
+    {
+        AM_MEDIA_TYPE *pmt = nullptr;
+        hr = streamConfig->GetFormat(&pmt);
+        if (SUCCEEDED(hr) && pmt)
+        {
+            dshow_log("[DShow] OK: IAMStreamConfig::GetFormat()\n");
+            if ((pmt->formattype == FORMAT_VideoInfo || pmt->formattype == FORMAT_VideoInfo2) &&
+                pmt->cbFormat >= sizeof(VIDEOINFOHEADER) && pmt->pbFormat)
+            {
+                VIDEOINFOHEADER *vih = reinterpret_cast<VIDEOINFOHEADER *>(pmt->pbFormat);
+                width_ = vih->bmiHeader.biWidth;
+                height_ = abs(vih->bmiHeader.biHeight);
+                subtype_ = pmt->subtype;
+
+                char buf[256] = {};
+                sprintf_s(buf, "[DShow] stream format: width=%d height=%d subtype={%08lX-0000-0010-...}\n",
+                          width_, height_, subtype_.Data1);
+                OutputDebugStringA(buf);
+            }
+            if (pmt->cbFormat && pmt->pbFormat)
+                CoTaskMemFree(pmt->pbFormat);
+            if (pmt->pUnk)
+                pmt->pUnk->Release();
+            CoTaskMemFree(pmt);
+        }
+    }
+
+    if (g_previewW > 0 && g_previewH > 0)
+    {
+        RECT rc{0, 0, g_previewW, g_previewH};
+        HRESULT rhr = vmrWindowless->SetVideoPosition(nullptr, &rc);
+        dshow_log_hr("IVMRWindowlessControl9::SetVideoPosition", rhr);
+    }
+
+    dshow_log("[DShow] === buildGraphForDevice success (VMR9 preview path) ===\n");
     return true;
 }
 
 bool DShowProvider::open(int index)
 {
+    char buf[128];
+    sprintf_s(buf, "[DShow] open() current preview_hwnd_=%p\n", g_previewHwnd);
+    OutputDebugStringA(buf);
     ensure_com();
+    dshow_log("[DShow] open() begin\n");
     close();
     std::lock_guard<std::mutex> lock(mtx_);
 
     if (!buildGraphForDevice(index))
+    {
+        dshow_log("[DShow] open() failed\n");
         return false;
+    }
 
     currentIndex_ = index;
+    dshow_log("[DShow] open() success\n");
     return true;
 }
 
@@ -341,13 +354,11 @@ bool DShowProvider::setProfile(const gcap_profile_t &p)
 {
     std::lock_guard<std::mutex> lock(mtx_);
     profile_ = p;
-    // 目前未使用 IAMStreamConfig 強制設解析度，先吃預設
     return true;
 }
 
 bool DShowProvider::setBuffers(int, size_t)
 {
-    // DirectShow 內部控管 buffer，不需要特別處理
     return true;
 }
 
@@ -360,11 +371,24 @@ bool DShowProvider::start()
     HRESULT hr = mediaControl_->Run();
     if (FAILED(hr))
     {
+        dshow_log_hr("mediaControl_->Run()", hr);
         if (ecb_)
             ecb_(GCAP_EIO, "DShow: Run() failed", user_);
         return false;
     }
 
+    dshow_log("[DShow] start() OK: mediaControl_->Run()\n");
+    if (vmrWindowless && g_previewHwnd)
+    {
+        RECT rc{};
+        GetClientRect(g_previewHwnd, &rc);
+        char buf[256];
+        sprintf_s(buf, "[DShow] start() rect = (%ld,%ld)-(%ld,%ld)\n",
+                  rc.left, rc.top, rc.right, rc.bottom);
+        OutputDebugStringA(buf);
+        vmrWindowless->SetVideoPosition(nullptr, &rc);
+        vmrWindowless->RepaintVideo(g_previewHwnd, nullptr);
+    }
     running_ = true;
     return true;
 }
@@ -375,101 +399,71 @@ void DShowProvider::stop()
     if (mediaControl_ && running_)
     {
         mediaControl_->Stop();
+        dshow_log("[DShow] stop()\n");
         running_ = false;
     }
 }
 
 void DShowProvider::close()
 {
+    dshow_log("[DShow] close()\n");
     stop();
 
     std::lock_guard<std::mutex> lock(mtx_);
-
     nullRenderer_.Reset();
     grabberFilter_.Reset();
     sourceFilter_.Reset();
     mediaEvent_.Reset();
     mediaControl_.Reset();
     graph_.Reset();
-
-    width_ = height_ = 0;
+    width_ = 0;
+    height_ = 0;
     subtype_ = MEDIASUBTYPE_NULL;
     currentIndex_ = -1;
 }
 
-// onSample: DirectShow thread → CPU convert → gcap_frame_t
-void DShowProvider::onSample(double sampleTime, BYTE *data, long len)
+void DShowProvider::onSample(double, BYTE *, long)
 {
-    if (!running_)
-        return;
-    if (!data || len <= 0)
-        return;
+    // This preview test build does not use callbacks.
+}
 
-    char buf[128];
-    sprintf_s(buf, "DShow onSample: t=%.3f, len=%ld\n", sampleTime, len);
-    OutputDebugStringA(buf);
+SampleGrabberCBImpl::SampleGrabberCBImpl(DShowProvider *owner)
+    : owner_(owner)
+{
+}
 
-    // gcap_on_video_cb vcb = nullptr;
-    // void *user = nullptr;
-    // {
-    //     std::lock_guard<std::mutex> lock(mtx_);
-    //     vcb = vcb_;
-    //     user = user_;
-    // }
-    // if (!vcb)
-    //     return;
+STDMETHODIMP SampleGrabberCBImpl::QueryInterface(REFIID riid, void **ppv)
+{
+    if (!ppv)
+        return E_POINTER;
+    if (riid == IID_IUnknown)
+    {
+        *ppv = static_cast<IUnknown *>(this);
+        AddRef();
+        return S_OK;
+    }
+    *ppv = nullptr;
+    return E_NOINTERFACE;
+}
 
-    // if (width_ <= 0 || height_ <= 0)
-    //     return;
+STDMETHODIMP_(ULONG)
+SampleGrabberCBImpl::AddRef()
+{
+    return ++refCount_;
+}
 
-    // gcap_frame_t f{};
-    // f.width = width_;
-    // f.height = height_;
-    // f.pts_ns = static_cast<uint64_t>(sampleTime * 1e9);
-    // f.frame_id = 0; // TODO: 之後可以改成 atomic 計數
-    // f.format = GCAP_FMT_ARGB;
-    // f.plane_count = 1;
+STDMETHODIMP_(ULONG)
+SampleGrabberCBImpl::Release()
+{
+    ULONG r = --refCount_;
+    if (r == 0)
+        delete this;
+    return r;
+}
 
-    // static std::vector<uint8_t> argb;
-    // argb.resize(static_cast<size_t>(width_) * height_ * 4);
-
-    // uint8_t *out = argb.data(); // 這個給轉換函式用
-
-    // f.format = GCAP_FMT_ARGB;
-    // f.data[0] = out; // 轉完的 buffer 指標
-    // f.stride[0] = width_ * 4;
-    // f.plane_count = 1;
-
-    // if (subtype_ == MEDIASUBTYPE_NV12)
-    // {
-    //     int yStride = width_;
-    //     int uvStride = width_;
-    //     const uint8_t *y = reinterpret_cast<const uint8_t *>(data);
-    //     const uint8_t *uv = y + yStride * height_;
-
-    //     gcap::nv12_to_argb(
-    //         y, uv,
-    //         width_, height_,
-    //         yStride, uvStride,
-    //         out, // ★ 用 out，不要用 f.data[0]
-    //         f.stride[0]);
-    // }
-    // else if (subtype_ == MEDIASUBTYPE_YUY2)
-    // {
-    //     int strideYUY2 = width_ * 2;
-    //     const uint8_t *src = reinterpret_cast<const uint8_t *>(data);
-
-    //     gcap::yuy2_to_argb(
-    //         src,
-    //         width_, height_,
-    //         strideYUY2,
-    //         out, // ★ 用 out，不要用 f.data[0]
-    //         f.stride[0]);
-    // }
-    // else
-    // {
-    //     return; // 不支援其他格式
-    // }
-
-    // vcb(&f, user);
+STDMETHODIMP SampleGrabberCBImpl::BufferCB(double sampleTime, BYTE *buffer, long len)
+{
+    if (owner_)
+        owner_->onSample(sampleTime, buffer, len);
+    return S_OK;
 }

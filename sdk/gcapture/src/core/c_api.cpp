@@ -69,6 +69,15 @@ extern "C"
         return tmp.enumerate(out, max, count);
     }
 
+    gcap_status_t gcap_create(gcap_handle *out)
+    {
+        if (!out)
+            return GCAP_EINVAL;
+        auto h = std::make_unique<gcap_handle_t>();
+        *out = h.release();
+        return GCAP_OK;
+    }
+
     gcap_status_t gcap_open(int device_index, gcap_handle *out)
     {
         if (!out)
@@ -79,6 +88,13 @@ extern "C"
             return st;
         *out = h.release();
         return GCAP_OK;
+    }
+
+    gcap_status_t gcap_open2(gcap_handle h, int device_index)
+    {
+        if (!h)
+            return GCAP_EINVAL;
+        return h->mgr.open(device_index);
     }
 
     gcap_status_t gcap_set_profile(gcap_handle h, const gcap_profile_t *p)
@@ -302,6 +318,13 @@ extern "C"
     GCAP_API void gcap_set_d3d_adapter(int adapter_index)
     {
         CaptureManager::setD3dAdapterInt(adapter_index);
+    }
+
+    GCAP_API int gcap_get_active_backend(gcap_handle h)
+    {
+        if (!h)
+            return -1;
+        return h->mgr.getActiveBackendInt();
     }
 
     GCAP_API gcap_status_t gcap_set_preview(gcap_handle h, const gcap_preview_desc_t *desc)

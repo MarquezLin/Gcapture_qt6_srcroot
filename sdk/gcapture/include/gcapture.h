@@ -21,7 +21,8 @@ extern "C"
     {
         GCAP_BACKEND_WINMF_CPU = 0,
         GCAP_BACKEND_WINMF_GPU = 1,
-        GCAP_BACKEND_DSHOW = 2
+        GCAP_BACKEND_DSHOW = 2,
+        GCAP_BACKEND_AUTO = 3
     } gcap_backend_t;
 
     enum gcap_profile_mode_t
@@ -164,7 +165,9 @@ extern "C"
     typedef struct gcap_handle_t *gcap_handle;
 
     gcap_status_t gcap_enumerate(gcap_device_info_t *out, int max, int *count);
+    GCAP_API gcap_status_t gcap_create(gcap_handle *out);
     gcap_status_t gcap_open(int device_index, gcap_handle *out);
+    GCAP_API gcap_status_t gcap_open2(gcap_handle h, int device_index);
     gcap_status_t gcap_set_profile(gcap_handle h, const gcap_profile_t *prof);
     gcap_status_t gcap_set_buffers(gcap_handle h, int count, size_t bytes_hint);
     gcap_status_t gcap_set_callbacks(gcap_handle h, gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user);
@@ -182,6 +185,10 @@ extern "C"
     // 選擇要用哪一張 D3D11 Adapter 來做 NV12→RGBA / DXGI 管線
     // adapter_index = -1 表示使用系統預設（原本的 nullptr / default adapter）
     GCAP_API void gcap_set_d3d_adapter(int adapter_index);
+
+    // 查詢目前 handle 實際使用中的 backend。
+    // 非 Auto 模式下通常等於 gcap_set_backend() 指定值；Auto 模式下則可能回傳 WinMF GPU / WinMF CPU / DShow。
+    GCAP_API int gcap_get_active_backend(gcap_handle h);
 
     // --- OBS-like "Properties" ---
     gcap_status_t gcap_get_device_props(gcap_handle h, gcap_device_props_t *out);

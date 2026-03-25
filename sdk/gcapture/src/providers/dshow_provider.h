@@ -9,6 +9,9 @@
 
 #include <windows.h>
 #include <dshow.h>
+#include <d3d9.h>
+#include <vmr9.h>
+#include <wrl/client.h>
 
 #include "gcapture.h"
 #include "../core/capture_manager.h"
@@ -30,6 +33,8 @@ public:
     void stop() override;
     void close() override;
     void setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user) override;
+    bool getSignalStatus(gcap_signal_status_t &out) override;
+    bool setPreview(const gcap_preview_desc_t &desc) override;
 
     // SampleGrabber callback 進入點
     void onSample(double sampleTime, BYTE *data, long len);
@@ -50,6 +55,7 @@ private:
     Microsoft::WRL::ComPtr<IBaseFilter> sourceFilter_;
     Microsoft::WRL::ComPtr<IBaseFilter> grabberFilter_;
     Microsoft::WRL::ComPtr<IBaseFilter> nullRenderer_;
+    Microsoft::WRL::ComPtr<IVMRWindowlessControl9> vmrWindowless;
 
     // 格式（NV12 or YUY2）
     GUID subtype_ = MEDIASUBTYPE_NULL;
@@ -65,6 +71,8 @@ private:
     void *user_ = nullptr;
 
     std::mutex mtx_;
+    std::vector<uint8_t> argbBuffer_;
+    std::atomic<uint64_t> frameCounter_{0};
     // bool comInited_ = false;
 };
 

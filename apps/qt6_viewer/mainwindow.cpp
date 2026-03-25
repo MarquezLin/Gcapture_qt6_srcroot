@@ -87,16 +87,17 @@ connect(procampDlg_, &ProcAmp::valuesChanged,
 
             // Enable/disable based on backend support
             const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
-            const bool supported = (backend == 0 || backend == 1); // WinMF CPU/GPU
+            const bool supported = (backend == 0 || backend == 1 || backend == 3); // Auto 可能最後落在 WinMF
             procampDlg_->setControlsEnabled(supported);
             procampDlg_->setValues(m_currentProcAmp);
             procampDlg_->show();
             procampDlg_->raise();
             procampDlg_->activateWindow(); });
 
+    ui->comboBackend->addItem("Auto (WinMF→DShow)", 3);
     ui->comboBackend->addItem("WinMF GPU", 1);
     ui->comboBackend->addItem("WinMF CPU", 0);
-    // ui->comboBackend->addItem("DirectShow", 2);
+    ui->comboBackend->addItem("DirectShow", 2);
 
 #ifdef _WIN32
     // Optional backend: external CaptureSDK.dll (loaded at runtime)
@@ -293,22 +294,42 @@ void MainWindow::onStart()
     if (ui->comboGpu)
         gcap_set_d3d_adapter(ui->comboGpu->currentData().toInt());
 
-    gcap_status_t st = gcap_open(deviceIndex_, &h_);
-    if (st != GCAP_OK)
+    gcap_status_t st = GCAP_OK;
+
+    // OBS-style: Device Default，不強制指定解析度
+    currentProfile_ = {};
+
+    st = gcap_create(&h_);
+    if (st != GCAP_OK || !h_)
     {
         QMessageBox::warning(this, "gcapture",
-                             QString("open fail: %1").arg(gcap_strerror(st)));
+                             QString("create fail: %1").arg(gcap_strerror(st)));
         h_ = nullptr;
         return;
     }
 
-    // OBS-style: Device Default，不強制指定解析度
-    currentProfile_ = {};
-    gcap_set_buffers(h_, 6, 0);
-    gcap_set_callbacks(h_, &MainWindow::s_vcb, &MainWindow::s_ecb, this);
+    st = gcap_set_buffers(h_, 6, 0);
+    if (st != GCAP_OK)
+    {
+        QMessageBox::warning(this, "gcapture",
+                             QString("set buffers fail: %1").arg(gcap_strerror(st)));
+        gcap_close(h_);
+        h_ = nullptr;
+        return;
+    }
+
+    st = gcap_set_callbacks(h_, &MainWindow::s_vcb, &MainWindow::s_ecb, this);
+    if (st != GCAP_OK)
+    {
+        QMessageBox::warning(this, "gcapture",
+                             QString("set callbacks fail: %1").arg(gcap_strerror(st)));
+        gcap_close(h_);
+        h_ = nullptr;
+        return;
+    }
 
     // Apply ProcAmp (WinMF GPU/CPU). Other backends may ignore it.
-    if (backend == 0 || backend == 1)
+    if (backend == 0 || backend == 1 || backend == 3)
         gcap_set_procamp(h_, &m_currentProcAmp);
 
     gcap_preview_desc_t pv{};
@@ -318,10 +339,24 @@ void MainWindow::onStart()
     pv.swapchain_10bit = 1;
 
     st = gcap_set_preview(h_, &pv);
+    qDebug() << "gcap_set_preview st =" << st << ", h_ =" << h_;
     if (st != GCAP_OK)
     {
         QMessageBox::warning(this, "gcapture",
                              QString("set preview fail: %1").arg(gcap_strerror(st)));
+        gcap_close(h_);
+        h_ = nullptr;
+        return;
+    }
+
+    st = gcap_open2(h_, deviceIndex_);
+    if (st != GCAP_OK)
+    {
+        QMessageBox::warning(this, "gcapture",
+                             QString("open fail: %1").arg(gcap_strerror(st)));
+        gcap_close(h_);
+        h_ = nullptr;
+        return;
     }
 
     st = gcap_start(h_);
@@ -673,14 +708,21 @@ void MainWindow::onFrameArrived(const QImage &img)
     // ---- Pipeline (runtime state) ----
     displayInfo_.pipe = {};
     int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
+    int actualBackend = backend;
+    if (h_)
+    {
+        int q = gcap_get_active_backend(h_);
+        if (q >= 0)
+            actualBackend = q;
+    }
 
-    if (backend == 1)
+    if (actualBackend == GCAP_BACKEND_WINMF_GPU)
     {
         displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::WinMFGpu;
         displayInfo_.pipe.adapterName = gpuName_;
         displayInfo_.pipe.adapterIndex = gpuIndex_;
     }
-    else if (backend == 0)
+    else if (actualBackend == GCAP_BACKEND_WINMF_CPU)
     {
         displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::WinMFCpu;
     }
@@ -925,4 +967,3 @@ void MainWindow::on_btnPreview_clicked()
     previewWindow_->raise();
     previewWindow_->activateWindow();
 }
-

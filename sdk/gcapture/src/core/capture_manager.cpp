@@ -13,7 +13,8 @@ enum class Backend
 {
     WinMF_CPU,
     WinMF_GPU,
-    DShow
+    DShow,
+    Auto
 };
 static Backend g_backend = Backend::WinMF_GPU;
 
@@ -27,17 +28,91 @@ CaptureManager::CaptureManager()
 {
     switch (g_backend)
     {
-    case Backend::DShow:
-        provider_ = std::make_unique<DShowProvider>();
-        break;
     case Backend::WinMF_CPU:
+        selectedBackendInt_ = GCAP_BACKEND_WINMF_CPU;
+        break;
+    case Backend::DShow:
+        selectedBackendInt_ = GCAP_BACKEND_DSHOW;
+        break;
+    case Backend::Auto:
+        selectedBackendInt_ = GCAP_BACKEND_AUTO;
+        break;
     case Backend::WinMF_GPU:
     default:
-        provider_ = std::make_unique<WinMFProvider>(
-            g_backend == Backend::WinMF_GPU // 傳一個 preferGpu flag
-        );
+        selectedBackendInt_ = GCAP_BACKEND_WINMF_GPU;
         break;
     }
+
+    activeBackendInt_ = selectedBackendInt_ == GCAP_BACKEND_AUTO
+                            ? GCAP_BACKEND_WINMF_GPU
+                            : selectedBackendInt_;
+    rebuildProviderForBackend(activeBackendInt_);
+}
+
+bool CaptureManager::rebuildProviderForBackend(int backendInt)
+{
+    provider_.reset();
+
+    switch (backendInt)
+    {
+#ifdef GCAP_WIN_DSHOW
+    case GCAP_BACKEND_DSHOW:
+        provider_ = std::make_unique<DShowProvider>();
+        activeBackendInt_ = GCAP_BACKEND_DSHOW;
+        return true;
+#endif
+#ifdef GCAP_WIN_MF
+    case GCAP_BACKEND_WINMF_CPU:
+        provider_ = std::make_unique<WinMFProvider>(false);
+        activeBackendInt_ = GCAP_BACKEND_WINMF_CPU;
+        return true;
+    case GCAP_BACKEND_WINMF_GPU:
+        provider_ = std::make_unique<WinMFProvider>(true);
+        activeBackendInt_ = GCAP_BACKEND_WINMF_GPU;
+        return true;
+#endif
+    default:
+        break;
+    }
+
+    activeBackendInt_ = backendInt;
+    return false;
+}
+
+bool CaptureManager::applyCachedStateToProvider()
+{
+    if (!provider_)
+        return false;
+
+    provider_->setCallbacks(vcb_, ecb_, user_);
+
+    if (hasProfile_ && !provider_->setProfile(cachedProfile_))
+        return false;
+
+    if (!provider_->setBuffers(cachedBufferCount_, cachedBufferBytesHint_))
+        return false;
+
+    if (hasPreview_ && !provider_->setPreview(cachedPreview_))
+        return false;
+
+    return true;
+}
+
+bool CaptureManager::openWithBackend(int backendInt, int deviceIndex)
+{
+    if (!rebuildProviderForBackend(backendInt) || !provider_)
+        return false;
+
+    if (!applyCachedStateToProvider())
+        return false;
+
+    if (!provider_->open(deviceIndex))
+        return false;
+
+    openedDeviceIndex_ = deviceIndex;
+
+    // open 後再補一次設定，讓某些 backend 可以把設定真正套到已開啟裝置上。
+    return applyCachedStateToProvider();
 }
 
 /**
@@ -52,15 +127,20 @@ void CaptureManager::setBackendInt(int v)
 {
     switch (v)
     {
-    case 0:
+    case GCAP_BACKEND_WINMF_CPU:
         g_backend = Backend::WinMF_CPU;
         break;
-    case 1:
+    case GCAP_BACKEND_WINMF_GPU:
         g_backend = Backend::WinMF_GPU;
         break;
-    case 2:
-    default:
+    case GCAP_BACKEND_DSHOW:
         g_backend = Backend::DShow;
+        break;
+    case GCAP_BACKEND_AUTO:
+        g_backend = Backend::Auto;
+        break;
+    default:
+        g_backend = Backend::WinMF_GPU;
         break;
     }
 }
@@ -101,9 +181,21 @@ gcap_status_t CaptureManager::enumerate(gcap_device_info_t *out, int max, int *c
  */
 gcap_status_t CaptureManager::open(int idx)
 {
-    if (!provider_)
-        return GCAP_ENOTSUP;
-    return provider_->open(idx) ? GCAP_OK : GCAP_EIO;
+    if (selectedBackendInt_ == GCAP_BACKEND_AUTO)
+    {
+        const int candidates[] = {GCAP_BACKEND_WINMF_GPU, GCAP_BACKEND_WINMF_CPU, GCAP_BACKEND_DSHOW};
+        for (int backendInt : candidates)
+        {
+            if (openWithBackend(backendInt, idx))
+                return GCAP_OK;
+        }
+        return GCAP_EIO;
+    }
+
+    if (!openWithBackend(selectedBackendInt_, idx))
+        return GCAP_EIO;
+
+    return GCAP_OK;
 }
 
 /**
@@ -111,6 +203,8 @@ gcap_status_t CaptureManager::open(int idx)
  */
 gcap_status_t CaptureManager::setProfile(const gcap_profile_t &p)
 {
+    cachedProfile_ = p;
+    hasProfile_ = true;
     if (!provider_)
         return GCAP_ENOTSUP;
     return provider_->setProfile(p) ? GCAP_OK : GCAP_EINVAL;
@@ -121,6 +215,8 @@ gcap_status_t CaptureManager::setProfile(const gcap_profile_t &p)
  */
 gcap_status_t CaptureManager::setBuffers(int c, size_t b)
 {
+    cachedBufferCount_ = c;
+    cachedBufferBytesHint_ = b;
     if (!provider_)
         return GCAP_ENOTSUP;
     return provider_->setBuffers(c, b) ? GCAP_OK : GCAP_EINVAL;
@@ -147,7 +243,26 @@ gcap_status_t CaptureManager::start()
 {
     if (!provider_)
         return GCAP_ENOTSUP;
-    return provider_->start() ? GCAP_OK : GCAP_ESTATE;
+
+    if (provider_->start())
+        return GCAP_OK;
+
+    if (selectedBackendInt_ == GCAP_BACKEND_AUTO && openedDeviceIndex_ >= 0)
+    {
+        const int current = activeBackendInt_;
+        const int candidates[] = {GCAP_BACKEND_WINMF_GPU, GCAP_BACKEND_WINMF_CPU, GCAP_BACKEND_DSHOW};
+        for (int backendInt : candidates)
+        {
+            if (backendInt == current)
+                continue;
+            if (!openWithBackend(backendInt, openedDeviceIndex_))
+                continue;
+            if (provider_->start())
+                return GCAP_OK;
+        }
+    }
+
+    return GCAP_ESTATE;
 }
 
 /**
@@ -206,6 +321,7 @@ gcap_status_t CaptureManager::close()
     if (!provider_)
         return GCAP_ENOTSUP;
     provider_->close();
+    openedDeviceIndex_ = -1;
     return GCAP_OK;
 }
 
@@ -239,8 +355,15 @@ gcap_status_t CaptureManager::setProcAmp(const gcap_procamp_t &p)
 
 gcap_status_t CaptureManager::setPreview(const gcap_preview_desc_t &desc)
 {
+    cachedPreview_ = desc;
+    hasPreview_ = true;
     if (!provider_)
         return GCAP_ESTATE;
 
     return provider_->setPreview(desc) ? GCAP_OK : GCAP_ENOTSUP;
+}
+
+int CaptureManager::getActiveBackendInt() const
+{
+    return activeBackendInt_;
 }

@@ -128,13 +128,29 @@ public:
     gcap_status_t setProcessing(const gcap_processing_opts_t &opts);
     gcap_status_t setProcAmp(const gcap_procamp_t &p);
     gcap_status_t setPreview(const gcap_preview_desc_t &desc);
+    int getActiveBackendInt() const;
 
     static void setBackendInt(int v);
     static void setD3dAdapterInt(int index);
 
 private:
+    bool rebuildProviderForBackend(int backendInt);
+    bool openWithBackend(int backendInt, int deviceIndex);
+    bool applyCachedStateToProvider();
+
     std::unique_ptr<ICaptureProvider> provider_; // Active provider instance
     gcap_on_video_cb vcb_ = nullptr;             // Video frame callback
     gcap_on_error_cb ecb_ = nullptr;             // Error callback
     void *user_ = nullptr;                       // User data pointer for callbacks
+
+    int selectedBackendInt_ = 1;
+    int activeBackendInt_ = 1;
+    int openedDeviceIndex_ = -1;
+
+    bool hasProfile_ = false;
+    gcap_profile_t cachedProfile_{};
+    int cachedBufferCount_ = 0;
+    size_t cachedBufferBytesHint_ = 0;
+    bool hasPreview_ = false;
+    gcap_preview_desc_t cachedPreview_{};
 };
