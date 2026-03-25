@@ -5,19 +5,18 @@
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <thread>
 #include <wrl/client.h>
 
 #include <windows.h>
 #include <dshow.h>
 #include <d3d9.h>
 #include <vmr9.h>
-#include <wrl/client.h>
 
 #include "gcapture.h"
+#include "dshow_raw_renderer.h"
+#include "dshow_custom_sink.h"
 #include "../core/capture_manager.h"
-
-// DirectShow CPU 版本（NV12 → YUY2 fallback）
-// 之後 GPU 會接在這個架構上
 
 class DShowProvider : public ICaptureProvider
 {
@@ -36,16 +35,33 @@ public:
     bool getSignalStatus(gcap_signal_status_t &out) override;
     bool setPreview(const gcap_preview_desc_t &desc) override;
 
-    // SampleGrabber callback 進入點
-    void onSample(double sampleTime, BYTE *data, long len);
-
 private:
     void ensure_com();
     void uninit_com();
-
     bool buildGraphForDevice(int index);
-    bool setupSampleGrabber();
-    bool selectMediaType(); // NV12 → YUY2 fallback
+    bool buildRawOnlyGraph(ICaptureGraphBuilder2 *capBuilder);
+    bool configureCaptureFormat(IAMStreamConfig *streamConfig);
+    void logCaptureCapabilities(IAMStreamConfig *streamConfig);
+    void updatePreviewRect();
+    void startMirrorThread();
+    void stopMirrorThread();
+    void mirrorLoop();
+    enum class CallbackSource
+    {
+        Unknown = 0,
+        RawSink,
+        RendererImage,
+        PreviewBitBlt
+    };
+
+    bool captureRawFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
+    bool capturePreviewFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
+    bool captureRendererFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
+    bool captureCallbackFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
+    int mirrorSleepMs() const;
+    bool isRawCandidate() const;
+    const char *callbackSourceName(CallbackSource src) const;
+    bool rawSinkPlanned() const;
 
 private:
     Microsoft::WRL::ComPtr<IGraphBuilder> graph_;
@@ -53,14 +69,15 @@ private:
     Microsoft::WRL::ComPtr<IMediaEvent> mediaEvent_;
 
     Microsoft::WRL::ComPtr<IBaseFilter> sourceFilter_;
-    Microsoft::WRL::ComPtr<IBaseFilter> grabberFilter_;
-    Microsoft::WRL::ComPtr<IBaseFilter> nullRenderer_;
-    Microsoft::WRL::ComPtr<IVMRWindowlessControl9> vmrWindowless;
+    Microsoft::WRL::ComPtr<IBaseFilter> previewRenderer_;
+    Microsoft::WRL::ComPtr<IBaseFilter> smartTee_;
+    Microsoft::WRL::ComPtr<IVMRWindowlessControl9> vmrWindowless_;
 
-    // 格式（NV12 or YUY2）
     GUID subtype_ = MEDIASUBTYPE_NULL;
     int width_ = 0;
     int height_ = 0;
+    int negotiatedFpsNum_ = 0;
+    int negotiatedFpsDen_ = 0;
 
     std::atomic<bool> running_{false};
     int currentIndex_ = -1;
@@ -73,47 +90,11 @@ private:
     std::mutex mtx_;
     std::vector<uint8_t> argbBuffer_;
     std::atomic<uint64_t> frameCounter_{0};
-    // bool comInited_ = false;
-};
+    std::atomic<CallbackSource> lastCallbackSource_{CallbackSource::Unknown};
 
-// -------- SampleGrabber interface（避免使用過期 qedit.h）--------
-
-struct ISampleGrabberCB : public IUnknown
-{
-    virtual HRESULT STDMETHODCALLTYPE SampleCB(double SampleTime, IMediaSample *pSample) = 0;
-    virtual HRESULT STDMETHODCALLTYPE BufferCB(double SampleTime, BYTE *pBuffer, long BufferLen) = 0;
-};
-
-struct __declspec(uuid("6b652fff-11fe-4fce-92ad-0266b5d7c807")) ISampleGrabber : public IUnknown
-{
-    virtual HRESULT STDMETHODCALLTYPE SetOneShot(BOOL OneShot) = 0;
-    virtual HRESULT STDMETHODCALLTYPE SetMediaType(const AM_MEDIA_TYPE *pType) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetConnectedMediaType(AM_MEDIA_TYPE *pType) = 0;
-    virtual HRESULT STDMETHODCALLTYPE SetBufferSamples(BOOL BufferThem) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetCurrentBuffer(long *pBufferSize, long *pBuffer) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetCurrentSample(IMediaSample **ppSample) = 0;
-    virtual HRESULT STDMETHODCALLTYPE SetCallback(ISampleGrabberCB *pCallback, long WhichMethodToCallback) = 0;
-};
-
-// ----- Callback 實作者 -----
-
-class SampleGrabberCBImpl : public ISampleGrabberCB
-{
-public:
-    explicit SampleGrabberCBImpl(DShowProvider *owner);
-
-    // IUnknown
-    STDMETHODIMP QueryInterface(REFIID riid, void **ppv) override;
-    STDMETHODIMP_(ULONG)
-    AddRef() override;
-    STDMETHODIMP_(ULONG)
-    Release() override;
-
-    // ISampleGrabberCB
-    STDMETHODIMP SampleCB(double, IMediaSample *) override { return S_OK; }
-    STDMETHODIMP BufferCB(double sampleTime, BYTE *buffer, long len) override;
-
-private:
-    std::atomic<ULONG> refCount_{1};
-    DShowProvider *owner_ = nullptr;
+    std::thread mirrorThread_;
+    std::atomic<bool> mirrorThreadRunning_{false};
+    HWND previewHwnd_ = nullptr;
+    DShowRawRenderer rawRenderer_{};
+    DShowCustomSinkFilter *rawSinkFilter_ = nullptr;
 };

@@ -378,6 +378,8 @@ void MainWindow::onStop()
         if (capSdk_)
             capSdk_->stop();
         usingCaptureSdk_ = false;
+        if (previewWindow_)
+            previewWindow_->clearFrame();
         return;
     }
 #endif
@@ -395,6 +397,8 @@ void MainWindow::onStop()
     gcap_stop(h_);
     gcap_close(h_);
     h_ = nullptr;
+    if (previewWindow_)
+        previewWindow_->clearFrame();
 }
 
 void MainWindow::onOpenRecordFolder()
@@ -585,7 +589,6 @@ void MainWindow::onRecord()
 void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
 {
     auto *self = static_cast<MainWindow *>(u);
-
     // 更新「實際來源」資訊
     self->lastFramePtsNs_ = f->pts_ns;
     self->lastFrameWidth_ = f->width;
@@ -642,7 +645,10 @@ void MainWindow::onFrameArrived(const QImage &img)
 
     lastFrameImage_ = img;
 
-    // 主畫面不再顯示 labelView，改由 previewwindow 做 native preview
+    // 主畫面不再顯示 labelView。
+    // DShow raw-only 路徑沒有 VMR9 native preview，因此這裡也要把 callback frame 畫到 previewwindow。
+    if (previewWindow_)
+        previewWindow_->setFrame(img);
 
     if (h_)
     {

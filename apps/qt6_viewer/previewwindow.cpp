@@ -28,6 +28,18 @@ void *previewwindow::previewHwnd() const
     return reinterpret_cast<void *>(previewWidget_->winId());
 }
 
+void previewwindow::setFrame(const QImage &img)
+{
+    if (previewWidget_)
+        previewWidget_->setFrame(img);
+}
+
+void previewwindow::clearFrame()
+{
+    if (previewWidget_)
+        previewWidget_->clearFrame();
+}
+
 void previewwindow::closeEvent(QCloseEvent *event)
 {
     event->ignore();

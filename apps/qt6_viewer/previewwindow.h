@@ -3,6 +3,7 @@
 
 #include <QWidget>
 #include <QCloseEvent>
+#include <QImage>
 #include "d3dpreviewwidget.h"
 
 namespace Ui
@@ -21,6 +22,8 @@ public:
     ~previewwindow();
 
     void *previewHwnd() const;
+    void setFrame(const QImage &img);
+    void clearFrame();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
