@@ -97,4 +97,5 @@ private:
     HWND previewHwnd_ = nullptr;
     DShowRawRenderer rawRenderer_{};
     DShowCustomSinkFilter *rawSinkFilter_ = nullptr;
+    bool rawOnlyActive_ = false;
 };

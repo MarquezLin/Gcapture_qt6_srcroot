@@ -399,11 +399,16 @@ HRESULT DShowCustomSinkFilter::onReceive(IMediaSample *sample, const AM_MEDIA_TY
     }
     renderer_->setNegotiated(subtype, width, height, fpsNum, fpsDen);
     const bool pushed = renderer_->pushSample(ptr, static_cast<size_t>(size), 0);
-    char msg[256] = {};
-    sprintf_s(msg, "[DShowRawSink] pushSample %s subtype=%s %dx%d bytes=%ld count=%llu",
-              pushed ? "OK" : "FAIL", DShowRawRenderer::subtypeName(subtype), width, height, size,
-              static_cast<unsigned long long>(renderer_->sampleCount()));
-    dshow_sink_log(msg);
+    static std::atomic<unsigned> s_pushLogs{0};
+    const unsigned pushLogIdx = ++s_pushLogs;
+    if (pushLogIdx <= 8 || !pushed)
+    {
+        char msg[256] = {};
+        sprintf_s(msg, "[DShowRawSink] pushSample %s subtype=%s %dx%d bytes=%ld total=%llu",
+                  pushed ? "OK" : "FAIL", DShowRawRenderer::subtypeName(subtype), width, height, size,
+                  static_cast<unsigned long long>(renderer_->sampleCount()));
+        dshow_sink_log(msg);
+    }
     receivedSample_ = pushed;
     return pushed ? S_OK : E_FAIL;
 }

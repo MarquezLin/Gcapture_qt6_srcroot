@@ -62,15 +62,20 @@ void DShowRawRenderer::reset()
 void DShowRawRenderer::setNegotiated(const GUID &subtype, int width, int height, int fpsNum, int fpsDen)
 {
     std::lock_guard<std::mutex> lock(sampleMtx_);
+    const bool sameFormat = (subtype_ == subtype && width_ == width && height_ == height &&
+                             fpsNum_ == fpsNum && fpsDen_ == fpsDen);
     subtype_ = subtype;
     width_ = width;
     height_ = height;
     fpsNum_ = fpsNum;
     fpsDen_ = fpsDen;
-    latestSample_.clear();
-    latestStride_ = 0;
-    sampleCount_ = 0;
-    lastSampleBytes_ = 0;
+    if (!sameFormat)
+    {
+        latestSample_.clear();
+        latestStride_ = 0;
+        sampleCount_ = 0;
+        lastSampleBytes_ = 0;
+    }
 }
 
 bool DShowRawRenderer::isSupportedSubtype() const

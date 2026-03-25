@@ -510,7 +510,7 @@ const char *DShowProvider::callbackSourceName(CallbackSource src) const
 
 bool DShowProvider::rawSinkPlanned() const
 {
-    return rawRenderer_.isSupportedSubtype();
+    return rawOnlyActive_ && rawRenderer_.isSupportedSubtype();
 }
 
 void DShowProvider::updatePreviewRect()
@@ -534,6 +534,7 @@ bool DShowProvider::buildGraphForDevice(int index)
     smartTee_.Reset();
     if (rawSinkFilter_) { rawSinkFilter_->Release(); rawSinkFilter_ = nullptr; }
     vmrWindowless_.Reset();
+    rawOnlyActive_ = false;
     width_ = 0;
     height_ = 0;
     subtype_ = MEDIASUBTYPE_NULL;
@@ -631,6 +632,7 @@ bool DShowProvider::buildGraphForDevice(int index)
     if (wantRawPath)
     {
         rawOnlyActive = buildRawOnlyGraph(capBuilder.Get());
+        rawOnlyActive_ = rawOnlyActive;
         if (rawOnlyActive)
             dshow_log("[DShow] raw-only path ON: source -> CustomRawSink");
         else
@@ -755,7 +757,7 @@ bool DShowProvider::open(int index)
                   subtypeName(subtype_), width_, height_,
                   (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0,
                   isRawCandidate() ? "YES" : "NO",
-                  rawSinkPlanned() ? "CUSTOM_V3_RAW_ONLY" : "NO");
+                  rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO");
         OutputDebugStringA(msg);
     }
     return true;
@@ -923,8 +925,17 @@ bool DShowProvider::captureCallbackFrameToArgb(std::vector<uint8_t> &out, int &w
 {
     std::vector<uint8_t> tmp;
     int cw = 0, ch = 0, cstride = 0;
-    if (!captureRawFrameToArgb(tmp, cw, ch, cstride) && !capturePreviewFrameToArgb(tmp, cw, ch, cstride))
-        return false;
+
+    if (rawOnlyActive_)
+    {
+        if (!captureRawFrameToArgb(tmp, cw, ch, cstride))
+            return false;
+    }
+    else
+    {
+        if (!captureRawFrameToArgb(tmp, cw, ch, cstride) && !capturePreviewFrameToArgb(tmp, cw, ch, cstride))
+            return false;
+    }
 
     const int targetW = width_ > 0 ? width_ : cw;
     const int targetH = height_ > 0 ? height_ : ch;
@@ -981,7 +992,7 @@ void DShowProvider::mirrorLoop()
                               w, h, subtypeName(subtype_), width_, height_, fps,
                               callbackSourceName(lastCallbackSource_.load()),
                               isRawCandidate() ? "YES" : "NO",
-                              rawSinkPlanned() ? "CUSTOM_V3_RAW_ONLY" : "NO");
+                              rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO");
                     OutputDebugStringA(msg);
                     if (isRawCandidate())
                     {
