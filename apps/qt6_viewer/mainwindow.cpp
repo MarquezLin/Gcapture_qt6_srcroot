@@ -25,95 +25,117 @@ using Microsoft::WRL::ComPtr;
 
 static MainWindow *g_mainWindow = nullptr;
 
-namespace {
-static inline uint8_t clampByteLocal(int v)
+namespace
 {
-    if (v < 0) return 0;
-    if (v > 255) return 255;
-    return static_cast<uint8_t>(v);
-}
-
-static inline void yuvToRgbLocal(int y, int u, int v, uint8_t &b, uint8_t &g, uint8_t &r)
-{
-    const int c = y - 16;
-    const int d = u - 128;
-    const int e = v - 128;
-    const int rr = (298 * c + 409 * e + 128) >> 8;
-    const int gg = (298 * c - 100 * d - 208 * e + 128) >> 8;
-    const int bb = (298 * c + 516 * d + 128) >> 8;
-    r = clampByteLocal(rr);
-    g = clampByteLocal(gg);
-    b = clampByteLocal(bb);
-}
-
-static QImage framePacketToQImage(const gcap_frame_packet_t &pkt)
-{
-    if (pkt.width <= 0 || pkt.height <= 0 || pkt.plane_count <= 0 || !pkt.data[0])
-        return {};
-
-    if (pkt.format == GCAP_FMT_ARGB)
+    static inline uint8_t clampByteLocal(int v)
     {
-        QImage img(reinterpret_cast<const uchar *>(pkt.data[0]), pkt.width, pkt.height, pkt.stride[0], QImage::Format_ARGB32);
-        return img.copy();
+        if (v < 0)
+            return 0;
+        if (v > 255)
+            return 255;
+        return static_cast<uint8_t>(v);
     }
 
-    QImage img(pkt.width, pkt.height, QImage::Format_ARGB32);
-    if (img.isNull())
-        return {};
-
-    if (pkt.format == GCAP_FMT_NV12 && pkt.plane_count >= 2 && pkt.data[1])
+    static inline void yuvToRgbLocal(int y, int u, int v, uint8_t &b, uint8_t &g, uint8_t &r)
     {
-        const uint8_t *yPlane = reinterpret_cast<const uint8_t *>(pkt.data[0]);
-        const uint8_t *uvPlane = reinterpret_cast<const uint8_t *>(pkt.data[1]);
-        const int yStride = pkt.stride[0] > 0 ? pkt.stride[0] : pkt.width;
-        const int uvStride = pkt.stride[1] > 0 ? pkt.stride[1] : pkt.width;
-        for (int y = 0; y < pkt.height; ++y)
+        const int c = y - 16;
+        const int d = u - 128;
+        const int e = v - 128;
+        const int rr = (298 * c + 409 * e + 128) >> 8;
+        const int gg = (298 * c - 100 * d - 208 * e + 128) >> 8;
+        const int bb = (298 * c + 516 * d + 128) >> 8;
+        r = clampByteLocal(rr);
+        g = clampByteLocal(gg);
+        b = clampByteLocal(bb);
+    }
+
+    static const char *packetFmtName(int fmt)
+    {
+        switch (fmt)
         {
-            const uint8_t *yRow = yPlane + static_cast<size_t>(y) * yStride;
-            const uint8_t *uvRow = uvPlane + static_cast<size_t>(y / 2) * uvStride;
-            QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
-            for (int x = 0; x < pkt.width; ++x)
-            {
-                const int Y = yRow[x];
-                const int U = uvRow[(x & ~1) + 0];
-                const int V = uvRow[(x & ~1) + 1];
-                uint8_t b=0,g=0,r=0;
-                yuvToRgbLocal(Y,U,V,b,g,r);
-                dst[x] = qRgba(r,g,b,255);
-            }
+        case GCAP_FMT_NV12:
+            return "NV12";
+        case GCAP_FMT_P010:
+            return "P010";
+        case GCAP_FMT_YUY2:
+            return "YUY2";
+        case GCAP_FMT_Y210:
+            return "Y210";
+        case GCAP_FMT_ARGB:
+            return "ARGB";
+        default:
+            return "UNKNOWN";
         }
-        return img;
     }
 
-    if (pkt.format == GCAP_FMT_YUY2)
+    static QImage framePacketToQImage(const gcap_frame_packet_t &pkt)
     {
-        const uint8_t *src = reinterpret_cast<const uint8_t *>(pkt.data[0]);
-        const int srcStride = pkt.stride[0] > 0 ? pkt.stride[0] : (pkt.width * 2);
-        for (int y = 0; y < pkt.height; ++y)
+        if (pkt.width <= 0 || pkt.height <= 0 || pkt.plane_count <= 0 || !pkt.data[0])
+            return {};
+
+        if (pkt.format == GCAP_FMT_ARGB)
         {
-            const uint8_t *srcRow = src + static_cast<size_t>(y) * srcStride;
-            QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
-            for (int x = 0; x < pkt.width; x += 2)
+            QImage img(reinterpret_cast<const uchar *>(pkt.data[0]), pkt.width, pkt.height, pkt.stride[0], QImage::Format_ARGB32);
+            return img.copy();
+        }
+
+        QImage img(pkt.width, pkt.height, QImage::Format_ARGB32);
+        if (img.isNull())
+            return {};
+
+        if (pkt.format == GCAP_FMT_NV12 && pkt.plane_count >= 2 && pkt.data[1])
+        {
+            const uint8_t *yPlane = reinterpret_cast<const uint8_t *>(pkt.data[0]);
+            const uint8_t *uvPlane = reinterpret_cast<const uint8_t *>(pkt.data[1]);
+            const int yStride = pkt.stride[0] > 0 ? pkt.stride[0] : pkt.width;
+            const int uvStride = pkt.stride[1] > 0 ? pkt.stride[1] : pkt.width;
+            for (int y = 0; y < pkt.height; ++y)
             {
-                const uint8_t y0 = srcRow[x * 2 + 0];
-                const uint8_t u  = srcRow[x * 2 + 1];
-                const uint8_t y1 = srcRow[x * 2 + 2];
-                const uint8_t v  = srcRow[x * 2 + 3];
-                uint8_t b=0,g=0,r=0;
-                yuvToRgbLocal(y0,u,v,b,g,r);
-                dst[x] = qRgba(r,g,b,255);
-                if (x + 1 < pkt.width)
+                const uint8_t *yRow = yPlane + static_cast<size_t>(y) * yStride;
+                const uint8_t *uvRow = uvPlane + static_cast<size_t>(y / 2) * uvStride;
+                QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
+                for (int x = 0; x < pkt.width; ++x)
                 {
-                    yuvToRgbLocal(y1,u,v,b,g,r);
-                    dst[x + 1] = qRgba(r,g,b,255);
+                    const int Y = yRow[x];
+                    const int U = uvRow[(x & ~1) + 0];
+                    const int V = uvRow[(x & ~1) + 1];
+                    uint8_t b = 0, g = 0, r = 0;
+                    yuvToRgbLocal(Y, U, V, b, g, r);
+                    dst[x] = qRgba(r, g, b, 255);
                 }
             }
+            return img;
         }
-        return img;
-    }
 
-    return {};
-}
+        if (pkt.format == GCAP_FMT_YUY2)
+        {
+            const uint8_t *src = reinterpret_cast<const uint8_t *>(pkt.data[0]);
+            const int srcStride = pkt.stride[0] > 0 ? pkt.stride[0] : (pkt.width * 2);
+            for (int y = 0; y < pkt.height; ++y)
+            {
+                const uint8_t *srcRow = src + static_cast<size_t>(y) * srcStride;
+                QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
+                for (int x = 0; x < pkt.width; x += 2)
+                {
+                    const uint8_t y0 = srcRow[x * 2 + 0];
+                    const uint8_t u = srcRow[x * 2 + 1];
+                    const uint8_t y1 = srcRow[x * 2 + 2];
+                    const uint8_t v = srcRow[x * 2 + 3];
+                    uint8_t b = 0, g = 0, r = 0;
+                    yuvToRgbLocal(y0, u, v, b, g, r);
+                    dst[x] = qRgba(r, g, b, 255);
+                    if (x + 1 < pkt.width)
+                    {
+                        yuvToRgbLocal(y1, u, v, b, g, r);
+                        dst[x + 1] = qRgba(r, g, b, 255);
+                    }
+                }
+            }
+            return img;
+        }
+
+        return {};
+    }
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -178,6 +200,7 @@ connect(procampDlg_, &ProcAmp::valuesChanged,
 
             // Enable/disable based on backend support
             const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
+    usePacketCallback_ = (backend == 2);
             const bool supported = (backend == 0 || backend == 1 || backend == 3); // Auto 可能最後落在 WinMF
             procampDlg_->setControlsEnabled(supported);
             procampDlg_->setValues(m_currentProcAmp);
@@ -345,6 +368,10 @@ void MainWindow::onStart()
     lastFramePtsNs_ = 0;
     lastFrameWidth_ = 0;
     lastFrameHeight_ = 0;
+    lastVideoCallbackPtsNs_ = 0;
+    lastPacketCallbackPtsNs_ = 0;
+    framePacketLogCount_ = 0;
+    ++framePacketSessionId_;
     if (ui->statusbar)
         ui->statusbar->showMessage(QStringLiteral("Starting..."));
     qDebug() << "MainWindow::onStart";
@@ -371,6 +398,11 @@ void MainWindow::onStart()
         return;
 
     int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
+    usePacketCallback_ = (backend == 2);
+
+    appendDebugLog(QStringLiteral("[MainWindow] backend=%1 usePacketCallback=%2")
+                       .arg(backend)
+                       .arg(usePacketCallback_ ? "true" : "false"));
 
 #ifdef _WIN32
     if (backend == 100)
@@ -417,7 +449,13 @@ void MainWindow::onStart()
 
     st = gcap_set_callbacks(h_, &MainWindow::s_vcb, &MainWindow::s_ecb, this);
     if (st == GCAP_OK && usePacketCallback_)
+    {
         st = gcap_set_frame_packet_callback(h_, &MainWindow::s_pcb, this);
+        if (st == GCAP_OK)
+            appendDebugLog(QStringLiteral("[MainWindow] packet callback registered backend=%1 h_=%2")
+                               .arg(backend)
+                               .arg(reinterpret_cast<quintptr>(h_), 0, 16));
+    }
     if (st != GCAP_OK)
     {
         QMessageBox::warning(this, "gcapture",
@@ -517,6 +555,9 @@ void MainWindow::onStop()
         previewWindow_->update();
         previewWindow_->repaint();
     }
+    lastVideoCallbackPtsNs_ = 0;
+    lastPacketCallbackPtsNs_ = 0;
+    framePacketLogCount_ = 0;
     updateRuntimeStatusUi();
 }
 
@@ -718,15 +759,14 @@ void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
     self->lastFrameHeight_ = f->height;
 
     // FPS：集中在 callback 算（避免 UI thread 又算一次造成重複/不一致）
-    static uint64_t lastPtsForFps = 0;
-    if (lastPtsForFps != 0 && self->lastFramePtsNs_ > lastPtsForFps)
+    if (self->lastVideoCallbackPtsNs_ != 0 && self->lastFramePtsNs_ > self->lastVideoCallbackPtsNs_)
     {
-        uint64_t delta = self->lastFramePtsNs_ - lastPtsForFps;
+        uint64_t delta = self->lastFramePtsNs_ - self->lastVideoCallbackPtsNs_;
         double fps = 1e9 / double(delta);
         if (fps > 0.0)
             self->avgFps_ = (self->avgFps_ <= 0.0) ? fps : (self->avgFps_ * 0.9 + fps * 0.1);
     }
-    lastPtsForFps = self->lastFramePtsNs_;
+    self->lastVideoCallbackPtsNs_ = self->lastFramePtsNs_;
 
     // 這裡 f 是 BGRA 一張圖，直接包成 QImage
     QImage img((const uchar *)f->data[0], f->width, f->height, f->stride[0], QImage::Format_ARGB32);
@@ -742,15 +782,48 @@ void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
     self->lastFramePtsNs_ = pkt->pts_ns;
     self->lastFrameWidth_ = pkt->width;
     self->lastFrameHeight_ = pkt->height;
-    static uint64_t lastPtsForFpsPkt = 0;
-    if (lastPtsForFpsPkt != 0 && self->lastFramePtsNs_ > lastPtsForFpsPkt)
+    if (self->lastPacketCallbackPtsNs_ != 0 && self->lastFramePtsNs_ > self->lastPacketCallbackPtsNs_)
     {
-        uint64_t delta = self->lastFramePtsNs_ - lastPtsForFpsPkt;
+        uint64_t delta = self->lastFramePtsNs_ - self->lastPacketCallbackPtsNs_;
         double fps = 1e9 / double(delta);
         if (fps > 0.0)
             self->avgFps_ = (self->avgFps_ <= 0.0) ? fps : (self->avgFps_ * 0.9 + fps * 0.1);
     }
-    lastPtsForFpsPkt = self->lastFramePtsNs_;
+    self->lastPacketCallbackPtsNs_ = self->lastFramePtsNs_;
+
+    ++self->framePacketLogCount_;
+    const bool shouldLogPacket = (self->framePacketLogCount_ <= 5) || ((self->framePacketLogCount_ % 60) == 0);
+    if (shouldLogPacket)
+    {
+        auto sourceName = [](int s) -> const char *
+        {
+            switch (s)
+            {
+            case GCAP_SOURCE_DSHOW_RAWSINK:
+                return "DShowRawSink";
+            case GCAP_SOURCE_DSHOW_RENDERER:
+                return "DShowRenderer";
+            case GCAP_SOURCE_WINMF_GPU:
+                return "WinMFGPU";
+            case GCAP_SOURCE_WINMF_CPU:
+                return "WinMFCPU";
+            default:
+                return "Unknown";
+            }
+        };
+        QString line = QStringLiteral("[FramePacket] session=%1 #%2 backend=%3 source=%4 fmt=%5 %6x%7 planes=%8 gpu=%9 pts=%10")
+                           .arg(self->framePacketSessionId_)
+                           .arg(self->framePacketLogCount_)
+                           .arg(pkt->backend)
+                           .arg(QString::fromLatin1(sourceName(pkt->source_kind)))
+                           .arg(QString::fromLatin1(packetFmtName(pkt->format)))
+                           .arg(pkt->width)
+                           .arg(pkt->height)
+                           .arg(pkt->plane_count)
+                           .arg(pkt->gpu_backed)
+                           .arg(QString::number(pkt->pts_ns));
+        MainWindow::postLog(line);
+    }
 
     QImage img = framePacketToQImage(*pkt);
     if (img.isNull())
@@ -790,8 +863,6 @@ void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)
 
 void MainWindow::onFrameArrived(const QImage &img)
 {
-    lastFrameImage_ = img;
-
     lastFrameImage_ = img;
 
     // 主畫面不再顯示 labelView。
@@ -897,7 +968,6 @@ void MainWindow::onFrameArrived(const QImage &img)
         DpinfoDlg_->setInfoText(
             formatDisplayOutputInfo(displayInfo_));
 }
-
 
 void MainWindow::updateRuntimeStatusUi()
 {

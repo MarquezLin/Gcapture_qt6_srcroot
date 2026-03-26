@@ -1,0 +1,79 @@
+#pragma once
+
+#include "gcapture.h"
+
+#include <d3d11_1.h>
+#include <d2d1_1.h>
+#include <dwrite.h>
+#include <dxgi1_2.h>
+#include <wrl.h>
+
+class SharedScenePipeline
+{
+public:
+    SharedScenePipeline() = default;
+    ~SharedScenePipeline() = default;
+
+    bool initialize(ID3D11Device *d3d,
+                    ID3D11DeviceContext *ctx,
+                    ID2D1DeviceContext *d2d_ctx);
+    void shutdown();
+
+    bool configurePreview(const gcap_preview_desc_t &desc);
+    void release_preview_swapchain();
+
+    bool create_shaders_and_states();
+    bool ensure_rt_and_pipeline(int w, int h);
+    bool ensure_preview_swapchain(int w, int h);
+    bool present_preview(int src_w, int src_h);
+
+    ID3D11Device *d3d_ = nullptr;
+    ID3D11DeviceContext *ctx_ = nullptr;
+    ID2D1DeviceContext *d2d_ctx_ = nullptr;
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> rt_fp16_;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv_fp16_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_fp16_;
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> rt_scene_fp16_;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv_scene_fp16_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_scene_fp16_;
+
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_rgba_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> ps_rgba8_to_preview_;
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> rt_rgba_;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv_rgba_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> rt_stage_;
+
+    Microsoft::WRL::ComPtr<ID3D11Buffer> cs_params_;
+    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> rt_uav_;
+
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> vs_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> ps_nv12_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> ps_p010_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> ps_yuy2_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> ps_y210_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> ps_fp16_to_rgba8_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> ps_fp16_to_preview_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> ps_composite_overlay_fp16_;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout> il_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> vb_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> samp_;
+
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1> d2d_bitmap_rt_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> overlay_rgba_;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> overlay_rtv_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> overlay_srv_;
+
+    void *preview_hwnd_ = nullptr;
+    bool preview_enabled_ = false;
+    bool preview_use_fp16_ = false;
+    bool preview_swapchain_10bit_ = false;
+    int preview_w_ = 0;
+    int preview_h_ = 0;
+
+    Microsoft::WRL::ComPtr<IDXGISwapChain1> preview_swapchain_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> preview_backbuf_;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> preview_rtv_;
+};

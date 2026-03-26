@@ -127,6 +127,11 @@ extern "C"
     {
         if (!h)
             return GCAP_EINVAL;
+        {
+            char buf[256];
+            std::fprintf(stderr, "[gcapture] set_frame_packet_callback h=%p cb=%p user=%p\n",
+                         h, reinterpret_cast<void *>(cb), user);
+        }
         return h->mgr.setFramePacketCallback(cb, user);
     }
 

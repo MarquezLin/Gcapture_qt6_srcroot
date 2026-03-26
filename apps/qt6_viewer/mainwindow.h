@@ -110,7 +110,11 @@ private:
     previewwindow *previewWindow_ = nullptr;
 
     qint64 lastPropsQueryMs_ = 0;
-    bool usePacketCallback_ = true;
+    bool usePacketCallback_ = false;
+    uint64_t lastVideoCallbackPtsNs_ = 0;
+    uint64_t lastPacketCallbackPtsNs_ = 0;
+    uint64_t framePacketLogCount_ = 0;
+    uint64_t framePacketSessionId_ = 0;
     void updateRuntimeStatusUi();
 
 signals:

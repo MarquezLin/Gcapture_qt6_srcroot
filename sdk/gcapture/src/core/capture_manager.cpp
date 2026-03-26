@@ -1,5 +1,9 @@
 #include "capture_manager.h"
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#include <cstdio>
 
 #ifdef GCAP_WIN_MF
 #include "../providers/winmf_provider.h"
@@ -8,6 +12,14 @@
 #ifdef GCAP_WIN_DSHOW
 #include "../providers/dshow_provider.h"
 #endif
+
+static void cmDebug(const char *msg)
+{
+#ifdef _WIN32
+    OutputDebugStringA(msg);
+#endif
+    std::fputs(msg, stderr);
+}
 
 enum class Backend
 {
@@ -242,6 +254,11 @@ gcap_status_t CaptureManager::setFramePacketCallback(gcap_on_frame_packet_cb cb,
 {
     pcb_ = cb;
     user_ = u;
+    {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), "[CaptureManager] frame packet callback installed cb=%p user=%p provider=%p\n", (void*)pcb_, user_, provider_.get());
+        cmDebug(buf);
+    }
     if (!provider_)
         return GCAP_ENOTSUP;
     provider_->setCallbacks(vcb_, ecb_, user_);

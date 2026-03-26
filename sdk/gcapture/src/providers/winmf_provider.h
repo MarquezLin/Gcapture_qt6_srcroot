@@ -8,6 +8,7 @@
 
 #include "gcapture.h"
 #include "../core/capture_manager.h"
+#include "../pipeline/shared_scene_pipeline.h"
 
 // Media Foundation
 #include <mfapi.h>
@@ -138,63 +139,20 @@ private:
     ComPtr<IMFDXGIDeviceManager> dxgi_mgr_;
     UINT dxgi_token_ = 0;
 
-    // High precision intermediate target (scheme B stage 1)
-    ComPtr<ID3D11Texture2D> rt_fp16_;
-    ComPtr<ID3D11RenderTargetView> rtv_fp16_;
-    ComPtr<ID3D11ShaderResourceView> srv_fp16_;
+    std::unique_ptr<SharedScenePipeline> pipeline_;
 
-    // OBS-style composited scene target: base FP16 frame + overlay texture
-    ComPtr<ID3D11Texture2D> rt_scene_fp16_;
-    ComPtr<ID3D11RenderTargetView> rtv_scene_fp16_;
-    ComPtr<ID3D11ShaderResourceView> srv_scene_fp16_;
-
-    ComPtr<ID3D11ShaderResourceView> srv_rgba_;
-    ComPtr<ID3D11PixelShader> ps_rgba8_to_preview_;
-
-    // Render target (RGBA8) + staging for readback
-    ComPtr<ID3D11Texture2D> rt_rgba_;
-    ComPtr<ID3D11RenderTargetView> rtv_rgba_;
-    ComPtr<ID3D11Texture2D> rt_stage_;
-
-    // CPU→GPU 上傳用的 NV12 / P010 texture
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_yuv_;
-    // CPU→GPU 上傳用的 YUY2（打包成 RGBA8_UINT，寬度 = ceil(w/2)）
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_yuy2_packed_;
-    // CPU→GPU 上傳用的 Y210（打包成 R16G16B16A16_UINT，寬度 = ceil(w/2)）
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_y210_packed_;
-
-    // +++ Compute shader (NV12 → RGBA) + UAV for output
-    Microsoft::WRL::ComPtr<ID3D11ComputeShader> cs_nv12_;
-    Microsoft::WRL::ComPtr<ID3D11Buffer> cs_params_;           // 存 width/height
-    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> rt_uav_; // NV12 compute path 對應的 UAV（目前綁 rt_fp16_）
-
-    // 是否啟用 NV12 的 compute 路徑（之後你也可以拉成 UI 開關）
-    bool use_compute_nv12_ = true; // 先預設開啟
-
-    // Pipeline resources
-    ComPtr<ID3D11VertexShader> vs_;
-    ComPtr<ID3D11PixelShader> ps_nv12_;
-    ComPtr<ID3D11PixelShader> ps_p010_;
-    ComPtr<ID3D11PixelShader> ps_yuy2_;
-    ComPtr<ID3D11PixelShader> ps_y210_;
-    ComPtr<ID3D11PixelShader> ps_fp16_to_rgba8_;
-    ComPtr<ID3D11PixelShader> ps_fp16_to_preview_;
-    ComPtr<ID3D11PixelShader> ps_composite_overlay_fp16_;
-    ComPtr<ID3D11InputLayout> il_;
-    ComPtr<ID3D11Buffer> vb_;
-    ComPtr<ID3D11SamplerState> samp_;
-
-    // D2D/DWrite overlay texture (draw in BGRA8, then composite into FP16 scene)
     ComPtr<ID2D1Factory1> d2d_factory_;
     ComPtr<ID2D1Device> d2d_device_;
     ComPtr<ID2D1DeviceContext> d2d_ctx_;
     ComPtr<IDWriteFactory> dwrite_;
     ComPtr<ID2D1SolidColorBrush> d2d_white_;
     ComPtr<ID2D1SolidColorBrush> d2d_black_;
-    ComPtr<ID2D1Bitmap1> d2d_bitmap_rt_;
-    ComPtr<ID3D11Texture2D> overlay_rgba_;
-    ComPtr<ID3D11RenderTargetView> overlay_rtv_;
-    ComPtr<ID3D11ShaderResourceView> overlay_srv_;
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_yuv_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_yuy2_packed_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_y210_packed_;
+    Microsoft::WRL::ComPtr<ID3D11ComputeShader> cs_nv12_;
+    bool use_compute_nv12_ = true; // 先預設開啟
 
     // --- internal helpers ---
     void loop();
@@ -215,6 +173,9 @@ private:
     bool composite_overlay_to_scene_fp16();
     bool blit_fp16_to_rgba8();
     bool gpu_overlay_text(const wchar_t *text);
+    bool ensure_preview_swapchain(int w, int h);
+    void release_preview_swapchain();
+    bool present_preview();
 
     // 確保 upload_yuv_ 尺寸 / format 正確
     bool ensure_upload_yuv(int w, int h);
@@ -257,19 +218,4 @@ private:
     // 全域：目前偏好的 Adapter index（由 UI/C API 設定）
     static std::atomic<int> s_adapter_index_;
 
-    // ---- Native preview ----
-    void *preview_hwnd_ = nullptr;
-    bool preview_enabled_ = false;
-    bool preview_use_fp16_ = false;
-    bool preview_swapchain_10bit_ = false;
-    int preview_w_ = 0;
-    int preview_h_ = 0;
-
-    ComPtr<IDXGISwapChain1> preview_swapchain_;
-    ComPtr<ID3D11Texture2D> preview_backbuf_;
-    ComPtr<ID3D11RenderTargetView> preview_rtv_;
-
-    bool ensure_preview_swapchain(int w, int h);
-    void release_preview_swapchain();
-    bool present_preview();
 };

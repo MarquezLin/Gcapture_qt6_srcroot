@@ -1127,6 +1127,19 @@ void DShowProvider::mirrorLoop()
                         pkt.data[0] = buf.data();
                         pkt.stride[0] = stride;
                     }
+                    if (frameId <= 5 || (frameId % 60) == 0)
+                    {
+                        char dbg[256];
+                        std::snprintf(dbg, sizeof(dbg),
+                                      "[DShow] dispatch frame packet frame=%llu fmt=%d %dx%d planes=%d user=%p\n",
+                                      static_cast<unsigned long long>(frameId),
+                                      pkt.format,
+                                      pkt.width,
+                                      pkt.height,
+                                      pkt.plane_count,
+                                      user);
+                        dshow_log(dbg);
+                    }
                     pcb(&pkt, user);
                 }
             }
