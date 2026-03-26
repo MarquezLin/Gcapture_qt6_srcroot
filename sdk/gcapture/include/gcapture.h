@@ -161,6 +161,29 @@ extern "C"
         uint64_t frame_id;
     } gcap_frame_t;
 
+    typedef enum
+    {
+        GCAP_SOURCE_UNKNOWN = 0,
+        GCAP_SOURCE_WINMF_GPU = 1,
+        GCAP_SOURCE_WINMF_CPU = 2,
+        GCAP_SOURCE_DSHOW_RAWSINK = 3,
+        GCAP_SOURCE_DSHOW_RENDERER = 4
+    } gcap_frame_source_kind_t;
+
+    typedef struct
+    {
+        int width, height;
+        gcap_pixfmt_t format;
+        int plane_count;
+        const void *data[3];
+        int stride[3];
+        uint64_t pts_ns;
+        uint64_t frame_id;
+        int backend;
+        int source_kind;
+        int gpu_backed;
+    } gcap_frame_packet_t;
+
     typedef struct
     {
         void *hwnd;         // native HWND
@@ -170,6 +193,7 @@ extern "C"
     } gcap_preview_desc_t;
 
     typedef void (*gcap_on_video_cb)(const gcap_frame_t *frame, void *user);
+    typedef void (*gcap_on_frame_packet_cb)(const gcap_frame_packet_t *pkt, void *user);
     typedef void (*gcap_on_error_cb)(gcap_status_t code, const char *msg, void *user);
 
     typedef struct gcap_handle_t *gcap_handle;
@@ -181,6 +205,7 @@ extern "C"
     gcap_status_t gcap_set_profile(gcap_handle h, const gcap_profile_t *prof);
     gcap_status_t gcap_set_buffers(gcap_handle h, int count, size_t bytes_hint);
     gcap_status_t gcap_set_callbacks(gcap_handle h, gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user);
+    GCAP_API gcap_status_t gcap_set_frame_packet_callback(gcap_handle h, gcap_on_frame_packet_cb cb, void *user);
     gcap_status_t gcap_start(gcap_handle h);
     gcap_status_t gcap_start_recording(gcap_handle h, const char *path_utf8);
     gcap_status_t gcap_stop_recording(gcap_handle h);

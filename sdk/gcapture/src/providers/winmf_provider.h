@@ -67,6 +67,7 @@ public:
 
     // Set callback functions for video frames and errors
     void setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user) override;
+    void setFramePacketCallback(gcap_on_frame_packet_cb pcb, void *user) override;
 
     bool getDeviceProps(gcap_device_props_t &out) override;
     bool getSignalStatus(gcap_signal_status_t &out) override;
@@ -80,6 +81,7 @@ public:
 private:
     // ---- Callbacks ----
     gcap_on_video_cb vcb_ = nullptr;
+    gcap_on_frame_packet_cb pcb_ = nullptr;
     gcap_on_error_cb ecb_ = nullptr;
     void *user_ = nullptr;
 

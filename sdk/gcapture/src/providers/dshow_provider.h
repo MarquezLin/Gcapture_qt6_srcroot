@@ -32,6 +32,7 @@ public:
     void stop() override;
     void close() override;
     void setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user) override;
+    void setFramePacketCallback(gcap_on_frame_packet_cb pcb, void *user) override;
     bool getSignalStatus(gcap_signal_status_t &out) override;
     bool getRuntimeInfo(gcap_runtime_info_t &out) override;
     bool setPreview(const gcap_preview_desc_t &desc) override;
@@ -87,6 +88,7 @@ private:
 
     gcap_profile_t profile_{};
     gcap_on_video_cb vcb_ = nullptr;
+    gcap_on_frame_packet_cb pcb_ = nullptr;
     gcap_on_error_cb ecb_ = nullptr;
     void *user_ = nullptr;
 

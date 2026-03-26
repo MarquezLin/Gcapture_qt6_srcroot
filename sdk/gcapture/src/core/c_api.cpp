@@ -121,6 +121,15 @@ extern "C"
         return h->mgr.setCallbacks(vcb, ecb, user);
     }
 
+    gcap_status_t gcap_set_frame_packet_callback(gcap_handle h,
+                                                 gcap_on_frame_packet_cb cb,
+                                                 void *user)
+    {
+        if (!h)
+            return GCAP_EINVAL;
+        return h->mgr.setFramePacketCallback(cb, user);
+    }
+
     gcap_status_t gcap_start(gcap_handle h)
     {
         if (!h)

@@ -85,6 +85,7 @@ bool CaptureManager::applyCachedStateToProvider()
         return false;
 
     provider_->setCallbacks(vcb_, ecb_, user_);
+    provider_->setFramePacketCallback(pcb_, user_);
 
     if (hasProfile_ && !provider_->setProfile(cachedProfile_))
         return false;
@@ -233,6 +234,18 @@ gcap_status_t CaptureManager::setCallbacks(gcap_on_video_cb v, gcap_on_error_cb 
     if (!provider_)
         return GCAP_ENOTSUP;
     provider_->setCallbacks(vcb_, ecb_, user_);
+    provider_->setFramePacketCallback(pcb_, user_);
+    return GCAP_OK;
+}
+
+gcap_status_t CaptureManager::setFramePacketCallback(gcap_on_frame_packet_cb cb, void *u)
+{
+    pcb_ = cb;
+    user_ = u;
+    if (!provider_)
+        return GCAP_ENOTSUP;
+    provider_->setCallbacks(vcb_, ecb_, user_);
+    provider_->setFramePacketCallback(pcb_, user_);
     return GCAP_OK;
 }
 

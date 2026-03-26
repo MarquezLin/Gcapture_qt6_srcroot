@@ -1058,6 +1058,36 @@ void WinMFProvider::setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, voi
     pending_log_flush();
 }
 
+void WinMFProvider::setFramePacketCallback(gcap_on_frame_packet_cb pcb, void *user)
+{
+    pcb_ = pcb;
+    user_ = user;
+}
+
+static inline void emit_frame_packet_cb(gcap_on_frame_packet_cb pcb, void *user,
+                                        int backend, int sourceKind, int gpuBacked,
+                                        const gcap_frame_t &f)
+{
+    if (!pcb)
+        return;
+    gcap_frame_packet_t pkt{};
+    pkt.width = f.width;
+    pkt.height = f.height;
+    pkt.format = f.format;
+    pkt.plane_count = f.plane_count;
+    for (int i = 0; i < 3; ++i)
+    {
+        pkt.data[i] = f.data[i];
+        pkt.stride[i] = f.stride[i];
+    }
+    pkt.pts_ns = f.pts_ns;
+    pkt.frame_id = f.frame_id;
+    pkt.backend = backend;
+    pkt.source_kind = sourceKind;
+    pkt.gpu_backed = gpuBacked;
+    pcb(&pkt, user);
+}
+
 // -------------------- D3D / MF init --------------------
 
 bool WinMFProvider::create_d3d()
@@ -2698,6 +2728,7 @@ void WinMFProvider::loop()
                 f.data[0] = pData;
                 f.stride[0] = cur_w_ * 4;
                 f.plane_count = 1;
+                emit_frame_packet_cb(pcb_, user_, GCAP_BACKEND_WINMF_CPU, GCAP_SOURCE_WINMF_CPU, 0, f);
                 if (vcb_)
                     vcb_(&f, user_);
             }
@@ -2740,6 +2771,7 @@ void WinMFProvider::loop()
                 f.data[0] = cpu_argb_.data();
                 f.stride[0] = cur_w_ * 4;
                 f.plane_count = 1;
+                emit_frame_packet_cb(pcb_, user_, GCAP_BACKEND_WINMF_CPU, GCAP_SOURCE_WINMF_CPU, 0, f);
                 if (vcb_)
                     vcb_(&f, user_);
             }
@@ -2766,6 +2798,7 @@ void WinMFProvider::loop()
                 f.data[0] = cpu_argb_.data();
                 f.stride[0] = cur_w_ * 4;
                 f.plane_count = 1;
+                emit_frame_packet_cb(pcb_, user_, GCAP_BACKEND_WINMF_CPU, GCAP_SOURCE_WINMF_CPU, 0, f);
                 if (vcb_)
                     vcb_(&f, user_);
             }
@@ -3222,6 +3255,7 @@ void WinMFProvider::loop()
             f.format = GCAP_FMT_ARGB;
             f.pts_ns = (uint64_t)ts * 100;
             f.frame_id = ++frame_id_;
+            emit_frame_packet_cb(pcb_, user_, GCAP_BACKEND_WINMF_GPU, GCAP_SOURCE_WINMF_GPU, 1, f);
             if (vcb_)
                 vcb_(&f, user_);
             ctx_->Unmap(rt_stage_.Get(), 0);

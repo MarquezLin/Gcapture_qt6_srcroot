@@ -25,6 +25,97 @@ using Microsoft::WRL::ComPtr;
 
 static MainWindow *g_mainWindow = nullptr;
 
+namespace {
+static inline uint8_t clampByteLocal(int v)
+{
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return static_cast<uint8_t>(v);
+}
+
+static inline void yuvToRgbLocal(int y, int u, int v, uint8_t &b, uint8_t &g, uint8_t &r)
+{
+    const int c = y - 16;
+    const int d = u - 128;
+    const int e = v - 128;
+    const int rr = (298 * c + 409 * e + 128) >> 8;
+    const int gg = (298 * c - 100 * d - 208 * e + 128) >> 8;
+    const int bb = (298 * c + 516 * d + 128) >> 8;
+    r = clampByteLocal(rr);
+    g = clampByteLocal(gg);
+    b = clampByteLocal(bb);
+}
+
+static QImage framePacketToQImage(const gcap_frame_packet_t &pkt)
+{
+    if (pkt.width <= 0 || pkt.height <= 0 || pkt.plane_count <= 0 || !pkt.data[0])
+        return {};
+
+    if (pkt.format == GCAP_FMT_ARGB)
+    {
+        QImage img(reinterpret_cast<const uchar *>(pkt.data[0]), pkt.width, pkt.height, pkt.stride[0], QImage::Format_ARGB32);
+        return img.copy();
+    }
+
+    QImage img(pkt.width, pkt.height, QImage::Format_ARGB32);
+    if (img.isNull())
+        return {};
+
+    if (pkt.format == GCAP_FMT_NV12 && pkt.plane_count >= 2 && pkt.data[1])
+    {
+        const uint8_t *yPlane = reinterpret_cast<const uint8_t *>(pkt.data[0]);
+        const uint8_t *uvPlane = reinterpret_cast<const uint8_t *>(pkt.data[1]);
+        const int yStride = pkt.stride[0] > 0 ? pkt.stride[0] : pkt.width;
+        const int uvStride = pkt.stride[1] > 0 ? pkt.stride[1] : pkt.width;
+        for (int y = 0; y < pkt.height; ++y)
+        {
+            const uint8_t *yRow = yPlane + static_cast<size_t>(y) * yStride;
+            const uint8_t *uvRow = uvPlane + static_cast<size_t>(y / 2) * uvStride;
+            QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
+            for (int x = 0; x < pkt.width; ++x)
+            {
+                const int Y = yRow[x];
+                const int U = uvRow[(x & ~1) + 0];
+                const int V = uvRow[(x & ~1) + 1];
+                uint8_t b=0,g=0,r=0;
+                yuvToRgbLocal(Y,U,V,b,g,r);
+                dst[x] = qRgba(r,g,b,255);
+            }
+        }
+        return img;
+    }
+
+    if (pkt.format == GCAP_FMT_YUY2)
+    {
+        const uint8_t *src = reinterpret_cast<const uint8_t *>(pkt.data[0]);
+        const int srcStride = pkt.stride[0] > 0 ? pkt.stride[0] : (pkt.width * 2);
+        for (int y = 0; y < pkt.height; ++y)
+        {
+            const uint8_t *srcRow = src + static_cast<size_t>(y) * srcStride;
+            QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
+            for (int x = 0; x < pkt.width; x += 2)
+            {
+                const uint8_t y0 = srcRow[x * 2 + 0];
+                const uint8_t u  = srcRow[x * 2 + 1];
+                const uint8_t y1 = srcRow[x * 2 + 2];
+                const uint8_t v  = srcRow[x * 2 + 3];
+                uint8_t b=0,g=0,r=0;
+                yuvToRgbLocal(y0,u,v,b,g,r);
+                dst[x] = qRgba(r,g,b,255);
+                if (x + 1 < pkt.width)
+                {
+                    yuvToRgbLocal(y1,u,v,b,g,r);
+                    dst[x + 1] = qRgba(r,g,b,255);
+                }
+            }
+        }
+        return img;
+    }
+
+    return {};
+}
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow)
 {
@@ -325,6 +416,8 @@ void MainWindow::onStart()
     }
 
     st = gcap_set_callbacks(h_, &MainWindow::s_vcb, &MainWindow::s_ecb, this);
+    if (st == GCAP_OK && usePacketCallback_)
+        st = gcap_set_frame_packet_callback(h_, &MainWindow::s_pcb, this);
     if (st != GCAP_OK)
     {
         QMessageBox::warning(this, "gcapture",
@@ -615,6 +708,10 @@ void MainWindow::onRecord()
 void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
 {
     auto *self = static_cast<MainWindow *>(u);
+    if (!self || !f || !f->data[0] || f->width <= 0 || f->height <= 0)
+        return;
+    if (self->usePacketCallback_)
+        return;
     // 更新「實際來源」資訊
     self->lastFramePtsNs_ = f->pts_ns;
     self->lastFrameWidth_ = f->width;
@@ -634,6 +731,32 @@ void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
     // 這裡 f 是 BGRA 一張圖，直接包成 QImage
     QImage img((const uchar *)f->data[0], f->width, f->height, f->stride[0], QImage::Format_ARGB32);
     self->sigFrame(img.copy()); // copy 確保 thread-safe
+}
+
+void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
+{
+    auto *self = static_cast<MainWindow *>(u);
+    if (!self || !pkt)
+        return;
+
+    self->lastFramePtsNs_ = pkt->pts_ns;
+    self->lastFrameWidth_ = pkt->width;
+    self->lastFrameHeight_ = pkt->height;
+    static uint64_t lastPtsForFpsPkt = 0;
+    if (lastPtsForFpsPkt != 0 && self->lastFramePtsNs_ > lastPtsForFpsPkt)
+    {
+        uint64_t delta = self->lastFramePtsNs_ - lastPtsForFpsPkt;
+        double fps = 1e9 / double(delta);
+        if (fps > 0.0)
+            self->avgFps_ = (self->avgFps_ <= 0.0) ? fps : (self->avgFps_ * 0.9 + fps * 0.1);
+    }
+    lastPtsForFpsPkt = self->lastFramePtsNs_;
+
+    QImage img = framePacketToQImage(*pkt);
+    if (img.isNull())
+        return;
+
+    self->sigFrame(img.copy());
 }
 
 void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)

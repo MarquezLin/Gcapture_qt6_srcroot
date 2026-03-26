@@ -289,6 +289,13 @@ void DShowProvider::setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, voi
     user_ = user;
 }
 
+void DShowProvider::setFramePacketCallback(gcap_on_frame_packet_cb pcb, void *user)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    pcb_ = pcb;
+    user_ = user;
+}
+
 bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
 {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -1068,12 +1075,62 @@ void DShowProvider::mirrorLoop()
         if (captureCallbackFrameToArgb(buf, w, h, stride))
         {
             gcap_on_video_cb vcb = nullptr;
+            gcap_on_frame_packet_cb pcb = nullptr;
             void *user = nullptr;
             {
                 std::lock_guard<std::mutex> lock(mtx_);
                 vcb = vcb_;
+                pcb = pcb_;
                 user = user_;
             }
+
+            auto now = std::chrono::steady_clock::now().time_since_epoch();
+            const uint64_t ptsNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+            const uint64_t frameId = ++frameCounter_;
+
+            if (pcb && rawOnlyActive_)
+            {
+                std::vector<uint8_t> raw;
+                int rw = 0, rh = 0, rstride = 0;
+                GUID rawSubtype = MEDIASUBTYPE_NULL;
+                if (rawRenderer_.copyLatestRaw(raw, rw, rh, rstride, rawSubtype) && !raw.empty())
+                {
+                    gcap_frame_packet_t pkt{};
+                    pkt.width = rw;
+                    pkt.height = rh;
+                    pkt.pts_ns = ptsNs;
+                    pkt.frame_id = frameId;
+                    pkt.backend = GCAP_BACKEND_DSHOW;
+                    pkt.source_kind = GCAP_SOURCE_DSHOW_RAWSINK;
+                    pkt.gpu_backed = 0;
+
+                    if (rawSubtype == MEDIASUBTYPE_NV12)
+                    {
+                        pkt.format = GCAP_FMT_NV12;
+                        pkt.plane_count = 2;
+                        pkt.data[0] = raw.data();
+                        pkt.data[1] = raw.data() + (size_t)rstride * (size_t)rh;
+                        pkt.stride[0] = rstride;
+                        pkt.stride[1] = rstride;
+                    }
+                    else if (rawSubtype == MEDIASUBTYPE_YUY2)
+                    {
+                        pkt.format = GCAP_FMT_YUY2;
+                        pkt.plane_count = 1;
+                        pkt.data[0] = raw.data();
+                        pkt.stride[0] = rstride;
+                    }
+                    else
+                    {
+                        pkt.format = GCAP_FMT_ARGB;
+                        pkt.plane_count = 1;
+                        pkt.data[0] = buf.data();
+                        pkt.stride[0] = stride;
+                    }
+                    pcb(&pkt, user);
+                }
+            }
+
             if (vcb && !buf.empty())
             {
                 gcap_frame_t f{};
@@ -1083,12 +1140,8 @@ void DShowProvider::mirrorLoop()
                 f.width = w;
                 f.height = h;
                 f.format = GCAP_FMT_ARGB;
-                if (f.frame_id == 0)
-                {
-                }
-                auto now = std::chrono::steady_clock::now().time_since_epoch();
-                f.pts_ns = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
-                f.frame_id = ++frameCounter_;
+                f.pts_ns = ptsNs;
+                f.frame_id = frameId;
                 if (f.frame_id == 1)
                 {
                     char msg[256] = {};

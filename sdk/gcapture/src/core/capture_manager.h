@@ -68,6 +68,11 @@ struct ICaptureProvider
      * @param user User pointer passed to callbacks.
      */
     virtual void setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user) = 0;
+    virtual void setFramePacketCallback(gcap_on_frame_packet_cb pcb, void *user)
+    {
+        (void)pcb;
+        (void)user;
+    }
 
     // --- OBS-like properties ---
     virtual bool getDeviceProps(gcap_device_props_t &out)
@@ -125,6 +130,7 @@ public:
     gcap_status_t setProfile(const gcap_profile_t &p);
     gcap_status_t setBuffers(int count, size_t bytes_hint);
     gcap_status_t setCallbacks(gcap_on_video_cb v, gcap_on_error_cb e, void *user);
+    gcap_status_t setFramePacketCallback(gcap_on_frame_packet_cb cb, void *user);
     gcap_status_t start();
     gcap_status_t startRecording(const char *pathUtf8);
     gcap_status_t stopRecording();
@@ -149,6 +155,7 @@ private:
 
     std::unique_ptr<ICaptureProvider> provider_; // Active provider instance
     gcap_on_video_cb vcb_ = nullptr;             // Video frame callback
+    gcap_on_frame_packet_cb pcb_ = nullptr;      // Frame packet callback
     gcap_on_error_cb ecb_ = nullptr;             // Error callback
     void *user_ = nullptr;                       // User data pointer for callbacks
 

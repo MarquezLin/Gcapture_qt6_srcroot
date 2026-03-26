@@ -94,6 +94,7 @@ private:
     QTextEdit *debugText_ = nullptr;
 
     static void s_vcb(const gcap_frame_t *f, void *u);
+    static void s_pcb(const gcap_frame_packet_t *pkt, void *u);
     static void s_ecb(gcap_status_t c, const char *m, void *u);
     // === 全專案共用的集中 log 入口（UI + DLL callback 都用這個）===
     static void postLog(const QString &line, bool isError = false);
@@ -109,6 +110,7 @@ private:
     previewwindow *previewWindow_ = nullptr;
 
     qint64 lastPropsQueryMs_ = 0;
+    bool usePacketCallback_ = true;
     void updateRuntimeStatusUi();
 
 signals:
