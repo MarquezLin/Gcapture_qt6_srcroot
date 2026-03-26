@@ -111,6 +111,7 @@ private:
 
     qint64 lastPropsQueryMs_ = 0;
     bool usePacketCallback_ = false;
+    bool packetLogOnly_ = false;
     uint64_t lastVideoCallbackPtsNs_ = 0;
     uint64_t lastPacketCallbackPtsNs_ = 0;
     uint64_t framePacketLogCount_ = 0;

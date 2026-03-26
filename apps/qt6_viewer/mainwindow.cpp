@@ -398,11 +398,13 @@ void MainWindow::onStart()
         return;
 
     int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
-    usePacketCallback_ = (backend == 2);
+    usePacketCallback_ = false;
+    packetLogOnly_ = (backend == 2);
 
-    appendDebugLog(QStringLiteral("[MainWindow] backend=%1 usePacketCallback=%2")
+    appendDebugLog(QStringLiteral("[MainWindow] backend=%1 usePacketCallback=%2 packetLogOnly=%3")
                        .arg(backend)
-                       .arg(usePacketCallback_ ? "true" : "false"));
+                       .arg(usePacketCallback_ ? "true" : "false")
+                       .arg(packetLogOnly_ ? "true" : "false"));
 
 #ifdef _WIN32
     if (backend == 100)
@@ -448,7 +450,7 @@ void MainWindow::onStart()
     }
 
     st = gcap_set_callbacks(h_, &MainWindow::s_vcb, &MainWindow::s_ecb, this);
-    if (st == GCAP_OK && usePacketCallback_)
+    if (st == GCAP_OK && (usePacketCallback_ || packetLogOnly_))
     {
         st = gcap_set_frame_packet_callback(h_, &MainWindow::s_pcb, this);
         if (st == GCAP_OK)
@@ -470,17 +472,17 @@ void MainWindow::onStart()
         gcap_set_procamp(h_, &m_currentProcAmp);
 
     gcap_preview_desc_t pv{};
-    if (backend == 2) // DirectShow raw-only preview uses Qt callback rendering
+    pv.hwnd = hwnd;
+    pv.enable_preview = 1;
+
+    if (backend == 2)
     {
-        pv.hwnd = nullptr;
-        pv.enable_preview = 0;
+        // DirectShow: use shared native preview for Phase C-2
         pv.use_fp16_pipeline = 0;
         pv.swapchain_10bit = 0;
     }
     else
     {
-        pv.hwnd = hwnd;
-        pv.enable_preview = 1;
         pv.use_fp16_pipeline = 1;
         pv.swapchain_10bit = 1;
     }
@@ -751,7 +753,7 @@ void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
     auto *self = static_cast<MainWindow *>(u);
     if (!self || !f || !f->data[0] || f->width <= 0 || f->height <= 0)
         return;
-    if (self->usePacketCallback_)
+    if (self->usePacketCallback_ || self->packetLogOnly_)
         return;
     // 更新「實際來源」資訊
     self->lastFramePtsNs_ = f->pts_ns;
@@ -824,6 +826,9 @@ void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
                            .arg(QString::number(pkt->pts_ns));
         MainWindow::postLog(line);
     }
+
+    if (!self->usePacketCallback_)
+        return;
 
     QImage img = framePacketToQImage(*pkt);
     if (img.isNull())

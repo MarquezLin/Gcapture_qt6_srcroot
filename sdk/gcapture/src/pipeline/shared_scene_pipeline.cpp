@@ -1005,6 +1005,24 @@ bool SharedScenePipeline::blit_fp16_to_rgba8(int frame_w, int frame_h)
     return true;
 }
 
+
+bool SharedScenePipeline::upload_argb_frame(const void *data, int frame_w, int frame_h, int src_stride)
+{
+    if (!data || !ctx_ || !rt_rgba_ || frame_w <= 0 || frame_h <= 0 || src_stride <= 0)
+        return false;
+
+    D3D11_BOX box{};
+    box.left = 0;
+    box.top = 0;
+    box.front = 0;
+    box.right = (UINT)frame_w;
+    box.bottom = (UINT)frame_h;
+    box.back = 1;
+
+    ctx_->UpdateSubresource(rt_rgba_.Get(), 0, &box, data, (UINT)src_stride, 0);
+    return true;
+}
+
 bool SharedScenePipeline::readback_to_frame(int frame_w, int frame_h, uint64_t pts_ns, uint64_t frame_id,
                                             gcap_frame_t *out)
 {

@@ -32,6 +32,7 @@ public:
     bool gpu_overlay_text(const wchar_t *text, int frame_w, int frame_h);
     bool composite_overlay_to_scene_fp16(int frame_w, int frame_h);
     bool blit_fp16_to_rgba8(int frame_w, int frame_h);
+    bool upload_argb_frame(const void *data, int frame_w, int frame_h, int src_stride);
     bool readback_to_frame(int frame_w, int frame_h, uint64_t pts_ns, uint64_t frame_id,
                            gcap_frame_t *out);
 

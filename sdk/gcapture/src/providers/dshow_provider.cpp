@@ -350,6 +350,12 @@ bool DShowProvider::setPreview(const gcap_preview_desc_t &desc)
     OutputDebugStringA(buf);
     if (vmrWindowless_)
         updatePreviewRect();
+    if (pipeline_)
+    {
+        pipeline_->configurePreview(desc);
+        if (width_ > 0 && height_ > 0)
+            pipeline_->ensure_preview_swapchain(width_, height_);
+    }
     return true;
 }
 
@@ -542,6 +548,83 @@ bool DShowProvider::rawSinkPlanned() const
     return rawOnlyActive_ && rawRenderer_.isSupportedSubtype();
 }
 
+bool DShowProvider::createRenderPipeline()
+{
+    if (!previewHwnd_ || width_ <= 0 || height_ <= 0)
+        return false;
+
+    if (!pipeline_)
+        pipeline_ = std::make_unique<SharedScenePipeline>();
+
+    if (!d3d_)
+    {
+        UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+#ifdef _DEBUG
+        flags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+        D3D_FEATURE_LEVEL fls[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
+        D3D_FEATURE_LEVEL got{};
+        HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, fls, _countof(fls), D3D11_SDK_VERSION, &d3d_, &got, &ctx_);
+#ifdef _DEBUG
+        if (FAILED(hr))
+        {
+            flags &= ~D3D11_CREATE_DEVICE_DEBUG;
+            hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, fls, _countof(fls), D3D11_SDK_VERSION, &d3d_, &got, &ctx_);
+        }
+#endif
+        if (FAILED(hr) || !d3d_ || !ctx_)
+        {
+            dshow_log_hr("D3D11CreateDevice(DShow pipeline)", hr);
+            return false;
+        }
+
+        if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2d_factory_.ReleaseAndGetAddressOf())) || !d2d_factory_)
+            return false;
+
+        ComPtr<IDXGIDevice> dxgiDev;
+        if (FAILED(d3d_.As(&dxgiDev)) || !dxgiDev)
+            return false;
+        if (FAILED(d2d_factory_->CreateDevice(dxgiDev.Get(), &d2d_device_)) || !d2d_device_)
+            return false;
+        if (FAILED(d2d_device_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2d_ctx_)) || !d2d_ctx_)
+            return false;
+        if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), &dwrite_)) || !dwrite_)
+            return false;
+        d2d_ctx_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &d2d_white_);
+        d2d_ctx_->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.55f), &d2d_black_);
+    }
+
+    if (!pipeline_->initialize(d3d_.Get(), ctx_.Get(), d2d_ctx_.Get(), dwrite_.Get(), d2d_white_.Get(), d2d_black_.Get()))
+        return false;
+
+    gcap_preview_desc_t desc{};
+    desc.hwnd = previewHwnd_;
+    desc.enable_preview = 1;
+    desc.use_fp16_pipeline = 0;
+    desc.swapchain_10bit = 0;
+    pipeline_->configurePreview(desc);
+
+    return pipeline_->ensure_rt_and_pipeline(width_, height_) &&
+           pipeline_->ensure_preview_swapchain(width_, height_);
+}
+
+void DShowProvider::releaseRenderPipeline()
+{
+    if (pipeline_)
+    {
+        pipeline_->release_preview_swapchain();
+        pipeline_.reset();
+    }
+    d2d_black_.Reset();
+    d2d_white_.Reset();
+    dwrite_.Reset();
+    d2d_ctx_.Reset();
+    d2d_device_.Reset();
+    d2d_factory_.Reset();
+    ctx_.Reset();
+    d3d_.Reset();
+}
+
 void DShowProvider::updatePreviewRect()
 {
     if (!vmrWindowless_ || !previewHwnd_)
@@ -553,7 +636,7 @@ void DShowProvider::updatePreviewRect()
 
 bool DShowProvider::isRawOnlyMode() const
 {
-    return (previewHwnd_ == nullptr);
+    return true;
 }
 
 bool DShowProvider::buildPreviewGraph(ICaptureGraphBuilder2 *capBuilder)
@@ -862,6 +945,8 @@ bool DShowProvider::open(int index)
 
     currentIndex_ = index;
     updatePreviewRect();
+    if (previewHwnd_)
+        createRenderPipeline();
     dshow_log("[DShow] open() success");
     {
         char msg[256] = {};
@@ -1070,112 +1155,136 @@ void DShowProvider::mirrorLoop()
     dshow_log("[DShow] mirrorLoop begin");
     while (mirrorThreadRunning_)
     {
+        gcap_on_video_cb vcb = nullptr;
+        gcap_on_frame_packet_cb pcb = nullptr;
+        void *user = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            vcb = vcb_;
+            pcb = pcb_;
+            user = user_;
+        }
+
+        std::vector<uint8_t> raw;
+        int rw = 0, rh = 0, rstride = 0;
+        GUID rawSubtype = MEDIASUBTYPE_NULL;
+        const bool haveRaw = rawRenderer_.copyLatestRaw(raw, rw, rh, rstride, rawSubtype) && !raw.empty();
+
         std::vector<uint8_t> buf;
         int w = 0, h = 0, stride = 0;
-        if (captureCallbackFrameToArgb(buf, w, h, stride))
-        {
-            gcap_on_video_cb vcb = nullptr;
-            gcap_on_frame_packet_cb pcb = nullptr;
-            void *user = nullptr;
-            {
-                std::lock_guard<std::mutex> lock(mtx_);
-                vcb = vcb_;
-                pcb = pcb_;
-                user = user_;
-            }
+        const bool needArgb = (vcb != nullptr) || (previewHwnd_ != nullptr);
+        const bool haveArgb = needArgb ? captureRawFrameToArgb(buf, w, h, stride) : false;
 
+        if (haveRaw || haveArgb)
+        {
             auto now = std::chrono::steady_clock::now().time_since_epoch();
             const uint64_t ptsNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
             const uint64_t frameId = ++frameCounter_;
 
-            if (pcb && rawOnlyActive_)
+            if (pcb && haveRaw && rawOnlyActive_)
             {
-                std::vector<uint8_t> raw;
-                int rw = 0, rh = 0, rstride = 0;
-                GUID rawSubtype = MEDIASUBTYPE_NULL;
-                if (rawRenderer_.copyLatestRaw(raw, rw, rh, rstride, rawSubtype) && !raw.empty())
-                {
-                    gcap_frame_packet_t pkt{};
-                    pkt.width = rw;
-                    pkt.height = rh;
-                    pkt.pts_ns = ptsNs;
-                    pkt.frame_id = frameId;
-                    pkt.backend = GCAP_BACKEND_DSHOW;
-                    pkt.source_kind = GCAP_SOURCE_DSHOW_RAWSINK;
-                    pkt.gpu_backed = 0;
+                gcap_frame_packet_t pkt{};
+                pkt.width = rw;
+                pkt.height = rh;
+                pkt.pts_ns = ptsNs;
+                pkt.frame_id = frameId;
+                pkt.backend = GCAP_BACKEND_DSHOW;
+                pkt.source_kind = GCAP_SOURCE_DSHOW_RAWSINK;
+                pkt.gpu_backed = 0;
 
-                    if (rawSubtype == MEDIASUBTYPE_NV12)
-                    {
-                        pkt.format = GCAP_FMT_NV12;
-                        pkt.plane_count = 2;
-                        pkt.data[0] = raw.data();
-                        pkt.data[1] = raw.data() + (size_t)rstride * (size_t)rh;
-                        pkt.stride[0] = rstride;
-                        pkt.stride[1] = rstride;
-                    }
-                    else if (rawSubtype == MEDIASUBTYPE_YUY2)
-                    {
-                        pkt.format = GCAP_FMT_YUY2;
-                        pkt.plane_count = 1;
-                        pkt.data[0] = raw.data();
-                        pkt.stride[0] = rstride;
-                    }
-                    else
-                    {
-                        pkt.format = GCAP_FMT_ARGB;
-                        pkt.plane_count = 1;
-                        pkt.data[0] = buf.data();
-                        pkt.stride[0] = stride;
-                    }
-                    if (frameId <= 5 || (frameId % 60) == 0)
-                    {
-                        char dbg[256];
-                        std::snprintf(dbg, sizeof(dbg),
-                                      "[DShow] dispatch frame packet frame=%llu fmt=%d %dx%d planes=%d user=%p\n",
-                                      static_cast<unsigned long long>(frameId),
-                                      pkt.format,
-                                      pkt.width,
-                                      pkt.height,
-                                      pkt.plane_count,
-                                      user);
-                        dshow_log(dbg);
-                    }
-                    pcb(&pkt, user);
+                if (rawSubtype == MEDIASUBTYPE_NV12)
+                {
+                    pkt.format = GCAP_FMT_NV12;
+                    pkt.plane_count = 2;
+                    pkt.data[0] = raw.data();
+                    pkt.data[1] = raw.data() + (size_t)rstride * (size_t)rh;
+                    pkt.stride[0] = rstride;
+                    pkt.stride[1] = rstride;
                 }
+                else if (rawSubtype == MEDIASUBTYPE_YUY2)
+                {
+                    pkt.format = GCAP_FMT_YUY2;
+                    pkt.plane_count = 1;
+                    pkt.data[0] = raw.data();
+                    pkt.stride[0] = rstride;
+                }
+                else
+                {
+                    pkt.format = GCAP_FMT_ARGB;
+                    pkt.plane_count = 1;
+                    pkt.data[0] = haveArgb ? buf.data() : nullptr;
+                    pkt.stride[0] = stride;
+                }
+                if (frameId <= 5 || (frameId % 60) == 0)
+                {
+                    char dbg[256];
+                    std::snprintf(dbg, sizeof(dbg),
+                                  "[DShow] dispatch frame packet frame=%llu fmt=%d %dx%d planes=%d user=%p\n",
+                                  static_cast<unsigned long long>(frameId),
+                                  pkt.format,
+                                  pkt.width,
+                                  pkt.height,
+                                  pkt.plane_count,
+                                  user);
+                    dshow_log(dbg);
+                }
+                pcb(&pkt, user);
             }
 
-            if (vcb && !buf.empty())
+            if (pipeline_ && haveArgb)
             {
-                gcap_frame_t f{};
-                f.data[0] = buf.data();
-                f.stride[0] = stride;
-                f.plane_count = 1;
-                f.width = w;
-                f.height = h;
-                f.format = GCAP_FMT_ARGB;
-                f.pts_ns = ptsNs;
-                f.frame_id = frameId;
-                if (f.frame_id == 1)
+                pipeline_->ensure_rt_and_pipeline(w, h);
+                pipeline_->ensure_preview_swapchain(w, h);
+                pipeline_->upload_argb_frame(buf.data(), w, h, stride);
+                pipeline_->present_preview(w, h);
+            }
+
+            if (vcb && haveArgb)
+            {
+                if (pipeline_)
                 {
-                    char msg[256] = {};
-                    double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
-                    sprintf_s(msg, "[DShow] callback frame -> %d x %d fmt=ARGB negotiated=%s %d x %d %.2ffps source=%s raw-candidate=%s raw-sink-plan=%s",
-                              w, h, subtypeName(subtype_), width_, height_, fps,
-                              callbackSourceName(lastCallbackSource_.load()),
-                              isRawCandidate() ? "YES" : "NO",
-                              rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO");
-                    OutputDebugStringA(msg);
-                    if (isRawCandidate())
+                    gcap_frame_t f{};
+                    if (pipeline_->readback_to_frame(w, h, ptsNs, frameId, &f))
                     {
-                        char rawMsg[256] = {};
-                        sprintf_s(rawMsg, "[DShow] raw state: hasFrame=%s sampleCount=%llu bytes=%llu",
-                                  rawRenderer_.hasFrame() ? "YES" : "NO",
-                                  static_cast<unsigned long long>(rawRenderer_.sampleCount()),
-                                  static_cast<unsigned long long>(rawRenderer_.lastSampleBytes()));
-                        OutputDebugStringA(rawMsg);
+                        if (frameId == 1)
+                        {
+                            char msg[256] = {};
+                            double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
+                            sprintf_s(msg, "[DShow] shared-scene frame -> %d x %d fmt=ARGB negotiated=%s %d x %d %.2ffps source=%s raw-candidate=%s raw-sink-plan=%s",
+                                      w, h, subtypeName(subtype_), width_, height_, fps,
+                                      callbackSourceName(lastCallbackSource_.load()),
+                                      isRawCandidate() ? "YES" : "NO",
+                                      rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO");
+                            OutputDebugStringA(msg);
+                        }
+                        vcb(&f, user);
+                        ctx_->Unmap(pipeline_->rt_stage_.Get(), 0);
                     }
                 }
-                vcb(&f, user);
+                else
+                {
+                    gcap_frame_t f{};
+                    f.data[0] = buf.data();
+                    f.stride[0] = stride;
+                    f.plane_count = 1;
+                    f.width = w;
+                    f.height = h;
+                    f.format = GCAP_FMT_ARGB;
+                    f.pts_ns = ptsNs;
+                    f.frame_id = frameId;
+                    if (f.frame_id == 1)
+                    {
+                        char msg[256] = {};
+                        double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
+                        sprintf_s(msg, "[DShow] callback frame -> %d x %d fmt=ARGB negotiated=%s %d x %d %.2ffps source=%s raw-candidate=%s raw-sink-plan=%s",
+                                  w, h, subtypeName(subtype_), width_, height_, fps,
+                                  callbackSourceName(lastCallbackSource_.load()),
+                                  isRawCandidate() ? "YES" : "NO",
+                                  rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO");
+                        OutputDebugStringA(msg);
+                    }
+                    vcb(&f, user);
+                }
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(mirrorSleepMs()));
@@ -1240,7 +1349,7 @@ bool DShowProvider::start()
         vmrWindowless_->RepaintVideo(previewHwnd_, nullptr);
     }
     running_ = true;
-    if (vcb_)
+    if (vcb_ || pcb_ || previewHwnd_)
         startMirrorThread();
     return true;
 }

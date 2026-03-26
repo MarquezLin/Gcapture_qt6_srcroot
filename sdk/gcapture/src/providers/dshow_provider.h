@@ -12,11 +12,16 @@
 #include <dshow.h>
 #include <d3d9.h>
 #include <vmr9.h>
+#include <d3d11_1.h>
+#include <d2d1_1.h>
+#include <dwrite.h>
+#include <memory>
 
 #include "gcapture.h"
 #include "dshow_raw_renderer.h"
 #include "dshow_custom_sink.h"
 #include "../core/capture_manager.h"
+#include "../pipeline/shared_scene_pipeline.h"
 
 class DShowProvider : public ICaptureProvider
 {
@@ -66,6 +71,8 @@ private:
     bool isRawCandidate() const;
     const char *callbackSourceName(CallbackSource src) const;
     bool rawSinkPlanned() const;
+    bool createRenderPipeline();
+    void releaseRenderPipeline();
 
 private:
     Microsoft::WRL::ComPtr<IGraphBuilder> graph_;
@@ -102,5 +109,16 @@ private:
     HWND previewHwnd_ = nullptr;
     DShowRawRenderer rawRenderer_{};
     DShowCustomSinkFilter *rawSinkFilter_ = nullptr;
+
+    Microsoft::WRL::ComPtr<ID3D11Device> d3d_;
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> ctx_;
+    Microsoft::WRL::ComPtr<ID2D1Factory1> d2d_factory_;
+    Microsoft::WRL::ComPtr<ID2D1Device> d2d_device_;
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> d2d_ctx_;
+    Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> d2d_white_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> d2d_black_;
+    std::unique_ptr<SharedScenePipeline> pipeline_;
+
     bool rawOnlyActive_ = false;
 };
