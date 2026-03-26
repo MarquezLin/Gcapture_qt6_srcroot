@@ -69,6 +69,7 @@ private:
     bool captureCallbackFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
     int framePumpSleepMs() const;
     bool shouldDoSharedReadback(uint64_t ptsNs, uint64_t frameId, bool sharedReady, bool havePreview, bool haveCallback, uint64_t &lastReadbackPtsNs) const;
+    int callbackTargetFps() const;
     bool isRawCandidate() const;
     const char *callbackSourceName(CallbackSource src) const;
     bool rawSinkPlanned() const;
@@ -134,7 +135,11 @@ private:
         uint64_t copySceneNs = 0;
         uint64_t blitNs = 0;
         uint64_t presentNs = 0;
+        uint64_t readbackNs = 0;
+        uint64_t readbackFrames = 0;
+        uint64_t callbackFrames = 0;
     } previewProbeStats_;
 
     bool rawOnlyActive_ = false;
+    int callbackTargetFps_ = 15;
 };

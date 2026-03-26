@@ -36,6 +36,23 @@ namespace
         OutputDebugStringA(buf);
     }
 
+    static int readEnvIntClamp(const char *name, int defaultValue, int minValue, int maxValue)
+    {
+        char buf[64] = {};
+        DWORD n = GetEnvironmentVariableA(name, buf, static_cast<DWORD>(sizeof(buf)));
+        if (n == 0 || n >= sizeof(buf))
+            return defaultValue;
+        char *end = nullptr;
+        long v = strtol(buf, &end, 10);
+        if (end == buf)
+            return defaultValue;
+        if (v < minValue)
+            v = minValue;
+        if (v > maxValue)
+            v = maxValue;
+        return static_cast<int>(v);
+    }
+
     static bool mediaTypeToVideoInfo(const AM_MEDIA_TYPE *pmt, int &w, int &h, int &fpsNum, int &fpsDen)
     {
         w = h = fpsNum = fpsDen = 0;
@@ -1179,7 +1196,7 @@ void DShowProvider::logPreviewProbeStats(uint64_t frameId, int frameW, int frame
 
     char msg[960] = {};
     sprintf_s(msg,
-              "[DShow][Probe] preview-path frame=%llu size=%dx%d path=%s present=%s avg_ms{copyRaw=%.3f ensureSwap=%.3f upload=%.3f renderYuv=%.3f copyScene=%.3f blit=%.3f present=%.3f} ensureRt{last=%.3f avg=%.3f rebuild=%d reason=%s calls=%llu} frames=%llu",
+              "[DShow][Probe] preview-path frame=%llu size=%dx%d path=%s present=%s avg_ms{copyRaw=%.3f ensureSwap=%.3f upload=%.3f renderYuv=%.3f copyScene=%.3f blit=%.3f present=%.3f readback=%.3f} ensureRt{last=%.3f avg=%.3f rebuild=%d reason=%s calls=%llu} frames=%llu readbacks=%llu callbacks=%llu",
               static_cast<unsigned long long>(frameId),
               frameW,
               frameH,
@@ -1192,12 +1209,15 @@ void DShowProvider::logPreviewProbeStats(uint64_t frameId, int frameW, int frame
               avgMs(previewProbeStats_.copySceneNs, frames),
               avgMs(previewProbeStats_.blitNs, frames),
               avgMs(previewProbeStats_.presentNs, frames),
+              avgMs(previewProbeStats_.readbackNs, previewProbeStats_.readbackFrames),
               ensureRtLastMs,
               ensureRtAvgMs,
               ensureRtRebuild,
               ensureRtReason ? ensureRtReason : "n/a",
               static_cast<unsigned long long>(ensureRtCalls),
-              static_cast<unsigned long long>(frames));
+              static_cast<unsigned long long>(frames),
+              static_cast<unsigned long long>(previewProbeStats_.readbackFrames),
+              static_cast<unsigned long long>(previewProbeStats_.callbackFrames));
     dshow_log(msg);
 }
 
@@ -1414,13 +1434,6 @@ void DShowProvider::framePumpLoop()
                             const auto t1 = std::chrono::steady_clock::now();
                             probeCopySceneNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
                         }
-                        if (uploaded)
-                        {
-                            const auto t0 = std::chrono::steady_clock::now();
-                            uploaded = pipeline_->blit_fp16_to_rgba8(rw, rh);
-                            const auto t1 = std::chrono::steady_clock::now();
-                            probeBlitNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-                        }
                     }
                     else if (rawSubtype == MEDIASUBTYPE_YUY2)
                     {
@@ -1444,7 +1457,11 @@ void DShowProvider::framePumpLoop()
                             const auto t1 = std::chrono::steady_clock::now();
                             probeCopySceneNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
                         }
-                        if (uploaded)
+                    }
+                    if (uploaded)
+                    {
+                        const bool needPreviewBlit = !pipeline_->preview_swapchain_10bit();
+                        if (needPreviewBlit)
                         {
                             const auto t0 = std::chrono::steady_clock::now();
                             uploaded = pipeline_->blit_fp16_to_rgba8(rw, rh);
@@ -1458,7 +1475,7 @@ void DShowProvider::framePumpLoop()
                         pipeline_->present_preview(rw, rh);
                         const auto t1 = std::chrono::steady_clock::now();
                         probePresentNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-                        probePresentTag = "preview-direct";
+                        probePresentTag = pipeline_->preview_swapchain_10bit() ? "preview-direct-10bit" : "preview-direct-rgba8";
                         sharedReady = true;
                     }
                 }
@@ -1534,29 +1551,40 @@ void DShowProvider::framePumpLoop()
                 if (pipeline_ && wantReadback)
                 {
                     gcap_frame_t f{};
-                    if (pipeline_->readback_to_frame(sharedW, sharedH, ptsNs, frameId, &f))
                     {
-                        if (frameId == 1)
+                        const auto t0 = std::chrono::steady_clock::now();
+                        const bool readbackOk = pipeline_->readback_to_frame(sharedW, sharedH, ptsNs, frameId, &f);
+                        const auto t1 = std::chrono::steady_clock::now();
+                        previewProbeStats_.readbackNs += (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        ++previewProbeStats_.readbackFrames;
+                        if (readbackOk)
                         {
-                            char msg[320] = {};
-                            double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
-                            sprintf_s(msg, "[DShow] shared-scene frame -> %d x %d fmt=ARGB negotiated=%s %d x %d %.2ffps source=%s raw-candidate=%s raw-sink-plan=%s ingest=%s",
-                                      sharedW, sharedH, subtypeName(subtype_), width_, height_, fps,
-                                      callbackSourceName(lastCallbackSource_.load()),
-                                      isRawCandidate() ? "YES" : "NO",
-                                      rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO",
-                                      canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : "YUY2-direct") : "ARGB-bridge");
-                            OutputDebugStringA(msg);
+                            if (frameId == 1)
+                            {
+                                char msg[320] = {};
+                                double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
+                                sprintf_s(msg, "[DShow] shared-scene frame -> %d x %d fmt=ARGB negotiated=%s %d x %d %.2ffps source=%s raw-candidate=%s raw-sink-plan=%s ingest=%s",
+                                          sharedW, sharedH, subtypeName(subtype_), width_, height_, fps,
+                                          callbackSourceName(lastCallbackSource_.load()),
+                                          isRawCandidate() ? "YES" : "NO",
+                                          rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO",
+                                          canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : "YUY2-direct") : "ARGB-bridge");
+                                OutputDebugStringA(msg);
+                            }
+                            else if ((frameId % 120) == 0 && previewHwnd_ != nullptr)
+                            {
+                                char msg[224] = {};
+                                sprintf_s(msg, "[DShow] shared-scene throttled callback: frame=%llu readbacks=%llu callbacks=%llu target~%dfps",
+                                          static_cast<unsigned long long>(frameId),
+                                          static_cast<unsigned long long>(previewProbeStats_.readbackFrames),
+                                          static_cast<unsigned long long>(previewProbeStats_.callbackFrames + 1),
+                                          callbackTargetFps());
+                                dshow_log(msg);
+                            }
+                            vcb(&f, user);
+                            ++previewProbeStats_.callbackFrames;
+                            ctx_->Unmap(pipeline_->rt_stage_.Get(), 0);
                         }
-                        else if ((frameId % 120) == 0 && previewHwnd_ != nullptr)
-                        {
-                            char msg[192] = {};
-                            sprintf_s(msg, "[DShow] shared-scene readback throttled: callback every ~66ms, frame=%llu",
-                                      static_cast<unsigned long long>(frameId));
-                            dshow_log(msg);
-                        }
-                        vcb(&f, user);
-                        ctx_->Unmap(pipeline_->rt_stage_.Get(), 0);
                     }
                 }
                 else if (haveArgb)
@@ -1582,6 +1610,7 @@ void DShowProvider::framePumpLoop()
                         OutputDebugStringA(msg);
                     }
                     vcb(&f, user);
+                    ++previewProbeStats_.callbackFrames;
                 }
             }
         }
@@ -1598,9 +1627,12 @@ bool DShowProvider::shouldDoSharedReadback(uint64_t ptsNs, uint64_t frameId, boo
     if (!sharedReady || !haveCallback)
         return false;
 
-    // DS30: keep preview on every frame, but throttle CPU readback when native preview is active.
     if (!havePreview)
         return true;
+
+    const int targetFps = callbackTargetFps();
+    if (targetFps <= 0)
+        return false;
 
     if (frameId <= 3)
     {
@@ -1608,13 +1640,18 @@ bool DShowProvider::shouldDoSharedReadback(uint64_t ptsNs, uint64_t frameId, boo
         return true;
     }
 
-    constexpr uint64_t kMinReadbackIntervalNs = 66ull * 1000ull * 1000ull; // ~15 fps
+    const uint64_t kMinReadbackIntervalNs = static_cast<uint64_t>(1000000000.0 / static_cast<double>(targetFps));
     if (lastReadbackPtsNs == 0 || (ptsNs - lastReadbackPtsNs) >= kMinReadbackIntervalNs)
     {
         lastReadbackPtsNs = ptsNs;
         return true;
     }
     return false;
+}
+
+int DShowProvider::callbackTargetFps() const
+{
+    return callbackTargetFps_;
 }
 
 int DShowProvider::framePumpSleepMs() const
@@ -1678,6 +1715,11 @@ bool DShowProvider::start()
     }
 
     dshow_log("[DShow] start() OK: mediaControl_->Run()");
+    {
+        char msg[192] = {};
+        sprintf_s(msg, "[DShow] callback target fps=%d (env GCAP_DSHOW_CALLBACK_FPS; 0=off, 5/10/15/30=test)", callbackTargetFps());
+        dshow_log(msg);
+    }
     if (vmrWindowless_ && previewHwnd_)
     {
         updatePreviewRect();
