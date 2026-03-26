@@ -339,6 +339,13 @@ gcap_status_t CaptureManager::getSignalStatus(gcap_signal_status_t &out)
     return provider_->getSignalStatus(out) ? GCAP_OK : GCAP_ENOTSUP;
 }
 
+gcap_status_t CaptureManager::getRuntimeInfo(gcap_runtime_info_t &out)
+{
+    if (!provider_)
+        return GCAP_ENOTSUP;
+    return provider_->getRuntimeInfo(out) ? GCAP_OK : GCAP_ENOTSUP;
+}
+
 gcap_status_t CaptureManager::setProcessing(const gcap_processing_opts_t &opts)
 {
     if (!provider_)

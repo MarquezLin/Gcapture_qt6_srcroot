@@ -109,6 +109,7 @@ private:
     previewwindow *previewWindow_ = nullptr;
 
     qint64 lastPropsQueryMs_ = 0;
+    void updateRuntimeStatusUi();
 
 signals:
     void sigFrame(const QImage &);

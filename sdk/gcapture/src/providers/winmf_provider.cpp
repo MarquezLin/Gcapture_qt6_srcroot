@@ -444,6 +444,20 @@ bool WinMFProvider::getSignalStatus(gcap_signal_status_t &out)
     return (out.width > 0 && out.height > 0);
 }
 
+bool WinMFProvider::getRuntimeInfo(gcap_runtime_info_t &out)
+{
+    memset(&out, 0, sizeof(out));
+    if (!getSignalStatus(out.signal))
+        return false;
+
+    const bool gpu = isUsingGpu();
+    out.active_backend = gpu ? GCAP_BACKEND_WINMF_GPU : GCAP_BACKEND_WINMF_CPU;
+    strcpy_s(out.backend_name, gpu ? "WinMF GPU" : "WinMF CPU");
+    strcpy_s(out.frame_source, gpu ? "DXGI" : "CPU");
+    strcpy_s(out.path_name, gpu ? "WinMF GPU Preview" : "WinMF CPU Preview");
+    return true;
+}
+
 bool WinMFProvider::setProcessing(const gcap_processing_opts_t &opts)
 {
     (void)opts;

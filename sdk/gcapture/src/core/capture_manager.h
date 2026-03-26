@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <mutex>
+#include <cstring>
 #include "gcapture.h"
 
 /**
@@ -79,6 +80,13 @@ struct ICaptureProvider
         (void)out;
         return false;
     }
+    virtual bool getRuntimeInfo(gcap_runtime_info_t &out)
+    {
+        memset(&out, 0, sizeof(out));
+        if (!getSignalStatus(out.signal))
+            return false;
+        return true;
+    }
     virtual bool setProcessing(const gcap_processing_opts_t &opts)
     {
         (void)opts;
@@ -125,6 +133,7 @@ public:
     gcap_status_t close();
     gcap_status_t getDeviceProps(gcap_device_props_t &out);
     gcap_status_t getSignalStatus(gcap_signal_status_t &out);
+    gcap_status_t getRuntimeInfo(gcap_runtime_info_t &out);
     gcap_status_t setProcessing(const gcap_processing_opts_t &opts);
     gcap_status_t setProcAmp(const gcap_procamp_t &p);
     gcap_status_t setPreview(const gcap_preview_desc_t &desc);

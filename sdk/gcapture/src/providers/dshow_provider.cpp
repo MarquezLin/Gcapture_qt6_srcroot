@@ -36,8 +36,6 @@ namespace
         OutputDebugStringA(buf);
     }
 
-
-
     static bool mediaTypeToVideoInfo(const AM_MEDIA_TYPE *pmt, int &w, int &h, int &fpsNum, int &fpsDen)
     {
         w = h = fpsNum = fpsDen = 0;
@@ -73,7 +71,8 @@ namespace
 
     static void freeMediaType(AM_MEDIA_TYPE *pmt)
     {
-        if (!pmt) return;
+        if (!pmt)
+            return;
         if (pmt->cbFormat && pmt->pbFormat)
             CoTaskMemFree(pmt->pbFormat);
         if (pmt->pUnk)
@@ -81,18 +80,22 @@ namespace
         CoTaskMemFree(pmt);
     }
 
-
     static const char *subtypeName(const GUID &g)
     {
-        if (g == MEDIASUBTYPE_NV12) return "NV12";
-        if (g == MEDIASUBTYPE_YUY2) return "YUY2";
-        if (g == MEDIASUBTYPE_MJPG) return "MJPG";
-        if (g == MEDIASUBTYPE_RGB24) return "RGB24";
-        if (g == MEDIASUBTYPE_RGB32) return "RGB32";
-        if (g == MEDIASUBTYPE_ARGB32) return "ARGB32";
+        if (g == MEDIASUBTYPE_NV12)
+            return "NV12";
+        if (g == MEDIASUBTYPE_YUY2)
+            return "YUY2";
+        if (g == MEDIASUBTYPE_MJPG)
+            return "MJPG";
+        if (g == MEDIASUBTYPE_RGB24)
+            return "RGB24";
+        if (g == MEDIASUBTYPE_RGB32)
+            return "RGB32";
+        if (g == MEDIASUBTYPE_ARGB32)
+            return "ARGB32";
         return "UNKNOWN";
     }
-
 
     static IPin *findUnconnectedPin(IBaseFilter *filter, PIN_DIRECTION dir)
     {
@@ -109,7 +112,8 @@ namespace
             {
                 IPin *tmp = nullptr;
                 HRESULT hr = pin->ConnectedTo(&tmp);
-                if (tmp) tmp->Release();
+                if (tmp)
+                    tmp->Release();
                 if (FAILED(hr) || hr == VFW_E_NOT_CONNECTED)
                 {
                     enumPins->Release();
@@ -316,6 +320,21 @@ bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
     return (out.width > 0 && out.height > 0);
 }
 
+bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
+{
+    memset(&out, 0, sizeof(out));
+    if (!getSignalStatus(out.signal))
+        return false;
+
+    out.active_backend = GCAP_BACKEND_DSHOW;
+    strcpy_s(out.backend_name, rawOnlyActive_ ? "DShow Raw" : "DShow");
+    strcpy_s(out.path_name, rawOnlyActive_ ? "DShow Raw Preview" : "DShow VMR9 Preview");
+    strcpy_s(out.frame_source, callbackSourceName(lastCallbackSource_.load()));
+    if (out.frame_source[0] == '\0' || strcmp(out.frame_source, "Unknown") == 0)
+        strcpy_s(out.frame_source, rawOnlyActive_ ? "RawSink" : "RendererImage");
+    return true;
+}
+
 bool DShowProvider::setPreview(const gcap_preview_desc_t &desc)
 {
     previewHwnd_ = reinterpret_cast<HWND>(desc.hwnd);
@@ -407,7 +426,6 @@ void DShowProvider::logCaptureCapabilities(IAMStreamConfig *streamConfig)
     }
 }
 
-
 bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 {
     if (!streamConfig)
@@ -417,8 +435,8 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
     int wantH = profile_.height;
     int wantFpsNum = profile_.fps_num;
     int wantFpsDen = profile_.fps_den > 0 ? profile_.fps_den : 1;
-    const GUID wantSubtype = (profile_.format == GCAP_FMT_NV12) ? MEDIASUBTYPE_NV12 :
-                             (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2 : GUID{};
+    const GUID wantSubtype = (profile_.format == GCAP_FMT_NV12) ? MEDIASUBTYPE_NV12 : (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
+                                                                                                                         : GUID{};
 
     if (wantW <= 0 && wantH <= 0 && wantFpsNum <= 0 && wantSubtype == GUID{})
         return false;
@@ -448,8 +466,10 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
         if (wantSubtype != GUID{})
             score += (pmt->subtype == wantSubtype) ? 0 : 1000000000LL;
 
-        if (wantW > 0) score += 1000LL * llabs((long long)w - wantW);
-        if (wantH > 0) score += 1000LL * llabs((long long)h - wantH);
+        if (wantW > 0)
+            score += 1000LL * llabs((long long)w - wantW);
+        if (wantH > 0)
+            score += 1000LL * llabs((long long)h - wantH);
         if (wantFpsNum > 0 && fpsNum > 0 && fpsDen > 0)
         {
             double fps = (double)fpsNum / (double)fpsDen;
@@ -499,14 +519,16 @@ const char *DShowProvider::callbackSourceName(CallbackSource src) const
 {
     switch (src)
     {
-    case CallbackSource::RawSink: return "RawSink";
-    case CallbackSource::RendererImage: return "RendererImage";
-    case CallbackSource::PreviewBitBlt: return "PreviewBitBlt";
-    default: return "Unknown";
+    case CallbackSource::RawSink:
+        return "RawSink";
+    case CallbackSource::RendererImage:
+        return "RendererImage";
+    case CallbackSource::PreviewBitBlt:
+        return "PreviewBitBlt";
+    default:
+        return "Unknown";
     }
 }
-
-
 
 bool DShowProvider::rawSinkPlanned() const
 {
@@ -522,9 +544,106 @@ void DShowProvider::updatePreviewRect()
     vmrWindowless_->SetVideoPosition(nullptr, &rc);
 }
 
+bool DShowProvider::isRawOnlyMode() const
+{
+    return (previewHwnd_ == nullptr);
+}
+
+bool DShowProvider::buildPreviewGraph(ICaptureGraphBuilder2 *capBuilder)
+{
+    if (!capBuilder || !graph_ || !sourceFilter_)
+        return false;
+
+    previewRenderer_.Reset();
+    vmrWindowless_.Reset();
+
+    HRESULT hr = CoCreateInstance(CLSID_VideoMixingRenderer9, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&previewRenderer_));
+    if (FAILED(hr))
+    {
+        dshow_log_hr("CoCreateInstance(CLSID_VideoMixingRenderer9)", hr);
+        return false;
+    }
+    dshow_log("[DShow] OK: CoCreateInstance(CLSID_VideoMixingRenderer9, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&previewRenderer_))");
+
+    hr = graph_->AddFilter(previewRenderer_.Get(), L"VMR9");
+    if (FAILED(hr))
+    {
+        dshow_log_hr("graph_->AddFilter(previewRenderer_.Get(), L'VMR9')", hr);
+        return false;
+    }
+    dshow_log("[DShow] OK: graph_->AddFilter(previewRenderer_.Get(), L'VMR9')");
+
+    ComPtr<IVMRFilterConfig9> vmrConfig;
+    hr = previewRenderer_.As(&vmrConfig);
+    if (FAILED(hr))
+    {
+        dshow_log_hr("previewRenderer_.As(&vmrConfig)", hr);
+        return false;
+    }
+    dshow_log("[DShow] OK: previewRenderer_.As(&vmrConfig)");
+
+    hr = vmrConfig->SetNumberOfStreams(1);
+    if (FAILED(hr))
+    {
+        dshow_log_hr("vmrConfig->SetNumberOfStreams(1)", hr);
+        return false;
+    }
+    dshow_log("[DShow] OK: vmrConfig->SetNumberOfStreams(1)");
+
+    hr = vmrConfig->SetRenderingMode(VMR9Mode_Windowless);
+    if (FAILED(hr))
+    {
+        dshow_log_hr("vmrConfig->SetRenderingMode(VMR9Mode_Windowless)", hr);
+        return false;
+    }
+    dshow_log("[DShow] OK: vmrConfig->SetRenderingMode(VMR9Mode_Windowless)");
+
+    hr = previewRenderer_.As(&vmrWindowless_);
+    if (FAILED(hr))
+    {
+        dshow_log_hr("previewRenderer_.As(&vmrWindowless_)", hr);
+        return false;
+    }
+    dshow_log("[DShow] OK: previewRenderer_.As(&vmrWindowless_)");
+
+    if (!previewHwnd_)
+    {
+        dshow_log("[DShow] preview hwnd is null");
+        return false;
+    }
+
+    hr = vmrWindowless_->SetVideoClippingWindow(previewHwnd_);
+    if (FAILED(hr))
+    {
+        dshow_log_hr("vmrWindowless_->SetVideoClippingWindow(previewHwnd_)", hr);
+        return false;
+    }
+    dshow_log("[DShow] OK: vmrWindowless_->SetVideoClippingWindow(previewHwnd_)");
+
+    hr = vmrWindowless_->SetAspectRatioMode(VMR9ARMode_LetterBox);
+    if (FAILED(hr))
+    {
+        dshow_log_hr("vmrWindowless_->SetAspectRatioMode(VMR9ARMode_LetterBox)", hr);
+        return false;
+    }
+    dshow_log("[DShow] OK: vmrWindowless_->SetAspectRatioMode(VMR9ARMode_LetterBox)");
+    updatePreviewRect();
+
+    hr = capBuilder->RenderStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
+                                  sourceFilter_.Get(), nullptr, previewRenderer_.Get());
+    if (FAILED(hr))
+    {
+        dshow_log_hr("capBuilder->RenderStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video, sourceFilter_.Get(), nullptr, previewRenderer_.Get())", hr);
+        return false;
+    }
+    dshow_log("[DShow] OK: capBuilder->RenderStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video, sourceFilter_.Get(), nullptr, previewRenderer_.Get())");
+    return true;
+}
+
 bool DShowProvider::buildGraphForDevice(int index)
 {
-    dshow_log("[DShow] === buildGraphForDevice begin (VMR9 preview path) ===");
+    dshow_log(isRawOnlyMode() ? "[DShow] === buildGraphForDevice begin (raw-only path) ===" : "[DShow] === buildGraphForDevice begin (VMR9 preview path) ===");
 
     graph_.Reset();
     mediaControl_.Reset();
@@ -532,7 +651,11 @@ bool DShowProvider::buildGraphForDevice(int index)
     sourceFilter_.Reset();
     previewRenderer_.Reset();
     smartTee_.Reset();
-    if (rawSinkFilter_) { rawSinkFilter_->Release(); rawSinkFilter_ = nullptr; }
+    if (rawSinkFilter_)
+    {
+        rawSinkFilter_->Release();
+        rawSinkFilter_ = nullptr;
+    }
     vmrWindowless_.Reset();
     rawOnlyActive_ = false;
     width_ = 0;
@@ -594,25 +717,6 @@ bool DShowProvider::buildGraphForDevice(int index)
     HR_CHECK_LOG(moniker->BindToObject(nullptr, nullptr, IID_PPV_ARGS(&sourceFilter_)));
     HR_CHECK_LOG(graph_->AddFilter(sourceFilter_.Get(), L"VideoCapture"));
 
-    HR_CHECK_LOG(CoCreateInstance(CLSID_VideoMixingRenderer9, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_PPV_ARGS(&previewRenderer_)));
-    HR_CHECK_LOG(graph_->AddFilter(previewRenderer_.Get(), L"VMR9"));
-
-    ComPtr<IVMRFilterConfig9> vmrConfig;
-    HR_CHECK_LOG(previewRenderer_.As(&vmrConfig));
-    HR_CHECK_LOG(vmrConfig->SetNumberOfStreams(1));
-    HR_CHECK_LOG(vmrConfig->SetRenderingMode(VMR9Mode_Windowless));
-    HR_CHECK_LOG(previewRenderer_.As(&vmrWindowless_));
-
-    if (!previewHwnd_)
-    {
-        dshow_log("[DShow] preview hwnd is null");
-        return false;
-    }
-    HR_CHECK_LOG(vmrWindowless_->SetVideoClippingWindow(previewHwnd_));
-    HR_CHECK_LOG(vmrWindowless_->SetAspectRatioMode(VMR9ARMode_LetterBox));
-    updatePreviewRect();
-
     ComPtr<ICaptureGraphBuilder2> capBuilder;
     HR_CHECK_LOG(CoCreateInstance(CLSID_CaptureGraphBuilder2, nullptr, CLSCTX_INPROC_SERVER,
                                   IID_PPV_ARGS(&capBuilder)));
@@ -627,22 +731,24 @@ bool DShowProvider::buildGraphForDevice(int index)
         configureCaptureFormat(streamConfig.Get());
     }
 
-    const bool wantRawPath = (profile_.format == GCAP_FMT_NV12 || profile_.format == GCAP_FMT_YUY2);
-    bool rawOnlyActive = false;
-    if (wantRawPath)
+    const bool rawOnly = isRawOnlyMode();
+    if (rawOnly)
     {
-        rawOnlyActive = buildRawOnlyGraph(capBuilder.Get());
-        rawOnlyActive_ = rawOnlyActive;
-        if (rawOnlyActive)
-            dshow_log("[DShow] raw-only path ON: source -> CustomRawSink");
-        else
-            dshow_log("[DShow] raw-only path unavailable; fallback to preview-only graph");
+        rawOnlyActive_ = buildRawOnlyGraph(capBuilder.Get());
+        if (!rawOnlyActive_)
+        {
+            dshow_log("[DShow] raw-only graph build failed");
+            return false;
+        }
+        dshow_log("[DShow] raw-only path ON: source -> CustomRawSink");
     }
-
-    if (!rawOnlyActive)
+    else
     {
-        HR_CHECK_LOG(capBuilder->RenderStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
-                                              sourceFilter_.Get(), nullptr, previewRenderer_.Get()));
+        if (!buildPreviewGraph(capBuilder.Get()))
+        {
+            dshow_log("[DShow] preview graph build failed");
+            return false;
+        }
     }
 
     hr = capBuilder->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video,
@@ -665,8 +771,7 @@ bool DShowProvider::buildGraphForDevice(int index)
                 negotiatedFpsDen_ = 0;
                 mediaTypeToVideoInfo(pmt, width_, height_, negotiatedFpsNum_, negotiatedFpsDen_);
 
-                double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ?
-                                 ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
+                double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
                 rawRenderer_.setNegotiated(subtype_, width_, height_, negotiatedFpsNum_, negotiatedFpsDen_);
                 char buf[256] = {};
                 sprintf_s(buf, "[DShow] stream format: %s %dx%d %.2ffps",
@@ -681,10 +786,9 @@ bool DShowProvider::buildGraphForDevice(int index)
         }
     }
 
-    dshow_log("[DShow] === buildGraphForDevice success (VMR9 preview path) ===");
+    dshow_log(rawOnly ? "[DShow] === buildGraphForDevice success (raw-only path) ===" : "[DShow] === buildGraphForDevice success (VMR9 preview path) ===");
     return true;
 }
-
 
 bool DShowProvider::buildRawOnlyGraph(ICaptureGraphBuilder2 *capBuilder)
 {
@@ -693,7 +797,8 @@ bool DShowProvider::buildRawOnlyGraph(ICaptureGraphBuilder2 *capBuilder)
 
     rawRenderer_.reset();
 
-    auto cleanupPartialGraph = [this]() {
+    auto cleanupPartialGraph = [this]()
+    {
         disconnectAllPins(rawSinkFilter_);
         disconnectAllPins(sourceFilter_.Get());
         if (rawSinkFilter_)
@@ -920,7 +1025,6 @@ bool DShowProvider::capturePreviewFrameToArgb(std::vector<uint8_t> &out, int &w,
     return bltOk == TRUE;
 }
 
-
 bool DShowProvider::captureCallbackFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride)
 {
     std::vector<uint8_t> tmp;
@@ -979,15 +1083,16 @@ void DShowProvider::mirrorLoop()
                 f.width = w;
                 f.height = h;
                 f.format = GCAP_FMT_ARGB;
-                if (f.frame_id == 0) {}
+                if (f.frame_id == 0)
+                {
+                }
                 auto now = std::chrono::steady_clock::now().time_since_epoch();
                 f.pts_ns = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
                 f.frame_id = ++frameCounter_;
                 if (f.frame_id == 1)
                 {
                     char msg[256] = {};
-                    double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ?
-                                     ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
+                    double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
                     sprintf_s(msg, "[DShow] callback frame -> %d x %d fmt=ARGB negotiated=%s %d x %d %.2ffps source=%s raw-candidate=%s raw-sink-plan=%s",
                               w, h, subtypeName(subtype_), width_, height_, fps,
                               callbackSourceName(lastCallbackSource_.load()),
@@ -1095,7 +1200,11 @@ void DShowProvider::close()
     vmrWindowless_.Reset();
     previewRenderer_.Reset();
     smartTee_.Reset();
-    if (rawSinkFilter_) { rawSinkFilter_->Release(); rawSinkFilter_ = nullptr; }
+    if (rawSinkFilter_)
+    {
+        rawSinkFilter_->Release();
+        rawSinkFilter_ = nullptr;
+    }
     sourceFilter_.Reset();
     mediaEvent_.Reset();
     mediaControl_.Reset();

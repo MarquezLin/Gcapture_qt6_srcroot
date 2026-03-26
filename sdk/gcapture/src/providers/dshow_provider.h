@@ -33,12 +33,15 @@ public:
     void close() override;
     void setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user) override;
     bool getSignalStatus(gcap_signal_status_t &out) override;
+    bool getRuntimeInfo(gcap_runtime_info_t &out) override;
     bool setPreview(const gcap_preview_desc_t &desc) override;
 
 private:
     void ensure_com();
     void uninit_com();
     bool buildGraphForDevice(int index);
+    bool isRawOnlyMode() const;
+    bool buildPreviewGraph(ICaptureGraphBuilder2 *capBuilder);
     bool buildRawOnlyGraph(ICaptureGraphBuilder2 *capBuilder);
     bool configureCaptureFormat(IAMStreamConfig *streamConfig);
     void logCaptureCapabilities(IAMStreamConfig *streamConfig);

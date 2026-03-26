@@ -281,6 +281,13 @@ extern "C"
         return h->mgr.getSignalStatus(*out);
     }
 
+    GCAP_API gcap_status_t gcap_get_runtime_info(gcap_handle h, gcap_runtime_info_t *out)
+    {
+        if (!h || !out)
+            return GCAP_EINVAL;
+        return h->mgr.getRuntimeInfo(*out);
+    }
+
     gcap_status_t gcap_set_processing(gcap_handle h, const gcap_processing_opts_t *opts)
     {
         if (!h || !opts)

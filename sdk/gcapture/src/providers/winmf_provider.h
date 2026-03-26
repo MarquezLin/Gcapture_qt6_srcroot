@@ -70,6 +70,7 @@ public:
 
     bool getDeviceProps(gcap_device_props_t &out) override;
     bool getSignalStatus(gcap_signal_status_t &out) override;
+    bool getRuntimeInfo(gcap_runtime_info_t &out) override;
     bool setProcessing(const gcap_processing_opts_t &opts) override;
     bool setProcAmp(const gcap_procamp_t &p) override;
     bool setPreview(const gcap_preview_desc_t &desc) override;

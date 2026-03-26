@@ -104,6 +104,16 @@ extern "C"
         int hdr;               // 0/1, -1=unknown
     } gcap_signal_status_t;
 
+
+    typedef struct
+    {
+        gcap_signal_status_t signal;
+        int active_backend;      // GCAP_BACKEND_*
+        char backend_name[32];   // e.g. WinMF GPU / WinMF CPU / DShow Raw
+        char frame_source[32];   // e.g. DXGI / CPU / RawSink
+        char path_name[64];      // e.g. WinMF GPU Preview / DShow Raw Preview
+    } gcap_runtime_info_t;
+
     typedef enum
     {
         GCAP_DEINT_AUTO = 0,
@@ -193,6 +203,7 @@ extern "C"
     // --- OBS-like "Properties" ---
     gcap_status_t gcap_get_device_props(gcap_handle h, gcap_device_props_t *out);
     gcap_status_t gcap_get_signal_status(gcap_handle h, gcap_signal_status_t *out);
+    GCAP_API gcap_status_t gcap_get_runtime_info(gcap_handle h, gcap_runtime_info_t *out);
     gcap_status_t gcap_set_processing(gcap_handle h, const gcap_processing_opts_t *opts);
 
     // Apply ProcAmp on CPU conversion path (NV12/YUY2->ARGB).

@@ -250,6 +250,12 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 void MainWindow::onStart()
 {
+    avgFps_ = 0.0;
+    lastFramePtsNs_ = 0;
+    lastFrameWidth_ = 0;
+    lastFrameHeight_ = 0;
+    if (ui->statusbar)
+        ui->statusbar->showMessage(QStringLiteral("Starting..."));
     qDebug() << "MainWindow::onStart";
 
     if (!previewWindow_)
@@ -333,10 +339,20 @@ void MainWindow::onStart()
         gcap_set_procamp(h_, &m_currentProcAmp);
 
     gcap_preview_desc_t pv{};
-    pv.hwnd = hwnd;
-    pv.enable_preview = 1;
-    pv.use_fp16_pipeline = 1;
-    pv.swapchain_10bit = 1;
+    if (backend == 2) // DirectShow raw-only preview uses Qt callback rendering
+    {
+        pv.hwnd = nullptr;
+        pv.enable_preview = 0;
+        pv.use_fp16_pipeline = 0;
+        pv.swapchain_10bit = 0;
+    }
+    else
+    {
+        pv.hwnd = hwnd;
+        pv.enable_preview = 1;
+        pv.use_fp16_pipeline = 1;
+        pv.swapchain_10bit = 1;
+    }
 
     st = gcap_set_preview(h_, &pv);
     qDebug() << "gcap_set_preview st =" << st << ", h_ =" << h_;
@@ -379,7 +395,12 @@ void MainWindow::onStop()
             capSdk_->stop();
         usingCaptureSdk_ = false;
         if (previewWindow_)
+        {
             previewWindow_->clearFrame();
+            previewWindow_->update();
+            previewWindow_->repaint();
+        }
+        updateRuntimeStatusUi();
         return;
     }
 #endif
@@ -398,7 +419,12 @@ void MainWindow::onStop()
     gcap_close(h_);
     h_ = nullptr;
     if (previewWindow_)
+    {
         previewWindow_->clearFrame();
+        previewWindow_->update();
+        previewWindow_->repaint();
+    }
+    updateRuntimeStatusUi();
 }
 
 void MainWindow::onOpenRecordFolder()
@@ -650,6 +676,8 @@ void MainWindow::onFrameArrived(const QImage &img)
     if (previewWindow_)
         previewWindow_->setFrame(img);
 
+    updateRuntimeStatusUi();
+
     if (h_)
     {
         gcap_signal_status_t sig{};
@@ -745,6 +773,36 @@ void MainWindow::onFrameArrived(const QImage &img)
     if (DpinfoDlg_)
         DpinfoDlg_->setInfoText(
             formatDisplayOutputInfo(displayInfo_));
+}
+
+
+void MainWindow::updateRuntimeStatusUi()
+{
+    if (!ui->statusbar)
+        return;
+
+    if (!h_)
+    {
+        ui->statusbar->showMessage(QStringLiteral("Idle"));
+        return;
+    }
+
+    gcap_runtime_info_t rt{};
+    if (gcap_get_runtime_info(h_, &rt) != GCAP_OK)
+        return;
+
+    const double sigFps = (rt.signal.fps_den > 0) ? (double(rt.signal.fps_num) / double(rt.signal.fps_den)) : 0.0;
+    const double actualFps = avgFps_ > 0.0 ? avgFps_ : sigFps;
+    const QString backend = QString::fromUtf8(rt.backend_name);
+    const QString source = QString::fromUtf8(rt.frame_source);
+
+    QString sb = QStringLiteral("Backend: %1 | Source: %2 | Signal %3x%4 %5fps")
+                     .arg(backend)
+                     .arg(source)
+                     .arg(rt.signal.width)
+                     .arg(rt.signal.height)
+                     .arg(QString::number(actualFps, 'f', 2));
+    ui->statusbar->showMessage(sb);
 }
 
 void MainWindow::onSnapshot()
