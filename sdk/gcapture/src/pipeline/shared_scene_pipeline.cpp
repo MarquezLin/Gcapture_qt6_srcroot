@@ -1184,6 +1184,71 @@ bool SharedScenePipeline::upload_yuy2_frame(const uint8_t *data, int src_stride,
 
     ctx_->Unmap(upload_yuy2_packed_.Get(), 0);
     return true;
+
+}
+
+bool SharedScenePipeline::upload_y210_frame(const uint8_t *data, int src_stride, int frame_w, int frame_h)
+{
+    if (!ctx_ || !d3d_ || !data || frame_w <= 0 || frame_h <= 0)
+        return false;
+
+    const int w2 = (frame_w + 1) / 2;
+    if (upload_y210_packed_)
+    {
+        D3D11_TEXTURE2D_DESC desc{};
+        upload_y210_packed_->GetDesc(&desc);
+        if ((int)desc.Width != w2 || (int)desc.Height != frame_h || desc.Format != DXGI_FORMAT_R16G16B16A16_UINT)
+            upload_y210_packed_.Reset();
+    }
+
+    if (!upload_y210_packed_)
+    {
+        D3D11_TEXTURE2D_DESC td{};
+        td.Width = (UINT)w2;
+        td.Height = (UINT)frame_h;
+        td.MipLevels = 1;
+        td.ArraySize = 1;
+        td.SampleDesc.Count = 1;
+        td.Format = DXGI_FORMAT_R16G16B16A16_UINT;
+        td.Usage = D3D11_USAGE_DYNAMIC;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        td.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &upload_y210_packed_)))
+            return false;
+    }
+
+    D3D11_MAPPED_SUBRESOURCE m{};
+    if (FAILED(ctx_->Map(upload_y210_packed_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+        return false;
+
+    const int effectiveStride = (src_stride > 0) ? src_stride : (frame_w * 4);
+    const size_t rowBytes = (size_t)frame_w * 4u;
+    for (int row = 0; row < frame_h; ++row)
+    {
+        const uint8_t *srcRow = data + (size_t)row * (size_t)effectiveStride;
+        uint8_t *dstRow = static_cast<uint8_t *>(m.pData) + (size_t)row * (size_t)m.RowPitch;
+        const uint16_t *src16 = reinterpret_cast<const uint16_t *>(srcRow);
+        uint16_t *dst16 = reinterpret_cast<uint16_t *>(dstRow);
+        const int rowWords = (int)(rowBytes / 2u);
+
+        for (int x = 0; x < w2; ++x)
+        {
+            const int srcX = x * 4;
+            const uint16_t Y0 = src16[srcX + 0];
+            const uint16_t U  = src16[srcX + 1];
+            const uint16_t Y1 = (srcX + 2 < rowWords) ? src16[srcX + 2] : Y0;
+            const uint16_t V  = (srcX + 3 < rowWords) ? src16[srcX + 3] : U;
+
+            uint16_t *d4 = dst16 + x * 4;
+            d4[0] = Y0;
+            d4[1] = U;
+            d4[2] = Y1;
+            d4[3] = V;
+        }
+    }
+
+    ctx_->Unmap(upload_y210_packed_.Get(), 0);
+    return true;
 }
 
 bool SharedScenePipeline::render_uploaded_yuv_to_fp16(gcap_pixfmt_t fmt, int frame_w, int frame_h)
@@ -1214,6 +1279,20 @@ bool SharedScenePipeline::render_uploaded_yuv_to_fp16(gcap_pixfmt_t fmt, int fra
         if (FAILED(d3d_->CreateShaderResourceView(upload_yuy2_packed_.Get(), &sd, &srv0)) || !srv0)
             return false;
         ps = ps_yuy2_.Get();
+        if (!ps)
+            return false;
+    }
+    else if (fmt == GCAP_FMT_Y210)
+    {
+        if (!upload_y210_packed_)
+            return false;
+        D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+        sd.Format = DXGI_FORMAT_R16G16B16A16_UINT;
+        sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        sd.Texture2D.MipLevels = 1;
+        if (FAILED(d3d_->CreateShaderResourceView(upload_y210_packed_.Get(), &sd, &srv0)) || !srv0)
+            return false;
+        ps = ps_y210_.Get();
         if (!ps)
             return false;
     }

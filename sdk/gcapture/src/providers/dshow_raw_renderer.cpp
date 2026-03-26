@@ -31,6 +31,7 @@ const char *DShowRawRenderer::subtypeName(const GUID &g)
 {
     if (g == MEDIASUBTYPE_NV12) return "NV12";
     if (g == MEDIASUBTYPE_YUY2) return "YUY2";
+    if (g == MEDIASUBTYPE_Y210) return "Y210";
     if (g == MEDIASUBTYPE_MJPG) return "MJPG";
     if (g == MEDIASUBTYPE_RGB24) return "RGB24";
     if (g == MEDIASUBTYPE_RGB32) return "RGB32";
@@ -97,13 +98,14 @@ void DShowRawRenderer::setNegotiated(const GUID &subtype, int width, int height,
 
 bool DShowRawRenderer::isSupportedSubtype() const
 {
-    return subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_YUY2;
+    return subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210;
 }
 
 GUID DShowRawRenderer::negotiatedFormat() const
 {
     if (subtype_ == MEDIASUBTYPE_NV12) return MEDIASUBTYPE_NV12;
     if (subtype_ == MEDIASUBTYPE_YUY2) return MEDIASUBTYPE_YUY2;
+    if (subtype_ == MEDIASUBTYPE_Y210) return MEDIASUBTYPE_Y210;
     return MEDIASUBTYPE_NULL;
 }
 
@@ -155,6 +157,10 @@ bool DShowRawRenderer::copyLatestRaw(std::vector<uint8_t> &out, int &w, int &h, 
     {
         stride = width_ * 2;
     }
+    else if (subtype_ == MEDIASUBTYPE_Y210)
+    {
+        stride = width_ * 4;
+    }
     else
     {
         stride = 0;
@@ -177,6 +183,11 @@ bool DShowRawRenderer::copyLatestFrameToArgb(std::vector<uint8_t> &out, int &w, 
     if (subtype == MEDIASUBTYPE_YUY2)
     {
         yuy2ToArgb(raw.data(), w, h, stride, out, stride);
+        return true;
+    }
+    if (subtype == MEDIASUBTYPE_Y210)
+    {
+        y210ToArgb(raw.data(), w, h, stride, out, stride);
         return true;
     }
     return false;
@@ -226,6 +237,43 @@ void DShowRawRenderer::yuy2ToArgb(const uint8_t *src, int width, int height, int
             const uint8_t u  = srcRow[x * 2 + 1];
             const uint8_t y1 = srcRow[x * 2 + 2];
             const uint8_t v  = srcRow[x * 2 + 3];
+
+            uint8_t b = 0, g = 0, r = 0;
+            yuvToRgb(y0, u, v, b, g, r);
+            uint8_t *p0 = dstRow + static_cast<size_t>(x) * 4;
+            p0[0] = b; p0[1] = g; p0[2] = r; p0[3] = 255;
+
+            if (x + 1 < width)
+            {
+                yuvToRgb(y1, u, v, b, g, r);
+                uint8_t *p1 = dstRow + static_cast<size_t>(x + 1) * 4;
+                p1[0] = b; p1[1] = g; p1[2] = r; p1[3] = 255;
+            }
+        }
+    }
+}
+
+void DShowRawRenderer::y210ToArgb(const uint8_t *src, int width, int height, int srcStride, std::vector<uint8_t> &dst, int &dstStride)
+{
+    dstStride = width * 4;
+    dst.resize(static_cast<size_t>(dstStride) * static_cast<size_t>(height));
+
+    for (int y = 0; y < height; ++y)
+    {
+        const uint16_t *srcRow = reinterpret_cast<const uint16_t *>(src + static_cast<size_t>(y) * static_cast<size_t>(srcStride));
+        uint8_t *dstRow = dst.data() + static_cast<size_t>(y) * static_cast<size_t>(dstStride);
+        for (int x = 0; x < width; x += 2)
+        {
+            const int base = x * 2;
+            const uint16_t y0_10 = srcRow[base + 0] & 1023u;
+            const uint16_t u_10  = srcRow[base + 1] & 1023u;
+            const uint16_t y1_10 = (x + 1 < width) ? (srcRow[base + 2] & 1023u) : y0_10;
+            const uint16_t v_10  = (x + 1 < width) ? (srcRow[base + 3] & 1023u) : (srcRow[base + 1] & 1023u);
+
+            const int y0 = (y0_10 * 255 + 511) / 1023;
+            const int y1 = (y1_10 * 255 + 511) / 1023;
+            const int u  = (u_10  * 255 + 511) / 1023;
+            const int v  = (v_10  * 255 + 511) / 1023;
 
             uint8_t b = 0, g = 0, r = 0;
             yuvToRgb(y0, u, v, b, g, r);

@@ -134,6 +134,34 @@ namespace
             return img;
         }
 
+        if (pkt.format == GCAP_FMT_Y210)
+        {
+            const uint16_t *src = reinterpret_cast<const uint16_t *>(pkt.data[0]);
+            const int srcStride = pkt.stride[0] > 0 ? pkt.stride[0] : (pkt.width * 4);
+            for (int y = 0; y < pkt.height; ++y)
+            {
+                const uint16_t *srcRow = reinterpret_cast<const uint16_t *>(reinterpret_cast<const uint8_t *>(src) + static_cast<size_t>(y) * static_cast<size_t>(srcStride));
+                QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
+                for (int x = 0; x < pkt.width; x += 2)
+                {
+                    const int base = x * 2;
+                    const int Y0 = ((int)(srcRow[base + 0] & 1023u) * 255 + 511) / 1023;
+                    const int U  = ((int)(srcRow[base + 1] & 1023u) * 255 + 511) / 1023;
+                    const int Y1 = (x + 1 < pkt.width) ? (((int)(srcRow[base + 2] & 1023u) * 255 + 511) / 1023) : Y0;
+                    const int V  = (x + 1 < pkt.width) ? (((int)(srcRow[base + 3] & 1023u) * 255 + 511) / 1023) : U;
+                    uint8_t b = 0, g = 0, r = 0;
+                    yuvToRgbLocal(Y0, U, V, b, g, r);
+                    dst[x] = qRgba(r, g, b, 255);
+                    if (x + 1 < pkt.width)
+                    {
+                        yuvToRgbLocal(Y1, U, V, b, g, r);
+                        dst[x + 1] = qRgba(r, g, b, 255);
+                    }
+                }
+            }
+            return img;
+        }
+
         return {};
     }
 }
@@ -517,6 +545,8 @@ void MainWindow::onStart()
         h_ = nullptr;
         return;
     }
+
+    updateRuntimeStatusUi();
 }
 
 void MainWindow::onStop()
@@ -994,12 +1024,14 @@ void MainWindow::updateRuntimeStatusUi()
     const QString backend = QString::fromUtf8(rt.backend_name);
     const QString source = QString::fromUtf8(rt.frame_source);
 
-    QString sb = QStringLiteral("Backend: %1 | Source: %2 | Signal %3x%4 %5fps")
+    const QString fmt = QString::fromUtf8(packetFmtName(rt.signal.pixfmt));
+    QString sb = QStringLiteral("Backend: %1 | Source: %2 | Signal %3x%4 %5fps | fmt=%6")
                      .arg(backend)
                      .arg(source)
                      .arg(rt.signal.width)
                      .arg(rt.signal.height)
-                     .arg(QString::number(actualFps, 'f', 2));
+                     .arg(QString::number(actualFps, 'f', 2))
+                     .arg(fmt);
     ui->statusbar->showMessage(sb);
 }
 

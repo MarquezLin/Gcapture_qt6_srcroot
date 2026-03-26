@@ -103,6 +103,8 @@ namespace
             return "NV12";
         if (g == MEDIASUBTYPE_YUY2)
             return "YUY2";
+        if (g == MEDIASUBTYPE_Y210)
+            return "Y210";
         if (g == MEDIASUBTYPE_MJPG)
             return "MJPG";
         if (g == MEDIASUBTYPE_RGB24)
@@ -335,6 +337,12 @@ bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
         out.pixfmt = GCAP_FMT_YUY2;
         out.bit_depth = 8;
     }
+    else if (subtype_ == MEDIASUBTYPE_Y210)
+    {
+        out.pixfmt = GCAP_FMT_Y210;
+        out.bit_depth = 10;
+        out.csp = GCAP_CSP_BT709;
+    }
     else
     {
         out.pixfmt = GCAP_FMT_ARGB;
@@ -465,8 +473,10 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
     int wantH = profile_.height;
     int wantFpsNum = profile_.fps_num;
     int wantFpsDen = profile_.fps_den > 0 ? profile_.fps_den : 1;
-    const GUID wantSubtype = (profile_.format == GCAP_FMT_NV12) ? MEDIASUBTYPE_NV12 : (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
-                                                                                                                         : GUID{};
+    const GUID wantSubtype = (profile_.format == GCAP_FMT_NV12) ? MEDIASUBTYPE_NV12
+                              : (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
+                              : (profile_.format == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
+                                                                    : GUID{};
 
     if (wantW <= 0 && wantH <= 0 && wantFpsNum <= 0 && wantSubtype == GUID{})
         return false;
@@ -542,7 +552,7 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 
 bool DShowProvider::isRawCandidate() const
 {
-    return (subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_YUY2);
+    return (subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210);
 }
 
 const char *DShowProvider::callbackSourceName(CallbackSource src) const
@@ -1304,7 +1314,7 @@ void DShowProvider::framePumpLoop()
         std::vector<uint8_t> buf;
         int w = 0, h = 0, stride = 0;
         const bool canUseSharedRaw = pipeline_ && haveRaw && rawOnlyActive_ &&
-                                     (rawSubtype == MEDIASUBTYPE_NV12 || rawSubtype == MEDIASUBTYPE_YUY2);
+                                     (rawSubtype == MEDIASUBTYPE_NV12 || rawSubtype == MEDIASUBTYPE_YUY2 || rawSubtype == MEDIASUBTYPE_Y210);
         const bool needArgb = !canUseSharedRaw && ((vcb != nullptr) || (previewHwnd_ != nullptr));
         const bool haveArgb = needArgb ? captureRawFrameToArgb(buf, w, h, stride) : false;
 
@@ -1339,6 +1349,13 @@ void DShowProvider::framePumpLoop()
                 else if (rawSubtype == MEDIASUBTYPE_YUY2)
                 {
                     pkt.format = GCAP_FMT_YUY2;
+                    pkt.plane_count = 1;
+                    pkt.data[0] = raw.data();
+                    pkt.stride[0] = rstride;
+                }
+                else if (rawSubtype == MEDIASUBTYPE_Y210)
+                {
+                    pkt.format = GCAP_FMT_Y210;
                     pkt.plane_count = 1;
                     pkt.data[0] = raw.data();
                     pkt.stride[0] = rstride;
@@ -1447,6 +1464,29 @@ void DShowProvider::framePumpLoop()
                         {
                             const auto t0 = std::chrono::steady_clock::now();
                             uploaded = pipeline_->render_uploaded_yuv_to_fp16(GCAP_FMT_YUY2, rw, rh);
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeRenderYuvNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (uploaded)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->copy_fp16_to_scene();
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeCopySceneNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                    }
+                    else if (rawSubtype == MEDIASUBTYPE_Y210)
+                    {
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->upload_y210_frame(raw.data(), rstride, rw, rh);
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeUploadNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (uploaded)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->render_uploaded_yuv_to_fp16(GCAP_FMT_Y210, rw, rh);
                             const auto t1 = std::chrono::steady_clock::now();
                             probeRenderYuvNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
                         }
@@ -1568,7 +1608,7 @@ void DShowProvider::framePumpLoop()
                                           callbackSourceName(lastCallbackSource_.load()),
                                           isRawCandidate() ? "YES" : "NO",
                                           rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO",
-                                          canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : "YUY2-direct") : "ARGB-bridge");
+                                          canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : (rawSubtype == MEDIASUBTYPE_Y210 ? "Y210-direct" : "YUY2-direct")) : "ARGB-bridge");
                                 OutputDebugStringA(msg);
                             }
                             else if ((frameId % 120) == 0 && previewHwnd_ != nullptr)

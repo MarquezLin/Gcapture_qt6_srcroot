@@ -41,6 +41,7 @@ public:
     bool upload_argb_frame(const void *data, int frame_w, int frame_h, int src_stride);
     bool upload_nv12_frame(const uint8_t *y, int stride_y, const uint8_t *uv, int stride_uv, int frame_w, int frame_h);
     bool upload_yuy2_frame(const uint8_t *data, int src_stride, int frame_w, int frame_h);
+    bool upload_y210_frame(const uint8_t *data, int src_stride, int frame_w, int frame_h);
     bool render_uploaded_yuv_to_fp16(gcap_pixfmt_t fmt, int frame_w, int frame_h);
     bool copy_fp16_to_scene();
     bool readback_to_frame(int frame_w, int frame_h, uint64_t pts_ns, uint64_t frame_id,
@@ -64,6 +65,7 @@ public:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> rt_rgba_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_nv12_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_yuy2_packed_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_y210_packed_;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv_rgba_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> rt_stage_;
 
