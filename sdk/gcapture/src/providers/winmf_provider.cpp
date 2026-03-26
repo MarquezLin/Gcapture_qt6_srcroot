@@ -1212,7 +1212,7 @@ bool WinMFProvider::create_d3d()
     d2d_ctx_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &d2d_white_);
     d2d_ctx_->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.55f), &d2d_black_);
     if (pipeline_)
-        pipeline_->initialize(d3d_.Get(), ctx_.Get(), d2d_ctx_.Get());
+        pipeline_->initialize(d3d_.Get(), ctx_.Get(), d2d_ctx_.Get(), dwrite_.Get(), d2d_white_.Get(), d2d_black_.Get());
     return true;
 }
 
@@ -2274,180 +2274,21 @@ bool WinMFProvider::render_yuv_to_fp16(ID3D11Texture2D *yuvTex)
 
 bool WinMFProvider::composite_overlay_to_scene_fp16()
 {
-    if (!pipeline_->rtv_scene_fp16_ || !pipeline_->srv_fp16_ || !pipeline_->overlay_srv_ || !pipeline_->vs_ || !pipeline_->ps_composite_overlay_fp16_)
-        return false;
-
-    UINT stride = sizeof(float) * 4, offset = 0;
-    ID3D11Buffer *pVB = pipeline_->vb_.Get();
-    ctx_->IASetVertexBuffers(0, 1, &pVB, &stride, &offset);
-    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    ctx_->IASetInputLayout(pipeline_->il_.Get());
-
-    ID3D11RenderTargetView *rtv = pipeline_->rtv_scene_fp16_.Get();
-    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
-
-    D3D11_VIEWPORT vp{};
-    vp.TopLeftX = 0.0f;
-    vp.TopLeftY = 0.0f;
-    vp.Width = static_cast<FLOAT>(cur_w_);
-    vp.Height = static_cast<FLOAT>(cur_h_);
-    vp.MinDepth = 0.0f;
-    vp.MaxDepth = 1.0f;
-    ctx_->RSSetViewports(1, &vp);
-
-    const float clear[4] = {0, 0, 0, 1};
-    ctx_->ClearRenderTargetView(pipeline_->rtv_scene_fp16_.Get(), clear);
-
-    ctx_->VSSetShader(pipeline_->vs_.Get(), nullptr, 0);
-    ctx_->PSSetShader(pipeline_->ps_composite_overlay_fp16_.Get(), nullptr, 0);
-
-    ID3D11ShaderResourceView *srvs[2] = {pipeline_->srv_fp16_.Get(), pipeline_->overlay_srv_.Get()};
-    ctx_->PSSetShaderResources(0, 2, srvs);
-
-    ID3D11SamplerState *ss = pipeline_->samp_.Get();
-    ctx_->PSSetSamplers(0, 1, &ss);
-
-    ctx_->Draw(6, 0);
-
-    ID3D11ShaderResourceView *nullSrv[2] = {nullptr, nullptr};
-    ctx_->PSSetShaderResources(0, 2, nullSrv);
-
-    return true;
+    return pipeline_ && pipeline_->composite_overlay_to_scene_fp16(cur_w_, cur_h_);
 }
+
 
 bool WinMFProvider::blit_fp16_to_rgba8()
 {
-    if (!pipeline_->rtv_rgba_ || !pipeline_->srv_scene_fp16_ || !pipeline_->vs_ || !pipeline_->ps_fp16_to_rgba8_)
-        return false;
-
-    UINT stride = sizeof(float) * 4, offset = 0;
-    ID3D11Buffer *pVB = pipeline_->vb_.Get();
-    ctx_->IASetVertexBuffers(0, 1, &pVB, &stride, &offset);
-    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    ctx_->IASetInputLayout(pipeline_->il_.Get());
-
-    ID3D11RenderTargetView *rtv = pipeline_->rtv_rgba_.Get();
-    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
-
-    D3D11_VIEWPORT vp{};
-    vp.TopLeftX = 0.0f;
-    vp.TopLeftY = 0.0f;
-    vp.Width = static_cast<FLOAT>(cur_w_);
-    vp.Height = static_cast<FLOAT>(cur_h_);
-    vp.MinDepth = 0.0f;
-    vp.MaxDepth = 1.0f;
-    ctx_->RSSetViewports(1, &vp);
-
-    float clear[4] = {0, 0, 0, 1};
-    ctx_->ClearRenderTargetView(pipeline_->rtv_rgba_.Get(), clear);
-
-    ctx_->VSSetShader(pipeline_->vs_.Get(), nullptr, 0);
-    ctx_->PSSetShader(pipeline_->ps_fp16_to_rgba8_.Get(), nullptr, 0);
-
-    ID3D11ShaderResourceView *srvs[1] = {pipeline_->srv_scene_fp16_.Get()};
-    ctx_->PSSetShaderResources(0, 1, srvs);
-
-    ID3D11SamplerState *ss = pipeline_->samp_.Get();
-    ctx_->PSSetSamplers(0, 1, &ss);
-
-    ctx_->Draw(6, 0);
-
-    ID3D11ShaderResourceView *nullSrv[1] = {nullptr};
-    ctx_->PSSetShaderResources(0, 1, nullSrv);
-
-    return true;
+    return pipeline_ && pipeline_->blit_fp16_to_rgba8(cur_w_, cur_h_);
 }
+
 
 bool WinMFProvider::gpu_overlay_text(const wchar_t *text)
 {
-    if (!text || !*text || !d2d_ctx_ || !dwrite_)
-        return true;
-
-    d2d_ctx_->BeginDraw();
-    d2d_ctx_->SetTransform(D2D1::Matrix3x2F::Identity());
-    d2d_ctx_->Clear(D2D1::ColorF(0, 0, 0, 0));
-
-    // ---------- 建立 TextFormat ----------
-    Microsoft::WRL::ComPtr<IDWriteTextFormat> fmt;
-    HRESULT hr = dwrite_->CreateTextFormat(
-        L"Segoe UI",
-        nullptr,
-        DWRITE_FONT_WEIGHT_SEMI_BOLD, // 比較醒目
-        DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL,
-        16.0f,
-        L"en-us",
-        &fmt);
-    if (FAILED(hr))
-    {
-        d2d_ctx_->EndDraw();
-        return false;
-    }
-
-    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-
-    // ---------- 用 TextLayout 量測文字寬高 ----------
-    float layoutWidth = static_cast<float>(cur_w_) - 32.0f;
-    if (layoutWidth < 100.0f)
-        layoutWidth = 100.0f;
-    float layoutHeight = 100.0f; // 單行已足夠
-
-    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
-    hr = dwrite_->CreateTextLayout(
-        text,
-        (UINT32)wcslen(text),
-        fmt.Get(),
-        layoutWidth,
-        layoutHeight,
-        &layout);
-    if (FAILED(hr))
-    {
-        d2d_ctx_->EndDraw();
-        return false;
-    }
-
-    DWRITE_TEXT_METRICS metrics{};
-    hr = layout->GetMetrics(&metrics);
-    if (FAILED(hr))
-    {
-        d2d_ctx_->EndDraw();
-        return false;
-    }
-
-    float textWidth = metrics.width;
-    float textHeight = metrics.height;
-
-    // ---------- 黑底 + padding ----------
-    const float padX = 12.0f;
-    const float padY = 6.0f;
-
-    D2D1_RECT_F bg = D2D1::RectF(
-        8.0f,
-        8.0f,
-        8.0f + textWidth + padX * 2.0f,
-        8.0f + textHeight + padY * 2.0f);
-
-    // 半透明黑底
-    d2d_ctx_->FillRectangle(bg, d2d_black_.Get());
-
-    // ---------- 畫文字 ----------
-    D2D1_RECT_F rc = D2D1::RectF(
-        bg.left + padX,
-        bg.top + padY,
-        bg.right - padX,
-        bg.bottom - padY);
-
-    d2d_ctx_->DrawText(
-        text,
-        (UINT32)wcslen(text),
-        fmt.Get(),
-        rc,
-        d2d_white_.Get());
-
-    hr = d2d_ctx_->EndDraw();
-    return SUCCEEDED(hr);
+    return pipeline_ && pipeline_->gpu_overlay_text(text, cur_w_, cur_h_);
 }
+
 
 // -------------------- Capture loop --------------------
 
@@ -3054,19 +2895,10 @@ void WinMFProvider::loop()
         }
 
         // Readback -> staging -> map
-        ctx_->CopyResource(pipeline_->rt_stage_.Get(), pipeline_->rt_rgba_.Get());
-        D3D11_MAPPED_SUBRESOURCE m{};
-        if (SUCCEEDED(ctx_->Map(pipeline_->rt_stage_.Get(), 0, D3D11_MAP_READ, 0, &m)))
+        gcap_frame_t f{};
+        const uint64_t outFrameId = ++frame_id_;
+        if (pipeline_ && pipeline_->readback_to_frame(cur_w_, cur_h_, (uint64_t)ts * 100, outFrameId, &f))
         {
-            gcap_frame_t f{};
-            f.data[0] = m.pData;
-            f.stride[0] = (int)m.RowPitch;
-            f.plane_count = 1;
-            f.width = cur_w_;
-            f.height = cur_h_;
-            f.format = GCAP_FMT_ARGB;
-            f.pts_ns = (uint64_t)ts * 100;
-            f.frame_id = ++frame_id_;
             emit_frame_packet_cb(pcb_, user_, GCAP_BACKEND_WINMF_GPU, GCAP_SOURCE_WINMF_GPU, 1, f);
             if (vcb_)
                 vcb_(&f, user_);

@@ -577,11 +577,17 @@ float4 main(PSIn i) : SV_Target
 
 bool SharedScenePipeline::initialize(ID3D11Device *d3d,
                                      ID3D11DeviceContext *ctx,
-                                     ID2D1DeviceContext *d2d_ctx)
+                                     ID2D1DeviceContext *d2d_ctx,
+                                     IDWriteFactory *dwrite,
+                                     ID2D1SolidColorBrush *white,
+                                     ID2D1SolidColorBrush *black)
 {
     d3d_ = d3d;
     ctx_ = ctx;
     d2d_ctx_ = d2d_ctx;
+    dwrite_ = dwrite;
+    d2d_white_ = white;
+    d2d_black_ = black;
     return d3d_ && ctx_ && d2d_ctx_;
 }
 
@@ -589,6 +595,9 @@ void SharedScenePipeline::shutdown()
 {
     release_preview_swapchain();
     d2d_bitmap_rt_.Reset();
+    d2d_white_.Reset();
+    d2d_black_.Reset();
+    dwrite_.Reset();
     overlay_srv_.Reset();
     overlay_rtv_.Reset();
     overlay_rgba_.Reset();
@@ -802,7 +811,8 @@ bool SharedScenePipeline::ensure_rt_and_pipeline(int w, int h)
 
     // 6) D2D target now stays on dedicated overlay texture, not the final preview/readback surface
     ComPtr<IDXGISurface> surf;
-    overlay_rgba_.As(&surf);
+    if (FAILED(overlay_rgba_->QueryInterface(IID_PPV_ARGS(&surf))) || !surf)
+        return false;
     D2D1_BITMAP_PROPERTIES1 bp = {};
     bp.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
     bp.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
@@ -820,6 +830,202 @@ bool SharedScenePipeline::ensure_rt_and_pipeline(int w, int h)
     d2d_ctx_->SetTarget(d2d_bitmap_rt_.Get());
 
     return create_shaders_and_states();
+}
+
+bool SharedScenePipeline::gpu_overlay_text(const wchar_t *text, int frame_w, int frame_h)
+{
+    if (!text || !*text || !d2d_ctx_ || !dwrite_)
+        return true;
+
+    d2d_ctx_->BeginDraw();
+    d2d_ctx_->SetTransform(D2D1::Matrix3x2F::Identity());
+    d2d_ctx_->Clear(D2D1::ColorF(0, 0, 0, 0));
+
+    ComPtr<IDWriteTextFormat> fmt;
+    HRESULT hr = dwrite_->CreateTextFormat(
+        L"Segoe UI",
+        nullptr,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        16.0f,
+        L"en-us",
+        &fmt);
+    if (FAILED(hr))
+    {
+        d2d_ctx_->EndDraw();
+        return false;
+    }
+
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+
+    float layoutWidth = static_cast<float>(frame_w) - 32.0f;
+    if (layoutWidth < 100.0f)
+        layoutWidth = 100.0f;
+    float layoutHeight = 100.0f;
+
+    ComPtr<IDWriteTextLayout> layout;
+    hr = dwrite_->CreateTextLayout(
+        text,
+        (UINT32)wcslen(text),
+        fmt.Get(),
+        layoutWidth,
+        layoutHeight,
+        &layout);
+    if (FAILED(hr))
+    {
+        d2d_ctx_->EndDraw();
+        return false;
+    }
+
+    DWRITE_TEXT_METRICS metrics{};
+    hr = layout->GetMetrics(&metrics);
+    if (FAILED(hr))
+    {
+        d2d_ctx_->EndDraw();
+        return false;
+    }
+
+    float textWidth = metrics.width;
+    float textHeight = metrics.height;
+    const float padX = 12.0f;
+    const float padY = 6.0f;
+
+    D2D1_RECT_F bg = D2D1::RectF(
+        8.0f,
+        8.0f,
+        8.0f + textWidth + padX * 2.0f,
+        8.0f + textHeight + padY * 2.0f);
+
+    if (d2d_black_)
+        d2d_ctx_->FillRectangle(bg, d2d_black_.Get());
+
+    D2D1_RECT_F rc = D2D1::RectF(
+        bg.left + padX,
+        bg.top + padY,
+        bg.right - padX,
+        bg.bottom - padY);
+
+    if (d2d_white_)
+        d2d_ctx_->DrawText(
+            text,
+            (UINT32)wcslen(text),
+            fmt.Get(),
+            rc,
+            d2d_white_.Get());
+
+    hr = d2d_ctx_->EndDraw();
+    return SUCCEEDED(hr);
+}
+
+bool SharedScenePipeline::composite_overlay_to_scene_fp16(int frame_w, int frame_h)
+{
+    if (!rtv_scene_fp16_ || !srv_fp16_ || !overlay_srv_ || !vs_ || !ps_composite_overlay_fp16_ || !ctx_)
+        return false;
+
+    UINT stride = sizeof(float) * 4, offset = 0;
+    ID3D11Buffer *pVB = vb_.Get();
+    ctx_->IASetVertexBuffers(0, 1, &pVB, &stride, &offset);
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx_->IASetInputLayout(il_.Get());
+
+    ID3D11RenderTargetView *rtv = rtv_scene_fp16_.Get();
+    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+
+    D3D11_VIEWPORT vp{};
+    vp.TopLeftX = 0.0f;
+    vp.TopLeftY = 0.0f;
+    vp.Width = static_cast<FLOAT>(frame_w);
+    vp.Height = static_cast<FLOAT>(frame_h);
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    ctx_->RSSetViewports(1, &vp);
+
+    const float clear[4] = {0, 0, 0, 1};
+    ctx_->ClearRenderTargetView(rtv_scene_fp16_.Get(), clear);
+
+    ctx_->VSSetShader(vs_.Get(), nullptr, 0);
+    ctx_->PSSetShader(ps_composite_overlay_fp16_.Get(), nullptr, 0);
+
+    ID3D11ShaderResourceView *srvs[2] = {srv_fp16_.Get(), overlay_srv_.Get()};
+    ctx_->PSSetShaderResources(0, 2, srvs);
+
+    ID3D11SamplerState *ss = samp_.Get();
+    ctx_->PSSetSamplers(0, 1, &ss);
+
+    ctx_->Draw(6, 0);
+
+    ID3D11ShaderResourceView *nullSrv[2] = {nullptr, nullptr};
+    ctx_->PSSetShaderResources(0, 2, nullSrv);
+
+    return true;
+}
+
+bool SharedScenePipeline::blit_fp16_to_rgba8(int frame_w, int frame_h)
+{
+    if (!rtv_rgba_ || !srv_scene_fp16_ || !vs_ || !ps_fp16_to_rgba8_ || !ctx_)
+        return false;
+
+    UINT stride = sizeof(float) * 4, offset = 0;
+    ID3D11Buffer *pVB = vb_.Get();
+    ctx_->IASetVertexBuffers(0, 1, &pVB, &stride, &offset);
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx_->IASetInputLayout(il_.Get());
+
+    ID3D11RenderTargetView *rtv = rtv_rgba_.Get();
+    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+
+    D3D11_VIEWPORT vp{};
+    vp.TopLeftX = 0.0f;
+    vp.TopLeftY = 0.0f;
+    vp.Width = static_cast<FLOAT>(frame_w);
+    vp.Height = static_cast<FLOAT>(frame_h);
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    ctx_->RSSetViewports(1, &vp);
+
+    const float clear[4] = {0, 0, 0, 1};
+    ctx_->ClearRenderTargetView(rtv_rgba_.Get(), clear);
+
+    ctx_->VSSetShader(vs_.Get(), nullptr, 0);
+    ctx_->PSSetShader(ps_fp16_to_rgba8_.Get(), nullptr, 0);
+
+    ID3D11ShaderResourceView *srvs[1] = {srv_scene_fp16_.Get()};
+    ctx_->PSSetShaderResources(0, 1, srvs);
+
+    ID3D11SamplerState *ss = samp_.Get();
+    ctx_->PSSetSamplers(0, 1, &ss);
+
+    ctx_->Draw(6, 0);
+
+    ID3D11ShaderResourceView *nullSrv[1] = {nullptr};
+    ctx_->PSSetShaderResources(0, 1, nullSrv);
+
+    return true;
+}
+
+bool SharedScenePipeline::readback_to_frame(int frame_w, int frame_h, uint64_t pts_ns, uint64_t frame_id,
+                                            gcap_frame_t *out)
+{
+    if (!out || !ctx_ || !rt_stage_ || !rt_rgba_)
+        return false;
+
+    ctx_->CopyResource(rt_stage_.Get(), rt_rgba_.Get());
+    D3D11_MAPPED_SUBRESOURCE m{};
+    if (FAILED(ctx_->Map(rt_stage_.Get(), 0, D3D11_MAP_READ, 0, &m)))
+        return false;
+
+    std::memset(out, 0, sizeof(*out));
+    out->data[0] = m.pData;
+    out->stride[0] = (int)m.RowPitch;
+    out->plane_count = 1;
+    out->width = frame_w;
+    out->height = frame_h;
+    out->format = GCAP_FMT_ARGB;
+    out->pts_ns = pts_ns;
+    out->frame_id = frame_id;
+    return true;
 }
 
 void SharedScenePipeline::release_preview_swapchain()

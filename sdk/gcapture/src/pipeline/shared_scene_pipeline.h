@@ -16,7 +16,10 @@ public:
 
     bool initialize(ID3D11Device *d3d,
                     ID3D11DeviceContext *ctx,
-                    ID2D1DeviceContext *d2d_ctx);
+                    ID2D1DeviceContext *d2d_ctx,
+                    IDWriteFactory *dwrite = nullptr,
+                    ID2D1SolidColorBrush *white = nullptr,
+                    ID2D1SolidColorBrush *black = nullptr);
     void shutdown();
 
     bool configurePreview(const gcap_preview_desc_t &desc);
@@ -26,6 +29,11 @@ public:
     bool ensure_rt_and_pipeline(int w, int h);
     bool ensure_preview_swapchain(int w, int h);
     bool present_preview(int src_w, int src_h);
+    bool gpu_overlay_text(const wchar_t *text, int frame_w, int frame_h);
+    bool composite_overlay_to_scene_fp16(int frame_w, int frame_h);
+    bool blit_fp16_to_rgba8(int frame_w, int frame_h);
+    bool readback_to_frame(int frame_w, int frame_h, uint64_t pts_ns, uint64_t frame_id,
+                           gcap_frame_t *out);
 
     ID3D11Device *d3d_ = nullptr;
     ID3D11DeviceContext *ctx_ = nullptr;
@@ -62,6 +70,10 @@ public:
     Microsoft::WRL::ComPtr<ID3D11SamplerState> samp_;
 
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> d2d_bitmap_rt_;
+
+    Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> d2d_white_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> d2d_black_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> overlay_rgba_;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> overlay_rtv_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> overlay_srv_;
