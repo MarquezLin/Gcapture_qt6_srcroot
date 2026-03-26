@@ -1172,7 +1172,9 @@ void DShowProvider::mirrorLoop()
 
         std::vector<uint8_t> buf;
         int w = 0, h = 0, stride = 0;
-        const bool needArgb = (vcb != nullptr) || (previewHwnd_ != nullptr);
+        const bool canUseSharedRaw = pipeline_ && haveRaw && rawOnlyActive_ &&
+                                     (rawSubtype == MEDIASUBTYPE_NV12 || rawSubtype == MEDIASUBTYPE_YUY2);
+        const bool needArgb = !canUseSharedRaw && ((vcb != nullptr) || (previewHwnd_ != nullptr));
         const bool haveArgb = needArgb ? captureRawFrameToArgb(buf, w, h, stride) : false;
 
         if (haveRaw || haveArgb)
@@ -1231,37 +1233,75 @@ void DShowProvider::mirrorLoop()
                 pcb(&pkt, user);
             }
 
-            if (pipeline_ && haveArgb)
+            bool sharedReady = false;
+            int sharedW = 0, sharedH = 0;
+            if (pipeline_ && canUseSharedRaw)
             {
-                pipeline_->ensure_rt_and_pipeline(w, h);
-                pipeline_->ensure_preview_swapchain(w, h);
-                pipeline_->upload_argb_frame(buf.data(), w, h, stride);
-                pipeline_->present_preview(w, h);
+                sharedW = rw;
+                sharedH = rh;
+                if (pipeline_->ensure_rt_and_pipeline(rw, rh) &&
+                    pipeline_->ensure_preview_swapchain(rw, rh))
+                {
+                    bool uploaded = false;
+                    if (rawSubtype == MEDIASUBTYPE_NV12)
+                    {
+                        const uint8_t *y = raw.data();
+                        const uint8_t *uv = raw.data() + (size_t)rstride * (size_t)rh;
+                        uploaded = pipeline_->upload_nv12_frame(y, rstride, uv, rstride, rw, rh) &&
+                                   pipeline_->render_uploaded_yuv_to_fp16(GCAP_FMT_NV12, rw, rh) &&
+                                   pipeline_->copy_fp16_to_scene() &&
+                                   pipeline_->blit_fp16_to_rgba8(rw, rh);
+                    }
+                    else if (rawSubtype == MEDIASUBTYPE_YUY2)
+                    {
+                        uploaded = pipeline_->upload_yuy2_frame(raw.data(), rstride, rw, rh) &&
+                                   pipeline_->render_uploaded_yuv_to_fp16(GCAP_FMT_YUY2, rw, rh) &&
+                                   pipeline_->copy_fp16_to_scene() &&
+                                   pipeline_->blit_fp16_to_rgba8(rw, rh);
+                    }
+                    if (uploaded)
+                    {
+                        pipeline_->present_preview(rw, rh);
+                        sharedReady = true;
+                    }
+                }
+            }
+            else if (pipeline_ && haveArgb)
+            {
+                sharedW = w;
+                sharedH = h;
+                if (pipeline_->ensure_rt_and_pipeline(w, h) && pipeline_->ensure_preview_swapchain(w, h) &&
+                    pipeline_->upload_argb_frame(buf.data(), w, h, stride))
+                {
+                    pipeline_->present_preview(w, h);
+                    sharedReady = true;
+                }
             }
 
-            if (vcb && haveArgb)
+            if (vcb)
             {
-                if (pipeline_)
+                if (pipeline_ && sharedReady)
                 {
                     gcap_frame_t f{};
-                    if (pipeline_->readback_to_frame(w, h, ptsNs, frameId, &f))
+                    if (pipeline_->readback_to_frame(sharedW, sharedH, ptsNs, frameId, &f))
                     {
                         if (frameId == 1)
                         {
-                            char msg[256] = {};
+                            char msg[320] = {};
                             double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
-                            sprintf_s(msg, "[DShow] shared-scene frame -> %d x %d fmt=ARGB negotiated=%s %d x %d %.2ffps source=%s raw-candidate=%s raw-sink-plan=%s",
-                                      w, h, subtypeName(subtype_), width_, height_, fps,
+                            sprintf_s(msg, "[DShow] shared-scene frame -> %d x %d fmt=ARGB negotiated=%s %d x %d %.2ffps source=%s raw-candidate=%s raw-sink-plan=%s ingest=%s",
+                                      sharedW, sharedH, subtypeName(subtype_), width_, height_, fps,
                                       callbackSourceName(lastCallbackSource_.load()),
                                       isRawCandidate() ? "YES" : "NO",
-                                      rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO");
+                                      rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO",
+                                      canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : "YUY2-direct") : "ARGB-bridge");
                             OutputDebugStringA(msg);
                         }
                         vcb(&f, user);
                         ctx_->Unmap(pipeline_->rt_stage_.Get(), 0);
                     }
                 }
-                else
+                else if (haveArgb)
                 {
                     gcap_frame_t f{};
                     f.data[0] = buf.data();
