@@ -52,9 +52,9 @@ private:
     bool configureCaptureFormat(IAMStreamConfig *streamConfig);
     void logCaptureCapabilities(IAMStreamConfig *streamConfig);
     void updatePreviewRect();
-    void startMirrorThread();
-    void stopMirrorThread();
-    void mirrorLoop();
+    void startFramePumpThread();
+    void stopFramePumpThread();
+    void framePumpLoop();
     enum class CallbackSource
     {
         Unknown = 0,
@@ -67,12 +67,15 @@ private:
     bool capturePreviewFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
     bool captureRendererFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
     bool captureCallbackFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
-    int mirrorSleepMs() const;
+    int framePumpSleepMs() const;
+    bool shouldDoSharedReadback(uint64_t ptsNs, uint64_t frameId, bool sharedReady, bool havePreview, bool haveCallback, uint64_t &lastReadbackPtsNs) const;
     bool isRawCandidate() const;
     const char *callbackSourceName(CallbackSource src) const;
     bool rawSinkPlanned() const;
     bool createRenderPipeline();
     void releaseRenderPipeline();
+    void resetPreviewProbeStats();
+    void logPreviewProbeStats(uint64_t frameId, int frameW, int frameH, bool directRaw, const char *presentTag);
 
 private:
     Microsoft::WRL::ComPtr<IGraphBuilder> graph_;
@@ -104,8 +107,8 @@ private:
     std::atomic<uint64_t> frameCounter_{0};
     std::atomic<CallbackSource> lastCallbackSource_{CallbackSource::Unknown};
 
-    std::thread mirrorThread_;
-    std::atomic<bool> mirrorThreadRunning_{false};
+    std::thread framePumpThread_;
+    std::atomic<bool> framePumpThreadRunning_{false};
     HWND previewHwnd_ = nullptr;
     DShowRawRenderer rawRenderer_{};
     DShowCustomSinkFilter *rawSinkFilter_ = nullptr;
@@ -119,6 +122,19 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> d2d_white_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> d2d_black_;
     std::unique_ptr<SharedScenePipeline> pipeline_;
+
+    struct PreviewProbeStats
+    {
+        uint64_t frames = 0;
+        uint64_t copyLatestRawNs = 0;
+        uint64_t ensureRtNs = 0;
+        uint64_t ensureSwapNs = 0;
+        uint64_t uploadNs = 0;
+        uint64_t renderYuvNs = 0;
+        uint64_t copySceneNs = 0;
+        uint64_t blitNs = 0;
+        uint64_t presentNs = 0;
+    } previewProbeStats_;
 
     bool rawOnlyActive_ = false;
 };

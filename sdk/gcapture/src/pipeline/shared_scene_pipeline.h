@@ -27,6 +27,11 @@ public:
 
     bool create_shaders_and_states();
     bool ensure_rt_and_pipeline(int w, int h);
+    uint64_t last_ensure_rt_ns() const { return lastEnsureRtNs_; }
+    uint64_t total_ensure_rt_ns() const { return totalEnsureRtNs_; }
+    uint64_t ensure_rt_calls() const { return ensureRtCalls_; }
+    bool last_ensure_rt_rebuilt() const { return lastEnsureRtRebuilt_; }
+    const char *last_ensure_rt_rebuild_reason() const { return lastEnsureRtReason_; }
     bool ensure_preview_swapchain(int w, int h);
     bool present_preview(int src_w, int src_h);
     bool gpu_overlay_text(const wchar_t *text, int frame_w, int frame_h);
@@ -91,6 +96,15 @@ public:
     bool preview_swapchain_10bit_ = false;
     int preview_w_ = 0;
     int preview_h_ = 0;
+
+
+    int rt_w_ = 0;
+    int rt_h_ = 0;
+    uint64_t lastEnsureRtNs_ = 0;
+    uint64_t totalEnsureRtNs_ = 0;
+    uint64_t ensureRtCalls_ = 0;
+    bool lastEnsureRtRebuilt_ = false;
+    const char *lastEnsureRtReason_ = "never";
 
     Microsoft::WRL::ComPtr<IDXGISwapChain1> preview_swapchain_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> preview_backbuf_;

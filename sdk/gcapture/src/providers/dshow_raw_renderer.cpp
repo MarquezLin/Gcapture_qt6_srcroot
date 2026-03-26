@@ -38,6 +38,21 @@ const char *DShowRawRenderer::subtypeName(const GUID &g)
     return "UNKNOWN";
 }
 
+
+DShowRawRenderer::DShowRawRenderer()
+{
+    frameReadyEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+}
+
+DShowRawRenderer::~DShowRawRenderer()
+{
+    if (frameReadyEvent_)
+    {
+        CloseHandle(frameReadyEvent_);
+        frameReadyEvent_ = nullptr;
+    }
+}
+
 uint8_t DShowRawRenderer::clampByte(int v)
 {
     if (v < 0) return 0;
@@ -57,6 +72,8 @@ void DShowRawRenderer::reset()
     latestStride_ = 0;
     sampleCount_ = 0;
     lastSampleBytes_ = 0;
+    if (frameReadyEvent_)
+        SetEvent(frameReadyEvent_);
 }
 
 void DShowRawRenderer::setNegotiated(const GUID &subtype, int width, int height, int fpsNum, int fpsDen)
@@ -105,6 +122,8 @@ bool DShowRawRenderer::pushSample(const uint8_t *data, size_t bytes, int sampleS
     latestStride_ = sampleStride;
     sampleCount_ += 1;
     lastSampleBytes_ = bytes;
+    if (frameReadyEvent_)
+        SetEvent(frameReadyEvent_);
     return true;
 }
 
@@ -233,4 +252,9 @@ size_t DShowRawRenderer::lastSampleBytes() const
 {
     std::lock_guard<std::mutex> lock(sampleMtx_);
     return lastSampleBytes_;
+}
+
+HANDLE DShowRawRenderer::frameReadyEvent() const
+{
+    return frameReadyEvent_;
 }

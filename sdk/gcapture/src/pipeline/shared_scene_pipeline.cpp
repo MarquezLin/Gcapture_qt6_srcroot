@@ -8,6 +8,7 @@
 #include <d3dcompiler.h>
 #include <windows.h>
 #include <cstdio>
+#include <chrono>
 #include <cstring>
 
 static void SSP_DBG(const char *stage, HRESULT hr)
@@ -766,6 +767,48 @@ bool SharedScenePipeline::create_shaders_and_states()
 
 bool SharedScenePipeline::ensure_rt_and_pipeline(int w, int h)
 {
+    const auto t0 = std::chrono::steady_clock::now();
+    lastEnsureRtRebuilt_ = false;
+    lastEnsureRtReason_ = "reuse";
+
+    const bool hasAllTargets = rt_fp16_ && rtv_fp16_ && srv_fp16_ &&
+                               rt_scene_fp16_ && rtv_scene_fp16_ && srv_scene_fp16_ &&
+                               rt_rgba_ && rtv_rgba_ && srv_rgba_ &&
+                               overlay_rgba_ && overlay_rtv_ && overlay_srv_ &&
+                               rt_stage_ && d2d_bitmap_rt_;
+
+    if (hasAllTargets && rt_w_ == w && rt_h_ == h)
+    {
+        const auto t1 = std::chrono::steady_clock::now();
+        lastEnsureRtNs_ = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+        totalEnsureRtNs_ += lastEnsureRtNs_;
+        ++ensureRtCalls_;
+        return true;
+    }
+
+    lastEnsureRtRebuilt_ = true;
+    if (!hasAllTargets)
+        lastEnsureRtReason_ = "missing-targets";
+    else if (rt_w_ != w || rt_h_ != h)
+        lastEnsureRtReason_ = "size-change";
+    else
+        lastEnsureRtReason_ = "unknown";
+
+    rt_fp16_.Reset();
+    rtv_fp16_.Reset();
+    srv_fp16_.Reset();
+    rt_scene_fp16_.Reset();
+    rtv_scene_fp16_.Reset();
+    srv_scene_fp16_.Reset();
+    rt_rgba_.Reset();
+    rtv_rgba_.Reset();
+    srv_rgba_.Reset();
+    overlay_rgba_.Reset();
+    overlay_rtv_.Reset();
+    overlay_srv_.Reset();
+    rt_stage_.Reset();
+    d2d_bitmap_rt_.Reset();
+
     // 1) High precision intermediate target
     D3D11_TEXTURE2D_DESC td{};
     td.Width = w;
@@ -844,7 +887,17 @@ bool SharedScenePipeline::ensure_rt_and_pipeline(int w, int h)
 
     d2d_ctx_->SetTarget(d2d_bitmap_rt_.Get());
 
-    return create_shaders_and_states();
+    const bool ok = create_shaders_and_states();
+    if (ok)
+    {
+        rt_w_ = w;
+        rt_h_ = h;
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    lastEnsureRtNs_ = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    totalEnsureRtNs_ += lastEnsureRtNs_;
+    ++ensureRtCalls_;
+    return ok;
 }
 
 bool SharedScenePipeline::gpu_overlay_text(const wchar_t *text, int frame_w, int frame_h)

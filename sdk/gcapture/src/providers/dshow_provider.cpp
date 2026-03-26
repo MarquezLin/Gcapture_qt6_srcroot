@@ -1150,11 +1150,116 @@ bool DShowProvider::captureCallbackFrameToArgb(std::vector<uint8_t> &out, int &w
     return true;
 }
 
-void DShowProvider::mirrorLoop()
+
+void DShowProvider::resetPreviewProbeStats()
 {
-    dshow_log("[DShow] mirrorLoop begin");
-    while (mirrorThreadRunning_)
+    previewProbeStats_ = {};
+}
+
+void DShowProvider::logPreviewProbeStats(uint64_t frameId, int frameW, int frameH, bool directRaw, const char *presentTag)
+{
+    auto avgMs = [](uint64_t ns, uint64_t frames) -> double
     {
+        return (frames > 0) ? (double)ns / (double)frames / 1000000.0 : 0.0;
+    };
+    auto lastMs = [](uint64_t ns) -> double
+    {
+        return (double)ns / 1000000.0;
+    };
+
+    const uint64_t frames = previewProbeStats_.frames;
+    if (frames == 0)
+        return;
+
+    const uint64_t ensureRtCalls = pipeline_ ? pipeline_->ensure_rt_calls() : 0;
+    const double ensureRtLastMs = pipeline_ ? lastMs(pipeline_->last_ensure_rt_ns()) : 0.0;
+    const double ensureRtAvgMs = (pipeline_ && ensureRtCalls > 0) ? avgMs(pipeline_->total_ensure_rt_ns(), ensureRtCalls) : 0.0;
+    const int ensureRtRebuild = (pipeline_ && pipeline_->last_ensure_rt_rebuilt()) ? 1 : 0;
+    const char *ensureRtReason = pipeline_ ? pipeline_->last_ensure_rt_rebuild_reason() : "n/a";
+
+    char msg[960] = {};
+    sprintf_s(msg,
+              "[DShow][Probe] preview-path frame=%llu size=%dx%d path=%s present=%s avg_ms{copyRaw=%.3f ensureSwap=%.3f upload=%.3f renderYuv=%.3f copyScene=%.3f blit=%.3f present=%.3f} ensureRt{last=%.3f avg=%.3f rebuild=%d reason=%s calls=%llu} frames=%llu",
+              static_cast<unsigned long long>(frameId),
+              frameW,
+              frameH,
+              directRaw ? "raw-direct" : "argb-bridge",
+              presentTag ? presentTag : "n/a",
+              avgMs(previewProbeStats_.copyLatestRawNs, frames),
+              avgMs(previewProbeStats_.ensureSwapNs, frames),
+              avgMs(previewProbeStats_.uploadNs, frames),
+              avgMs(previewProbeStats_.renderYuvNs, frames),
+              avgMs(previewProbeStats_.copySceneNs, frames),
+              avgMs(previewProbeStats_.blitNs, frames),
+              avgMs(previewProbeStats_.presentNs, frames),
+              ensureRtLastMs,
+              ensureRtAvgMs,
+              ensureRtRebuild,
+              ensureRtReason ? ensureRtReason : "n/a",
+              static_cast<unsigned long long>(ensureRtCalls),
+              static_cast<unsigned long long>(frames));
+    dshow_log(msg);
+}
+
+void DShowProvider::framePumpLoop()
+{
+    dshow_log("[DShow] framePumpLoop begin");
+    resetPreviewProbeStats();
+    uint64_t lastProcessedSampleCount = 0;
+    uint64_t lastReadbackPtsNs = 0;
+    const auto logPumpExit = [&](const char *reason, DWORD wr = 0)
+    {
+        char msg[384] = {};
+        const uint64_t sc = rawRenderer_.sampleCount();
+        std::snprintf(msg, sizeof(msg),
+                      "[DShow] framePumpLoop exit: reason=%s running=%d preview=%p pipeline=%p rawOnly=%d sampleCount=%llu lastProcessed=%llu wait=0x%lx",
+                      reason ? reason : "(null)",
+                      framePumpThreadRunning_ ? 1 : 0,
+                      previewHwnd_,
+                      pipeline_.get(),
+                      rawOnlyActive_ ? 1 : 0,
+                      static_cast<unsigned long long>(sc),
+                      static_cast<unsigned long long>(lastProcessedSampleCount),
+                      static_cast<unsigned long>(wr));
+        dshow_log(msg);
+    };
+    while (framePumpThreadRunning_)
+    {
+        HANDLE frameEvt = rawRenderer_.frameReadyEvent();
+        if (frameEvt)
+        {
+            const DWORD wr = WaitForSingleObject(frameEvt, static_cast<DWORD>(framePumpSleepMs()));
+            if (!framePumpThreadRunning_)
+            {
+                logPumpExit("running-cleared-after-wait", wr);
+                break;
+            }
+            if (wr != WAIT_OBJECT_0 && wr != WAIT_TIMEOUT)
+            {
+                char msg[192] = {};
+                std::snprintf(msg, sizeof(msg),
+                              "[DShow] framePumpLoop wait abnormal wr=0x%lx gle=%lu, fallback continue",
+                              static_cast<unsigned long>(wr),
+                              static_cast<unsigned long>(GetLastError()));
+                dshow_log(msg);
+            }
+        }
+        else
+        {
+            static bool s_loggedNoFrameEvent = false;
+            if (!s_loggedNoFrameEvent)
+            {
+                dshow_log("[DShow] framePumpLoop no frame event, using sleep fallback");
+                s_loggedNoFrameEvent = true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(framePumpSleepMs()));
+            if (!framePumpThreadRunning_)
+            {
+                logPumpExit("running-cleared-after-sleep");
+                break;
+            }
+        }
+
         gcap_on_video_cb vcb = nullptr;
         gcap_on_frame_packet_cb pcb = nullptr;
         void *user = nullptr;
@@ -1165,10 +1270,16 @@ void DShowProvider::mirrorLoop()
             user = user_;
         }
 
+        const uint64_t curSampleCount = rawRenderer_.sampleCount();
+        if (rawOnlyActive_ && curSampleCount != 0 && curSampleCount == lastProcessedSampleCount)
+            continue;
+
         std::vector<uint8_t> raw;
         int rw = 0, rh = 0, rstride = 0;
         GUID rawSubtype = MEDIASUBTYPE_NULL;
+        const auto tCopyRaw0 = std::chrono::steady_clock::now();
         const bool haveRaw = rawRenderer_.copyLatestRaw(raw, rw, rh, rstride, rawSubtype) && !raw.empty();
+        const auto tCopyRaw1 = std::chrono::steady_clock::now();
 
         std::vector<uint8_t> buf;
         int w = 0, h = 0, stride = 0;
@@ -1179,6 +1290,8 @@ void DShowProvider::mirrorLoop()
 
         if (haveRaw || haveArgb)
         {
+            if (haveRaw && curSampleCount != 0)
+                lastProcessedSampleCount = curSampleCount;
             auto now = std::chrono::steady_clock::now().time_since_epoch();
             const uint64_t ptsNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
             const uint64_t frameId = ++frameCounter_;
@@ -1235,33 +1348,117 @@ void DShowProvider::mirrorLoop()
 
             bool sharedReady = false;
             int sharedW = 0, sharedH = 0;
+            uint64_t probeEnsureRtNs = 0;
+            uint64_t probeEnsureSwapNs = 0;
+            uint64_t probeUploadNs = 0;
+            uint64_t probeRenderYuvNs = 0;
+            uint64_t probeCopySceneNs = 0;
+            uint64_t probeBlitNs = 0;
+            uint64_t probePresentNs = 0;
+            const char *probePresentTag = "skip";
             if (pipeline_ && canUseSharedRaw)
             {
                 sharedW = rw;
                 sharedH = rh;
-                if (pipeline_->ensure_rt_and_pipeline(rw, rh) &&
-                    pipeline_->ensure_preview_swapchain(rw, rh))
+                bool ensuredRt = false;
+                bool ensuredSwap = false;
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    ensuredRt = pipeline_->ensure_rt_and_pipeline(rw, rh);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    probeEnsureRtNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                }
+                if (pipeline_ && pipeline_->last_ensure_rt_rebuilt() && (frameId <= 5 || (frameId % 120) == 0))
+                {
+                    char rtmsg[320] = {};
+                    sprintf_s(rtmsg,
+                              "[DShow][Probe] ensureRt rebuild frame=%llu size=%dx%d reason=%s last_ms=%.3f",
+                              static_cast<unsigned long long>(frameId),
+                              rw,
+                              rh,
+                              pipeline_->last_ensure_rt_rebuild_reason(),
+                              (double)pipeline_->last_ensure_rt_ns() / 1000000.0);
+                    dshow_log(rtmsg);
+                }
+                if (ensuredRt)
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    ensuredSwap = pipeline_->ensure_preview_swapchain(rw, rh);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    probeEnsureSwapNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                }
+                if (ensuredRt && ensuredSwap)
                 {
                     bool uploaded = false;
                     if (rawSubtype == MEDIASUBTYPE_NV12)
                     {
                         const uint8_t *y = raw.data();
                         const uint8_t *uv = raw.data() + (size_t)rstride * (size_t)rh;
-                        uploaded = pipeline_->upload_nv12_frame(y, rstride, uv, rstride, rw, rh) &&
-                                   pipeline_->render_uploaded_yuv_to_fp16(GCAP_FMT_NV12, rw, rh) &&
-                                   pipeline_->copy_fp16_to_scene() &&
-                                   pipeline_->blit_fp16_to_rgba8(rw, rh);
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->upload_nv12_frame(y, rstride, uv, rstride, rw, rh);
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeUploadNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (uploaded)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->render_uploaded_yuv_to_fp16(GCAP_FMT_NV12, rw, rh);
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeRenderYuvNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (uploaded)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->copy_fp16_to_scene();
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeCopySceneNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (uploaded)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->blit_fp16_to_rgba8(rw, rh);
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeBlitNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
                     }
                     else if (rawSubtype == MEDIASUBTYPE_YUY2)
                     {
-                        uploaded = pipeline_->upload_yuy2_frame(raw.data(), rstride, rw, rh) &&
-                                   pipeline_->render_uploaded_yuv_to_fp16(GCAP_FMT_YUY2, rw, rh) &&
-                                   pipeline_->copy_fp16_to_scene() &&
-                                   pipeline_->blit_fp16_to_rgba8(rw, rh);
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->upload_yuy2_frame(raw.data(), rstride, rw, rh);
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeUploadNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (uploaded)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->render_uploaded_yuv_to_fp16(GCAP_FMT_YUY2, rw, rh);
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeRenderYuvNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (uploaded)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->copy_fp16_to_scene();
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeCopySceneNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (uploaded)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->blit_fp16_to_rgba8(rw, rh);
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeBlitNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
                     }
                     if (uploaded)
                     {
+                        const auto t0 = std::chrono::steady_clock::now();
                         pipeline_->present_preview(rw, rh);
+                        const auto t1 = std::chrono::steady_clock::now();
+                        probePresentNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        probePresentTag = "preview-direct";
                         sharedReady = true;
                     }
                 }
@@ -1270,17 +1467,71 @@ void DShowProvider::mirrorLoop()
             {
                 sharedW = w;
                 sharedH = h;
-                if (pipeline_->ensure_rt_and_pipeline(w, h) && pipeline_->ensure_preview_swapchain(w, h) &&
-                    pipeline_->upload_argb_frame(buf.data(), w, h, stride))
+                bool ensuredRt = false;
+                bool ensuredSwap = false;
                 {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    ensuredRt = pipeline_->ensure_rt_and_pipeline(w, h);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    probeEnsureRtNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                }
+                if (pipeline_ && pipeline_->last_ensure_rt_rebuilt() && (frameId <= 5 || (frameId % 120) == 0))
+                {
+                    char rtmsg[320] = {};
+                    sprintf_s(rtmsg,
+                              "[DShow][Probe] ensureRt rebuild frame=%llu size=%dx%d reason=%s last_ms=%.3f",
+                              static_cast<unsigned long long>(frameId),
+                              w,
+                              h,
+                              pipeline_->last_ensure_rt_rebuild_reason(),
+                              (double)pipeline_->last_ensure_rt_ns() / 1000000.0);
+                    dshow_log(rtmsg);
+                }
+                if (ensuredRt)
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    ensuredSwap = pipeline_->ensure_preview_swapchain(w, h);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    probeEnsureSwapNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                }
+                bool uploaded = false;
+                if (ensuredRt && ensuredSwap)
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    uploaded = pipeline_->upload_argb_frame(buf.data(), w, h, stride);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    probeUploadNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                }
+                if (uploaded)
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
                     pipeline_->present_preview(w, h);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    probePresentNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                    probePresentTag = "preview-argb";
                     sharedReady = true;
                 }
             }
 
+            if (sharedReady)
+            {
+                ++previewProbeStats_.frames;
+                previewProbeStats_.copyLatestRawNs += (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(tCopyRaw1 - tCopyRaw0).count();
+                previewProbeStats_.ensureRtNs += probeEnsureRtNs;
+                previewProbeStats_.ensureSwapNs += probeEnsureSwapNs;
+                previewProbeStats_.uploadNs += probeUploadNs;
+                previewProbeStats_.renderYuvNs += probeRenderYuvNs;
+                previewProbeStats_.copySceneNs += probeCopySceneNs;
+                previewProbeStats_.blitNs += probeBlitNs;
+                previewProbeStats_.presentNs += probePresentNs;
+                if (frameId <= 3 || (frameId % 120) == 0)
+                    logPreviewProbeStats(frameId, sharedW, sharedH, canUseSharedRaw, probePresentTag);
+            }
+
             if (vcb)
             {
-                if (pipeline_ && sharedReady)
+                const bool wantReadback = shouldDoSharedReadback(ptsNs, frameId, sharedReady, previewHwnd_ != nullptr, vcb != nullptr, lastReadbackPtsNs);
+                if (pipeline_ && wantReadback)
                 {
                     gcap_frame_t f{};
                     if (pipeline_->readback_to_frame(sharedW, sharedH, ptsNs, frameId, &f))
@@ -1296,6 +1547,13 @@ void DShowProvider::mirrorLoop()
                                       rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO",
                                       canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : "YUY2-direct") : "ARGB-bridge");
                             OutputDebugStringA(msg);
+                        }
+                        else if ((frameId % 120) == 0 && previewHwnd_ != nullptr)
+                        {
+                            char msg[192] = {};
+                            sprintf_s(msg, "[DShow] shared-scene readback throttled: callback every ~66ms, frame=%llu",
+                                      static_cast<unsigned long long>(frameId));
+                            dshow_log(msg);
                         }
                         vcb(&f, user);
                         ctx_->Unmap(pipeline_->rt_stage_.Get(), 0);
@@ -1327,12 +1585,39 @@ void DShowProvider::mirrorLoop()
                 }
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(mirrorSleepMs()));
     }
-    dshow_log("[DShow] mirrorLoop end");
+    if (framePumpThreadRunning_)
+        logPumpExit("while-condition-ended-unexpectedly");
+    else
+        logPumpExit("while-condition-running-false");
+    dshow_log("[DShow] framePumpLoop end");
 }
 
-int DShowProvider::mirrorSleepMs() const
+bool DShowProvider::shouldDoSharedReadback(uint64_t ptsNs, uint64_t frameId, bool sharedReady, bool havePreview, bool haveCallback, uint64_t &lastReadbackPtsNs) const
+{
+    if (!sharedReady || !haveCallback)
+        return false;
+
+    // DS30: keep preview on every frame, but throttle CPU readback when native preview is active.
+    if (!havePreview)
+        return true;
+
+    if (frameId <= 3)
+    {
+        lastReadbackPtsNs = ptsNs;
+        return true;
+    }
+
+    constexpr uint64_t kMinReadbackIntervalNs = 66ull * 1000ull * 1000ull; // ~15 fps
+    if (lastReadbackPtsNs == 0 || (ptsNs - lastReadbackPtsNs) >= kMinReadbackIntervalNs)
+    {
+        lastReadbackPtsNs = ptsNs;
+        return true;
+    }
+    return false;
+}
+
+int DShowProvider::framePumpSleepMs() const
 {
     int fpsNum = negotiatedFpsNum_ > 0 ? negotiatedFpsNum_ : profile_.fps_num;
     int fpsDen = negotiatedFpsDen_ > 0 ? negotiatedFpsDen_ : profile_.fps_den;
@@ -1352,19 +1637,29 @@ int DShowProvider::mirrorSleepMs() const
     return 33;
 }
 
-void DShowProvider::startMirrorThread()
+void DShowProvider::startFramePumpThread()
 {
-    stopMirrorThread();
-    mirrorThreadRunning_ = true;
-    mirrorThread_ = std::thread([this]
-                                { mirrorLoop(); });
+    stopFramePumpThread();
+    framePumpThreadRunning_ = true;
+    framePumpThread_ = std::thread([this]
+                                { framePumpLoop(); });
 }
 
-void DShowProvider::stopMirrorThread()
+void DShowProvider::stopFramePumpThread()
 {
-    mirrorThreadRunning_ = false;
-    if (mirrorThread_.joinable())
-        mirrorThread_.join();
+    char msg[256] = {};
+    std::snprintf(msg, sizeof(msg),
+                  "[DShow] stopFramePumpThread: joinable=%d running=%d sampleCount=%llu",
+                  framePumpThread_.joinable() ? 1 : 0,
+                  framePumpThreadRunning_ ? 1 : 0,
+                  static_cast<unsigned long long>(rawRenderer_.sampleCount()));
+    dshow_log(msg);
+    framePumpThreadRunning_ = false;
+    HANDLE frameEvt = rawRenderer_.frameReadyEvent();
+    if (frameEvt)
+        SetEvent(frameEvt);
+    if (framePumpThread_.joinable())
+        framePumpThread_.join();
 }
 
 bool DShowProvider::start()
@@ -1390,13 +1685,13 @@ bool DShowProvider::start()
     }
     running_ = true;
     if (vcb_ || pcb_ || previewHwnd_)
-        startMirrorThread();
+        startFramePumpThread();
     return true;
 }
 
 void DShowProvider::stop()
 {
-    stopMirrorThread();
+    stopFramePumpThread();
     std::lock_guard<std::mutex> lock(mtx_);
     if (mediaControl_ && running_)
     {

@@ -9,8 +9,8 @@
 class DShowRawRenderer
 {
 public:
-    DShowRawRenderer() = default;
-    ~DShowRawRenderer() = default;
+    DShowRawRenderer();
+    ~DShowRawRenderer();
 
     void reset();
     void setNegotiated(const GUID &subtype, int width, int height, int fpsNum, int fpsDen);
@@ -27,6 +27,7 @@ public:
     bool hasFrame() const;
     uint64_t sampleCount() const;
     size_t lastSampleBytes() const;
+    HANDLE frameReadyEvent() const;
     bool copyLatestRaw(std::vector<uint8_t> &out, int &w, int &h, int &stride, GUID &subtype) const;
     bool copyLatestFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride) const;
 
@@ -47,4 +48,5 @@ private:
     int latestStride_ = 0;
     uint64_t sampleCount_ = 0;
     size_t lastSampleBytes_ = 0;
+    HANDLE frameReadyEvent_ = nullptr;
 };
