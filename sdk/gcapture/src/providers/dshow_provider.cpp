@@ -497,14 +497,20 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
     if (!streamConfig)
         return false;
 
+    refreshSignalProbe(false);
+
     int wantW = profile_.width;
     int wantH = profile_.height;
     int wantFpsNum = profile_.fps_num;
     int wantFpsDen = profile_.fps_den > 0 ? profile_.fps_den : 1;
-    const GUID wantSubtype = (profile_.format == GCAP_FMT_NV12)   ? MEDIASUBTYPE_NV12
-                             : (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
-                             : (profile_.format == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
-                                                                  : GUID{};
+    GUID wantSubtype = GUID{};
+    if (signalValid_ && signalSubtype_ != GUID_NULL)
+        wantSubtype = signalSubtype_;
+    else
+        wantSubtype = (profile_.format == GCAP_FMT_NV12)   ? MEDIASUBTYPE_NV12
+                     : (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
+                     : (profile_.format == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
+                                                          : GUID{};
 
     if (wantW <= 0 && wantH <= 0 && wantFpsNum <= 0 && wantSubtype == GUID{})
         return false;
@@ -514,6 +520,17 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
         return false;
 
     std::vector<unsigned char> caps(static_cast<size_t>(capSize));
+    bool preferredSubtypeAvailable = false;
+    for (int i = 0; i < capCount; ++i)
+    {
+        AM_MEDIA_TYPE *scan = nullptr;
+        if (FAILED(streamConfig->GetStreamCaps(i, &scan, caps.data())) || !scan)
+            continue;
+        if (wantSubtype != GUID{} && scan->subtype == wantSubtype)
+            preferredSubtypeAvailable = true;
+        freeMediaType(scan);
+    }
+
     AM_MEDIA_TYPE *best = nullptr;
     long long bestScore = (1LL << 60);
 
@@ -531,7 +548,7 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
         }
 
         long long score = 0;
-        if (wantSubtype != GUID{})
+        if (wantSubtype != GUID{} && preferredSubtypeAvailable)
             score += (pmt->subtype == wantSubtype) ? 0 : 1000000000LL;
 
         if (wantW > 0)
@@ -570,9 +587,10 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 
     int w = 0, h = 0, fpsNum = 0, fpsDen = 0;
     mediaTypeToVideoInfo(best, w, h, fpsNum, fpsDen);
-    char buf[256] = {};
-    sprintf_s(buf, "[DShow] apply profile -> width=%d height=%d subtype={%08lX-0000-0010-...}",
-              w, h, best->subtype.Data1);
+    char buf[512] = {};
+    sprintf_s(buf, "[DShow] apply profile -> preferred=%s available=%d negotiated=%s %dx%d %.2ffps",
+              subtypeName(wantSubtype), preferredSubtypeAvailable ? 1 : 0,
+              subtypeName(best->subtype), w, h, (fpsNum > 0 && fpsDen > 0) ? ((double)fpsNum / (double)fpsDen) : 0.0);
     OutputDebugStringA(buf);
     freeMediaType(best);
     return true;

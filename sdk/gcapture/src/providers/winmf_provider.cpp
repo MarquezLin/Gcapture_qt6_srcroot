@@ -130,6 +130,28 @@ static int pixfmt_bitdepth(gcap_pixfmt_t f)
     }
 }
 
+static int mf_row_bytes(const GUID &sub, int w)
+{
+    if (sub == MFVideoFormat_P010)
+        return w * 2;
+    if (sub == MFVideoFormat_YUY2)
+        return w * 2;
+    if (sub == MFVideoFormat_Y210)
+        return w * 4;
+    if (sub == MFVideoFormat_ARGB32)
+        return w * 4;
+    return w;
+}
+
+static size_t mf_expected_buffer_bytes(const GUID &sub, int w, int h, int stride)
+{
+    if (stride <= 0 || w <= 0 || h <= 0)
+        return 0;
+    if (sub == MFVideoFormat_NV12 || sub == MFVideoFormat_P010)
+        return (size_t)stride * (size_t)h + (size_t)stride * (size_t)(h / 2);
+    return (size_t)stride * (size_t)h;
+}
+
 static std::wstring get_mf_string(IMFActivate *act, const GUID &key)
 {
     if (!act)
@@ -654,46 +676,31 @@ bool WinMFProvider::open(int index)
     signal_subtype_ = GUID_NULL;
     last_signal_probe_ms_ = 0;
 
+    refresh_signal_probe(true);
+    const GUID preferredSub = signal_valid_ ? signal_subtype_ : GUID_NULL;
+
     if (prefer_gpu_)
     {
         // 先試 GPU + DXGI 管線
         if (create_d3d() && create_reader_with_dxgi(index) && use_dxgi_)
         {
-            // 先嘗試強制協商成 NV12（協商不到就維持 device default，可能是 YUY2）
-            // OBS-style: 不選最大 native format，直接使用裝置 default
-            ComPtr<IMFMediaType> cur;
-            if (SUCCEEDED(reader_->GetCurrentMediaType(
-                    MF_SOURCE_READER_FIRST_VIDEO_STREAM, &cur)))
+            GUID chosenSub = GUID_NULL;
+            UINT32 chosenW = 0, chosenH = 0, chosenFn = 0, chosenFd = 1;
+            if (pick_best_native(preferredSub, chosenSub, chosenW, chosenH, chosenFn, chosenFd))
             {
-                ComPtr<IMFMediaType> req;
-                if (SUCCEEDED(MFCreateMediaType(&req)))
-                {
-                    req->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-                    req->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
-                    HRESULT hrSet = reader_->SetCurrentMediaType(
-                        MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, req.Get());
-                    if (SUCCEEDED(hrSet))
-                    {
-                        // 重新讀回實際 negotiated（通常會變 NV12）
-                        reader_->GetCurrentMediaType(
-                            MF_SOURCE_READER_FIRST_VIDEO_STREAM, &cur);
-                    }
-                }
-
-                UINT32 w = 0, h = 0, fn = 0, fd = 1;
-                MFGetAttributeSize(cur.Get(), MF_MT_FRAME_SIZE, &w, &h);
-                MFGetAttributeRatio(cur.Get(), MF_MT_FRAME_RATE, &fn, &fd);
-                cur->GetGUID(MF_MT_SUBTYPE, &cur_subtype_);
-
-                cur_w_ = (int)w;
-                cur_h_ = (int)h;
-                cpu_path_ = false;
+                cur_subtype_ = chosenSub;
+                cur_w_ = (int)chosenW;
+                cur_h_ = (int)chosenH;
+                cur_fps_num_ = (int)chosenFn;
+                cur_fps_den_ = (int)chosenFd;
+                cpu_path_ = !use_dxgi_;
 
                 ensure_rt_and_pipeline(cur_w_, cur_h_);
 
-                refresh_signal_probe(true);
-                emit_error(GCAP_OK,
-                           "[WinMF] Using device default format (OBS-style)");
+                std::ostringstream oss;
+                oss << "[WinMF] preferred negotiation: input=" << mf_subtype_name(preferredSub)
+                    << ", negotiated=" << mf_subtype_name(cur_subtype_);
+                emit_error(GCAP_OK, oss.str().c_str());
                 return true;
             }
         }
@@ -713,55 +720,20 @@ bool WinMFProvider::open(int index)
         return false;
     }
 
-    // 先嘗試把輸出設成 NV12，不行再 ARGB32
     {
-        ComPtr<IMFMediaType> mt;
-        MFCreateMediaType(&mt);
-        mt->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-        mt->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
-        HRESULT hr = reader_->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, mt.Get());
-        if (FAILED(hr))
+        GUID chosenSub = GUID_NULL;
+        UINT32 chosenW = 0, chosenH = 0, chosenFn = 0, chosenFd = 1;
+        if (!pick_best_native(preferredSub, chosenSub, chosenW, chosenH, chosenFn, chosenFd))
         {
-            DBG("SetCurrentMediaType(NV12)", hr);
-            ComPtr<IMFMediaType> mt2;
-            MFCreateMediaType(&mt2);
-            mt2->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-            mt2->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_ARGB32);
-            hr = reader_->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, mt2.Get());
-            if (FAILED(hr))
-            {
-                DBG("SetCurrentMediaType(ARGB32)", hr);
-                // 兩個都失敗就不硬設，直接用裝置預設型態
-            }
+            emit_error(GCAP_EIO, "GetCurrentMediaType failed");
+            return false;
         }
-    }
 
-    // 讀回實際型態，更新 cur_* 給 CPU 路使用
-    ComPtr<IMFMediaType> cur;
-    if (FAILED(reader_->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &cur)))
-    {
-        emit_error(GCAP_EIO, "GetCurrentMediaType failed");
-        return false;
-    }
-
-    UINT32 w = 0, h = 0, fn = 0, fd = 1;
-    MFGetAttributeSize(cur.Get(), MF_MT_FRAME_SIZE, &w, &h);
-    MFGetAttributeRatio(cur.Get(), MF_MT_FRAME_RATE, &fn, &fd);
-    cur_w_ = (int)w;
-    cur_h_ = (int)h;
-
-    cur->GetGUID(MF_MT_SUBTYPE, &cur_subtype_);
-
-    // negotiated stride (very important for capture cards with aligned rows)
-    cur_stride_ = mf_default_stride_bytes(cur.Get());
-    if (cur_stride_ <= 0)
-    {
-        if (cur_subtype_ == MFVideoFormat_P010)
-            cur_stride_ = cur_w_ * 2;
-        else if (cur_subtype_ == MFVideoFormat_ARGB32)
-            cur_stride_ = cur_w_ * 4;
-        else
-            cur_stride_ = cur_w_;
+        cur_subtype_ = chosenSub;
+        cur_w_ = (int)chosenW;
+        cur_h_ = (int)chosenH;
+        cur_fps_num_ = (int)chosenFn;
+        cur_fps_den_ = (int)chosenFd;
     }
 
     // negotiated media type (CPU/VP path)
@@ -770,9 +742,9 @@ bool WinMFProvider::open(int index)
         oss << "[WinMF] negotiated (CPU/VP): dev='" << dev_name_ << "'"
             << ", subtype=" << mf_subtype_name(cur_subtype_)
             << ", " << cur_w_ << "x" << cur_h_
-            << " @ " << fn;
-        if (fd != 1)
-            oss << "/" << fd;
+            << " @ " << cur_fps_num_;
+        if (cur_fps_den_ != 1)
+            oss << "/" << cur_fps_den_;
         oss << " fps"
             << ", default_stride=" << cur_stride_ << " bytes";
         emit_error(GCAP_OK, oss.str().c_str());
@@ -1199,7 +1171,7 @@ bool WinMFProvider::create_reader_with_dxgi(int devIndex)
     return true;
 }
 
-bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn, UINT32 &fd)
+bool WinMFProvider::pick_best_native(const GUID &preferredSub, GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn, UINT32 &fd)
 {
     struct Cand
     {
@@ -1237,25 +1209,44 @@ bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn
         if (FAILED(MFGetAttributeSize(t.Get(), MF_MT_FRAME_SIZE, &cw, &ch)))
             continue;
         MFGetAttributeRatio(t.Get(), MF_MT_FRAME_RATE, &fnum, &fden);
-        double fps = fden ? (double)fnum / fden : 0.0;
+
+        const UINT32 wantW = signal_valid_ ? (UINT32)signal_w_ : (profile_.width > 0 ? (UINT32)profile_.width : 0);
+        const UINT32 wantH = signal_valid_ ? (UINT32)signal_h_ : (profile_.height > 0 ? (UINT32)profile_.height : 0);
+        const UINT32 wantFn = signal_valid_ ? (UINT32)signal_fps_num_ : (profile_.fps_num > 0 ? (UINT32)profile_.fps_num : 0);
+        const UINT32 wantFd = signal_valid_ ? (UINT32)signal_fps_den_ : (profile_.fps_den > 0 ? (UINT32)profile_.fps_den : 1);
+
+        long long score = 0;
+        if (preferredSub != GUID_NULL)
+            score += (s == preferredSub) ? 0 : 1000000000LL;
+
+        if (wantW > 0)
+            score += 1000LL * llabs((long long)cw - (long long)wantW);
+        if (wantH > 0)
+            score += 1000LL * llabs((long long)ch - (long long)wantH);
+        if (wantFn > 0 && fnum > 0 && fden > 0)
+        {
+            double fps = (double)fnum / (double)fden;
+            double wantFps = (double)wantFn / (double)wantFd;
+            score += (long long)(100.0 * fabs(fps - wantFps));
+        }
 
         int pref = (s == MFVideoFormat_P010) ? 4 : (s == MFVideoFormat_Y210) ? 3
                                                : (s == MFVideoFormat_NV12)   ? 2
                                                : (s == MFVideoFormat_YUY2)   ? 1
                                                                              : 0;
-        long long score = (long long)cw * ch * 100000 + (long long)(fps * 1000) * 100 + pref;
+        score = score * 100 + (100 - pref);
         list.push_back({s, cw, ch, fnum, fden, score, t});
     }
     if (list.empty())
         return false;
 
-    std::sort(list.begin(), list.end(), [](auto &a, auto &b)
-              { return a.score > b.score; });
+    std::sort(list.begin(), list.end(), [](const auto &a, const auto &b)
+              { return a.score < b.score; });
     const auto &best = list[0];
 
-    // 1) 原生就是 P010/NV12，或在 GPU 路徑下的 Y210 → 直接套用
+    // 1) 優先保留可直接進目前管線的完整 media type
     if (best.sub == MFVideoFormat_P010 || best.sub == MFVideoFormat_NV12 ||
-        (best.sub == MFVideoFormat_Y210 && use_dxgi_))
+        ((best.sub == MFVideoFormat_Y210 || best.sub == MFVideoFormat_YUY2) && use_dxgi_))
     {
         HRESULT hr = reader_->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, best.mt.Get());
         if (FAILED(hr))
@@ -1266,10 +1257,11 @@ bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn
 
         // Read back actual negotiated type (incl. stride)
         ComPtr<IMFMediaType> cur;
+        UINT32 rw = 0, rh = 0, rfn = 0, rfd = 1;
+        GUID rsub = GUID_NULL;
+
         if (SUCCEEDED(reader_->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &cur)) && cur)
         {
-            UINT32 rw = 0, rh = 0, rfn = 0, rfd = 1;
-            GUID rsub = GUID_NULL;
             MFGetAttributeSize(cur.Get(), MF_MT_FRAME_SIZE, &rw, &rh);
             MFGetAttributeRatio(cur.Get(), MF_MT_FRAME_RATE, &rfn, &rfd);
             cur->GetGUID(MF_MT_SUBTYPE, &rsub);
@@ -1287,7 +1279,8 @@ bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn
             }
 
             std::ostringstream oss;
-            oss << "[WinMF] pick_best_native: subtype=" << mf_subtype_name(rsub)
+            oss << "[WinMF] pick_best_native: preferred=" << mf_subtype_name(preferredSub)
+                << ", subtype=" << mf_subtype_name(rsub)
                 << ", " << rw << "x" << rh
                 << " @ " << rfn;
             if (rfd != 1)
@@ -1296,13 +1289,21 @@ bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn
                 << ", default_stride=" << cur_stride_ << " bytes";
             emit_error(GCAP_OK, oss.str().c_str());
         }
+        else
+        {
+            rsub = best.sub;
+            rw = (UINT32)best.w;
+            rh = (UINT32)best.h;
+            rfn = (UINT32)best.fn;
+            rfd = (UINT32)best.fd;
+        }
 
-        sub = best.sub;
-        w = best.w;
-        h = best.h;
-        fn = best.fn;
-        fd = best.fd;
-        cpu_path_ = !use_dxgi_; // 沒有 DXGI 紋理仍要 CPU
+        sub = rsub;
+        w = rw;
+        h = rh;
+        fn = rfn;
+        fd = rfd;
+        cpu_path_ = !use_dxgi_;
         return true;
     }
 
@@ -1333,6 +1334,9 @@ bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn
     UINT32 rw = 0, rh = 0, rfn = 0, rfd = 1;
     MFGetAttributeSize(cur.Get(), MF_MT_FRAME_SIZE, &rw, &rh);
     MFGetAttributeRatio(cur.Get(), MF_MT_FRAME_RATE, &rfn, &rfd);
+    cur_stride_ = mf_default_stride_bytes(cur.Get());
+    if (cur_stride_ <= 0)
+        cur_stride_ = (int)rw * 4;
 
     sub = MFVideoFormat_ARGB32;
     w = rw;
@@ -1340,6 +1344,11 @@ bool WinMFProvider::pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn
     fn = rfn;
     fd = rfd;
     cpu_path_ = true; // 明確走 CPU
+
+    std::ostringstream oss;
+    oss << "[WinMF] pick_best_native: preferred=" << mf_subtype_name(preferredSub)
+        << ", fallback=ARGB32 from native " << mf_subtype_name(best.sub);
+    emit_error(GCAP_OK, oss.str().c_str());
     return true;
 }
 
@@ -2129,18 +2138,15 @@ bool WinMFProvider::composite_overlay_to_scene_fp16()
     return pipeline_ && pipeline_->composite_overlay_to_scene_fp16(cur_w_, cur_h_);
 }
 
-
 bool WinMFProvider::blit_fp16_to_rgba8()
 {
     return pipeline_ && pipeline_->blit_fp16_to_rgba8(cur_w_, cur_h_);
 }
 
-
 bool WinMFProvider::gpu_overlay_text(const wchar_t *text)
 {
     return pipeline_ && pipeline_->gpu_overlay_text(text, cur_w_, cur_h_);
 }
-
 
 // -------------------- Capture loop --------------------
 
@@ -2183,12 +2189,7 @@ void WinMFProvider::loop()
                     << ", curLen=" << curLen << ", maxLen=" << maxLen
                     << ", negotiated_stride=" << cur_stride_ << " bytes"
                     << ", code_assumes_stride=";
-                if (cur_subtype_ == MFVideoFormat_P010)
-                    oss << (cur_w_ * 2);
-                else if (cur_subtype_ == MFVideoFormat_ARGB32)
-                    oss << (cur_w_ * 4);
-                else
-                    oss << cur_w_;
+                oss << mf_row_bytes(cur_subtype_, cur_w_);
                 oss << " bytes";
                 emit_error(GCAP_OK, oss.str().c_str());
                 logged_layout = true;
@@ -2197,16 +2198,8 @@ void WinMFProvider::loop()
             // (2) bufferLen vs expectedLen
             if (!logged_len_mismatch)
             {
-                const int stride = (cur_stride_ > 0) ? cur_stride_ : (cur_subtype_ == MFVideoFormat_P010) ? (cur_w_ * 2)
-                                                                 : (cur_subtype_ == MFVideoFormat_ARGB32) ? (cur_w_ * 4)
-                                                                                                          : cur_w_;
-                size_t expected = 0;
-                if (cur_subtype_ == MFVideoFormat_NV12)
-                    expected = (size_t)stride * (size_t)cur_h_ + (size_t)stride * (size_t)(cur_h_ / 2);
-                else if (cur_subtype_ == MFVideoFormat_P010)
-                    expected = (size_t)stride * (size_t)cur_h_ + (size_t)stride * (size_t)(cur_h_ / 2);
-                else if (cur_subtype_ == MFVideoFormat_ARGB32)
-                    expected = (size_t)stride * (size_t)cur_h_;
+                const int stride = (cur_stride_ > 0) ? cur_stride_ : mf_row_bytes(cur_subtype_, cur_w_);
+                const size_t expected = mf_expected_buffer_bytes(cur_subtype_, cur_w_, cur_h_, stride);
 
                 if (expected != 0 && (size_t)curLen < expected)
                 {
@@ -2392,10 +2385,7 @@ void WinMFProvider::loop()
                     << ", curLen=" << curLen << ", maxLen=" << maxLen
                     << ", negotiated_stride=" << cur_stride_ << " bytes"
                     << ", code_assumes_stride=";
-                if (cur_subtype_ == MFVideoFormat_P010)
-                    oss << (cur_w_ * 2);
-                else
-                    oss << cur_w_;
+                oss << mf_row_bytes(cur_subtype_, cur_w_);
                 oss << " bytes";
                 emit_error(GCAP_OK, oss.str().c_str());
                 logged_layout = true;
@@ -2410,114 +2400,76 @@ void WinMFProvider::loop()
                 continue;
             }
 
-            D3D11_MAPPED_SUBRESOURCE mapped{};
-            HRESULT hrMap = ctx_->Map(upload_yuv_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-            if (FAILED(hrMap))
-            {
-                if (locked2d)
-                    buf2d->Unlock2D();
-                else
-                    buf->Unlock();
-                MDBG("DXGI: Map(upload_yuv_) failed", hrMap);
-                continue;
-            }
-
-            // bufferLen vs expected (upload path) + RowPitch
-            if (!logged_len_mismatch)
-            {
-                const int assumeStride =
-                    (locked2d && srcPitchLong > 0) ? (int)srcPitchLong : (cur_stride_ > 0)                  ? cur_stride_
-                                                                     : (cur_subtype_ == MFVideoFormat_P010) ? (cur_w_ * 2)
-                                                                                                            : cur_w_;
-
-                const size_t expected = (size_t)assumeStride * (size_t)cur_h_ +
-                                        (size_t)assumeStride * (size_t)(cur_h_ / 2);
-
-                // 如果 curLen=0（常見於 2D buffer），就略過這個檢查
-                if (curLen != 0 && (size_t)curLen < expected)
-                {
-                    std::ostringstream oss;
-                    oss << "[WinMF] WARNING: bufferLen < expected (upload): curLen=" << curLen
-                        << ", expected>=" << expected
-                        << ", subtype=" << mf_subtype_name(cur_subtype_)
-                        << ", w=" << cur_w_ << ", h=" << cur_h_
-                        << ", default_stride=" << assumeStride
-                        << ", upload_RowPitch=" << mapped.RowPitch;
-                    emit_error(GCAP_OK, oss.str().c_str());
-                    logged_len_mismatch = true;
-                }
-            }
+            const int assumeStride =
+                (locked2d && srcPitchLong > 0) ? (int)srcPitchLong : (cur_stride_ > 0) ? cur_stride_
+                                                                                         : mf_row_bytes(cur_subtype_, cur_w_);
 
             int w = cur_w_;
             int h = cur_h_;
 
-            if (cur_subtype_ == MFVideoFormat_NV12)
+            if (cur_subtype_ == MFVideoFormat_NV12 || cur_subtype_ == MFVideoFormat_P010)
             {
-                const int srcStride = (locked2d && srcPitchLong > 0) ? (int)srcPitchLong : (cur_stride_ > 0) ? cur_stride_
-                                                                                                             : w;
-                const size_t rowBytes = (size_t)w; // NV12 Y/UV 每列 bytes = w
+                D3D11_MAPPED_SUBRESOURCE mapped{};
+                HRESULT hrMap = ctx_->Map(upload_yuv_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+                if (FAILED(hrMap))
+                {
+                    if (locked2d)
+                        buf2d->Unlock2D();
+                    else
+                        buf->Unlock();
+                    MDBG("DXGI: Map(upload_yuv_) failed", hrMap);
+                    continue;
+                }
 
+                if (!logged_len_mismatch)
+                {
+                    const size_t expected = mf_expected_buffer_bytes(cur_subtype_, cur_w_, cur_h_, assumeStride);
+                    if (curLen != 0 && (size_t)curLen < expected)
+                    {
+                        std::ostringstream oss;
+                        oss << "[WinMF] WARNING: bufferLen < expected (upload): curLen=" << curLen
+                            << ", expected>=" << expected
+                            << ", subtype=" << mf_subtype_name(cur_subtype_)
+                            << ", w=" << cur_w_ << ", h=" << cur_h_
+                            << ", default_stride=" << assumeStride
+                            << ", upload_RowPitch=" << mapped.RowPitch;
+                        emit_error(GCAP_OK, oss.str().c_str());
+                        logged_len_mismatch = true;
+                    }
+                }
+
+                const int srcStride = assumeStride;
+                const size_t rowBytes = (size_t)mf_row_bytes(cur_subtype_, w);
                 const uint8_t *srcY = pData;
                 const uint8_t *srcUV = pData + (size_t)srcStride * (size_t)h;
 
-                // --- Recording: NV12 直接送進 Sink Writer (H.264) ---
                 {
                     std::lock_guard<std::mutex> lock(recorderMutex_);
                     if (recorder_)
                     {
-                        recorder_->writeNV12(srcY, srcUV,
-                                             static_cast<UINT32>(srcStride),
-                                             static_cast<UINT32>(srcStride),
-                                             ts);
+                        if (cur_subtype_ == MFVideoFormat_NV12)
+                            recorder_->writeNV12(srcY, srcUV, static_cast<UINT32>(srcStride), static_cast<UINT32>(srcStride), ts);
+                        else
+                            recorder_->writeP010(srcY, srcUV, static_cast<UINT32>(srcStride), static_cast<UINT32>(srcStride), ts);
                     }
                 }
 
                 uint8_t *dst = static_cast<uint8_t *>(mapped.pData);
-
-                // Y plane
                 for (int y = 0; y < h; ++y)
-                    memcpy(dst + mapped.RowPitch * y,
-                           srcY + (size_t)srcStride * y,
-                           rowBytes);
-                // UV plane (h/2 行，pitch 相同)
+                    memcpy(dst + mapped.RowPitch * y, srcY + (size_t)srcStride * y, rowBytes);
                 for (int y = 0; y < h / 2; ++y)
-                    memcpy(dst + mapped.RowPitch * (h + y),
-                           srcUV + (size_t)srcStride * y,
-                           rowBytes);
-            }
-            else if (cur_subtype_ == MFVideoFormat_P010)
-            {
-                // P010: 10-bit，2 bytes per sample
-                const int srcStride = (locked2d && srcPitchLong > 0) ? (int)srcPitchLong : (cur_stride_ > 0) ? cur_stride_
-                                                                                                             : (w * 2);
-                const size_t rowBytes = (size_t)w * 2;
+                    memcpy(dst + mapped.RowPitch * (h + y), srcUV + (size_t)srcStride * y, rowBytes);
 
-                const uint8_t *srcY = pData;
-                const uint8_t *srcUV = pData + (size_t)srcStride * (size_t)h;
-                // --- Recording: P010 直接送進 Sink Writer (HEVC) ---
-                {
-                    std::lock_guard<std::mutex> lock(recorderMutex_);
-                    if (recorder_)
-                    {
-                        recorder_->writeP010(srcY, srcUV,
-                                             static_cast<UINT32>(srcStride),
-                                             static_cast<UINT32>(srcStride),
-                                             ts);
-                    }
-                }
+                ctx_->Unmap(upload_yuv_.Get(), 0);
+                if (locked2d)
+                    buf2d->Unlock2D();
+                else
+                    buf->Unlock();
 
-                uint8_t *dst = static_cast<uint8_t *>(mapped.pData);
-
-                for (int y = 0; y < h; ++y)
-                    memcpy(dst + mapped.RowPitch * y,
-                           srcY + (size_t)srcStride * y,
-                           rowBytes);
-                for (int y = 0; y < h / 2; ++y)
-                    memcpy(dst + mapped.RowPitch * (h + y),
-                           srcUV + (size_t)srcStride * y,
-                           rowBytes);
+                yuvTex = upload_yuv_.Get();
             }
             else if (cur_subtype_ == MFVideoFormat_YUY2)
+
             {
                 const int srcStride = (locked2d && srcPitchLong > 0) ? (int)srcPitchLong
                                                                      : (cur_stride_ > 0 ? cur_stride_ : (w * 2));
@@ -2641,16 +2593,6 @@ void WinMFProvider::loop()
                 yuvTex = upload_y210_packed_.Get();
             }
 
-            if (cur_subtype_ == MFVideoFormat_NV12 || cur_subtype_ == MFVideoFormat_P010)
-            {
-                ctx_->Unmap(upload_yuv_.Get(), 0);
-                if (locked2d)
-                    buf2d->Unlock2D();
-                else
-                    buf->Unlock();
-
-                yuvTex = upload_yuv_.Get();
-            }
         }
 
         if (!yuvTex)

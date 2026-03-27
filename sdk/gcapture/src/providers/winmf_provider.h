@@ -164,7 +164,7 @@ private:
     // init
     bool create_d3d();
     bool create_reader_with_dxgi(int devIndex);
-    bool pick_best_native(GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn, UINT32 &fd);
+    bool pick_best_native(const GUID &preferredSub, GUID &sub, UINT32 &w, UINT32 &h, UINT32 &fn, UINT32 &fd);
 
     // rendering
     bool ensure_rt_and_pipeline(int w, int h);
