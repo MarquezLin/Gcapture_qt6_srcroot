@@ -30,6 +30,7 @@ public:
     HANDLE frameReadyEvent() const;
     bool copyLatestRaw(std::vector<uint8_t> &out, int &w, int &h, int &stride, GUID &subtype) const;
     bool copyLatestFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride) const;
+    double runtimeFpsAvg() const;
 
 private:
     static uint8_t clampByte(int v);
@@ -49,5 +50,7 @@ private:
     int latestStride_ = 0;
     uint64_t sampleCount_ = 0;
     size_t lastSampleBytes_ = 0;
+    uint64_t lastSamplePtsNs_ = 0;
+    double runtimeFpsAvg_ = 0.0;
     HANDLE frameReadyEvent_ = nullptr;
 };

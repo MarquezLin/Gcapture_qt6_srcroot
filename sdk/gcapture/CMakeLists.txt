@@ -12,6 +12,7 @@ add_library(gcapture SHARED
     src/providers/winmf_provider.cpp
     src/providers/mf_recorder.cpp
     src/providers/dshow_provider.cpp
+    src/providers/dshow_signal_probe.cpp
     src/providers/dshow_raw_renderer.cpp
     src/providers/dshow_custom_sink.cpp
     src/audio/audio_manager.cpp

@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <QString>
 #include <QDockWidget>
+#include <QTimer>
 #include <QTextEdit>
 #include <gcapture.h>
 #include <cstdint>
@@ -116,6 +117,7 @@ private:
     uint64_t lastPacketCallbackPtsNs_ = 0;
     uint64_t framePacketLogCount_ = 0;
     uint64_t framePacketSessionId_ = 0;
+    QTimer *runtimeStatusTimer_ = nullptr;
     void updateRuntimeStatusUi();
 
 signals:

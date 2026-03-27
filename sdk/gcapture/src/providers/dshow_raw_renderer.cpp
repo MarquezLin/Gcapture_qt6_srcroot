@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <chrono>
 
 namespace
 {
@@ -73,6 +74,8 @@ void DShowRawRenderer::reset()
     latestStride_ = 0;
     sampleCount_ = 0;
     lastSampleBytes_ = 0;
+    lastSamplePtsNs_ = 0;
+    runtimeFpsAvg_ = 0.0;
     if (frameReadyEvent_)
         SetEvent(frameReadyEvent_);
 }
@@ -93,6 +96,8 @@ void DShowRawRenderer::setNegotiated(const GUID &subtype, int width, int height,
         latestStride_ = 0;
         sampleCount_ = 0;
         lastSampleBytes_ = 0;
+        lastSamplePtsNs_ = 0;
+        runtimeFpsAvg_ = 0.0;
     }
 }
 
@@ -124,6 +129,16 @@ bool DShowRawRenderer::pushSample(const uint8_t *data, size_t bytes, int sampleS
     latestStride_ = sampleStride;
     sampleCount_ += 1;
     lastSampleBytes_ = bytes;
+
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    const uint64_t nowNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+    if (lastSamplePtsNs_ != 0 && nowNs > lastSamplePtsNs_)
+    {
+        const double fpsNow = 1e9 / double(nowNs - lastSamplePtsNs_);
+        if (fpsNow > 0.0)
+            runtimeFpsAvg_ = (runtimeFpsAvg_ <= 0.0) ? fpsNow : (runtimeFpsAvg_ * 0.9 + fpsNow * 0.1);
+    }
+    lastSamplePtsNs_ = nowNs;
     if (frameReadyEvent_)
         SetEvent(frameReadyEvent_);
     return true;
@@ -305,4 +320,11 @@ size_t DShowRawRenderer::lastSampleBytes() const
 HANDLE DShowRawRenderer::frameReadyEvent() const
 {
     return frameReadyEvent_;
+}
+
+
+double DShowRawRenderer::runtimeFpsAvg() const
+{
+    std::lock_guard<std::mutex> lock(sampleMtx_);
+    return runtimeFpsAvg_;
 }

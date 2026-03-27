@@ -3,6 +3,7 @@
 #define NOMINMAX
 #endif
 #include "winmf_provider.h"
+#include "dshow_signal_probe.h"
 #include "../pipeline/shared_scene_pipeline.h"
 #include "mf_recorder.h"
 #include <mferror.h>
@@ -44,169 +45,6 @@ namespace
 #include "../core/frame_converter.h"
 
 using Microsoft::WRL::ComPtr;
-
-struct DShowSignalProbeResult
-{
-    bool ok = false;
-    int width = 0;
-    int height = 0;
-    int fps_num = 0;
-    int fps_den = 1;
-    GUID subtype = GUID_NULL;
-};
-
-static bool dshow_extract_media_type(const AM_MEDIA_TYPE &mt, DShowSignalProbeResult &out)
-{
-    if (!mt.pbFormat)
-        return false;
-
-    LONG width = 0;
-    LONG height = 0;
-    REFERENCE_TIME avg = 0;
-
-    if ((mt.formattype == FORMAT_VideoInfo || mt.formattype == FORMAT_VideoInfo2) &&
-        mt.cbFormat >= sizeof(VIDEOINFOHEADER) && mt.pbFormat)
-    {
-        if (mt.formattype == FORMAT_VideoInfo2 && mt.cbFormat >= sizeof(VIDEOINFOHEADER2))
-        {
-            auto *vih2 = reinterpret_cast<const VIDEOINFOHEADER2 *>(mt.pbFormat);
-            width = vih2->bmiHeader.biWidth;
-            height = vih2->bmiHeader.biHeight;
-            avg = vih2->AvgTimePerFrame;
-        }
-        else
-        {
-            auto *vih = reinterpret_cast<const VIDEOINFOHEADER *>(mt.pbFormat);
-            width = vih->bmiHeader.biWidth;
-            height = vih->bmiHeader.biHeight;
-            avg = vih->AvgTimePerFrame;
-        }
-    }
-
-    out.width = (int)width;
-    out.height = (int)std::abs(height);
-    out.subtype = mt.subtype;
-    out.fps_den = 1;
-    out.fps_num = (avg > 0) ? (int)((10000000LL + avg / 2) / avg) : 0;
-    out.ok = (out.width > 0 && out.height > 0);
-    return out.ok;
-}
-
-static void dshow_free_media_type(AM_MEDIA_TYPE &mt)
-{
-    if (mt.cbFormat != 0 && mt.pbFormat)
-    {
-        CoTaskMemFree(mt.pbFormat);
-        mt.cbFormat = 0;
-        mt.pbFormat = nullptr;
-    }
-    if (mt.pUnk)
-    {
-        mt.pUnk->Release();
-        mt.pUnk = nullptr;
-    }
-}
-
-static bool dshow_probe_current_signal_by_index(int devIndex, DShowSignalProbeResult &out)
-{
-    out = {};
-
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    const bool need_uninit = SUCCEEDED(hr);
-    if (hr != S_OK && hr != S_FALSE && hr != RPC_E_CHANGED_MODE)
-        return false;
-
-    bool ok = false;
-    do
-    {
-        ComPtr<ICreateDevEnum> devEnum;
-        hr = CoCreateInstance(CLSID_SystemDeviceEnum, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&devEnum));
-        if (FAILED(hr))
-            break;
-
-        ComPtr<IEnumMoniker> enumMoniker;
-        hr = devEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &enumMoniker, 0);
-        if (hr != S_OK)
-            break;
-
-        ComPtr<IMoniker> moniker;
-        ULONG fetched = 0;
-        int cur = 0;
-        while (enumMoniker->Next(1, &moniker, &fetched) == S_OK)
-        {
-            if (cur == devIndex)
-                break;
-            moniker.Reset();
-            ++cur;
-        }
-        if (!moniker)
-            break;
-
-        ComPtr<IBaseFilter> sourceFilter;
-        hr = moniker->BindToObject(nullptr, nullptr, IID_PPV_ARGS(&sourceFilter));
-        if (FAILED(hr))
-            break;
-
-        ComPtr<IGraphBuilder> graph;
-        hr = CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&graph));
-        if (FAILED(hr))
-            break;
-
-        hr = graph->AddFilter(sourceFilter.Get(), L"VideoCapture");
-        if (FAILED(hr))
-            break;
-
-        ComPtr<ICaptureGraphBuilder2> capBuilder;
-        hr = CoCreateInstance(CLSID_CaptureGraphBuilder2, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&capBuilder));
-        if (FAILED(hr))
-            break;
-        capBuilder->SetFiltergraph(graph.Get());
-
-        ComPtr<IAMStreamConfig> cfg;
-        hr = capBuilder->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video, sourceFilter.Get(), IID_PPV_ARGS(&cfg));
-        if (FAILED(hr) || !cfg)
-            break;
-
-        AM_MEDIA_TYPE *pmt = nullptr;
-        hr = cfg->GetFormat(&pmt);
-        if (SUCCEEDED(hr) && pmt)
-        {
-            ok = dshow_extract_media_type(*pmt, out);
-            dshow_free_media_type(*pmt);
-            CoTaskMemFree(pmt);
-            if (ok)
-                break;
-        }
-
-        int count = 0, capSize = 0;
-        hr = cfg->GetNumberOfCapabilities(&count, &capSize);
-        if (FAILED(hr) || count <= 0 || capSize <= 0)
-            break;
-
-        std::vector<unsigned char> caps((size_t)capSize);
-        for (int i = 0; i < count; ++i)
-        {
-            AM_MEDIA_TYPE *capsMt = nullptr;
-            if (FAILED(cfg->GetStreamCaps(i, &capsMt, caps.data())) || !capsMt)
-                continue;
-
-            if (dshow_extract_media_type(*capsMt, out))
-            {
-                dshow_free_media_type(*capsMt);
-                CoTaskMemFree(capsMt);
-                ok = true;
-                break;
-            }
-
-            dshow_free_media_type(*capsMt);
-            CoTaskMemFree(capsMt);
-        }
-    } while (false);
-
-    if (need_uninit)
-        CoUninitialize();
-    return ok;
-}
 
 static std::string hr_msg(HRESULT hr)
 {
@@ -451,11 +289,25 @@ bool WinMFProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     if (!getSignalStatus(out.signal))
         return false;
 
+    memset(&out.negotiated, 0, sizeof(out.negotiated));
+    out.negotiated.width = cur_w_;
+    out.negotiated.height = cur_h_;
+    out.negotiated.fps_num = cur_fps_num_;
+    out.negotiated.fps_den = cur_fps_den_;
+    out.negotiated.pixfmt = mfsub_to_gcap(cur_subtype_);
+    out.negotiated.bit_depth = pixfmt_bitdepth(out.negotiated.pixfmt);
+    out.negotiated.csp = GCAP_CSP_UNKNOWN;
+    out.negotiated.range = GCAP_RANGE_UNKNOWN;
+    out.negotiated.hdr = -1;
+
     const bool gpu = isUsingGpu();
+    out.runtime_fps = fps_avg_;
     out.active_backend = gpu ? GCAP_BACKEND_WINMF_GPU : GCAP_BACKEND_WINMF_CPU;
     strcpy_s(out.backend_name, gpu ? "WinMF GPU" : "WinMF CPU");
     strcpy_s(out.frame_source, gpu ? "DXGI" : "CPU");
     strcpy_s(out.path_name, gpu ? "WinMF GPU Preview" : "WinMF CPU Preview");
+    strcpy_s(out.source_format, gcap_subtype_name(cur_subtype_));
+    strcpy_s(out.render_format, gpu ? "FP16 Scene" : "BGRA8 CPU");
     return true;
 }
 

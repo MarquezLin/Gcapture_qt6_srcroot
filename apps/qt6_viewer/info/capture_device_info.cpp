@@ -16,6 +16,28 @@ static QString pixFmtToString(gcap_pixfmt_t f)
         return "V210";
     case GCAP_FMT_R210:
         return "R210";
+    case GCAP_FMT_Y210:
+        return "Y210";
+    default:
+        return "Unknown";
+    }
+}
+
+static QString sampleFamilyToString(gcap_pixfmt_t f)
+{
+    switch (f)
+    {
+    case GCAP_FMT_NV12:
+        return "YUV420";
+    case GCAP_FMT_YUY2:
+    case GCAP_FMT_Y210:
+    case GCAP_FMT_V210:
+        return "YUV422";
+    case GCAP_FMT_P010:
+        return "YUV420 10-bit";
+    case GCAP_FMT_ARGB:
+    case GCAP_FMT_R210:
+        return "RGB";
     default:
         return "Unknown";
     }
@@ -38,10 +60,12 @@ QString formatCaptureDeviceInfo(const CaptureDeviceInfo &info,
         lines << QString("Resolution    : %1 x %2")
                      .arg(info.signal.width)
                      .arg(info.signal.height);
-        // lines << QString("Frame Rate    : %1 fps")
-        //              .arg(fps, 0, 'f', 2);
-        lines << QString("Pixel Format  : %1")
+        lines << QString("Frame Rate    : %1 fps")
+                     .arg(fps, 0, 'f', 2);
+        lines << QString("Sample Format : %1")
                      .arg(pixFmtToString(info.signal.pixfmt));
+        lines << QString("Sample Family : %1")
+                     .arg(sampleFamilyToString(info.signal.pixfmt));
         lines << QString("Bit Depth     : %1-bit")
                      .arg(info.signal.bit_depth);
     }

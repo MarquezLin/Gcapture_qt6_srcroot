@@ -107,11 +107,15 @@ extern "C"
 
     typedef struct
     {
-        gcap_signal_status_t signal;
-        int active_backend;      // GCAP_BACKEND_*
-        char backend_name[32];   // e.g. WinMF GPU / WinMF CPU / DShow Raw
-        char frame_source[32];   // e.g. DXGI / CPU / RawSink
-        char path_name[64];      // e.g. WinMF GPU Preview / DShow Raw Preview
+        gcap_signal_status_t signal;      // true input signal probe (front-end / current signal)
+        gcap_signal_status_t negotiated;  // negotiated media type actually delivered to app/backend
+        double runtime_fps;               // measured FPS from actual delivered frames (0 = unknown)
+        int active_backend;               // GCAP_BACKEND_*
+        char backend_name[32];            // e.g. WinMF GPU / WinMF CPU / DShow Raw
+        char frame_source[32];            // e.g. DXGI / CPU / RawSink
+        char path_name[64];               // e.g. WinMF GPU Preview / DShow Raw Preview
+        char source_format[32];           // legacy: negotiated media subtype name
+        char render_format[32];           // canvas / scene processing format
     } gcap_runtime_info_t;
 
     typedef enum

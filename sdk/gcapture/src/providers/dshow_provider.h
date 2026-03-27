@@ -77,6 +77,7 @@ private:
     void releaseRenderPipeline();
     void resetPreviewProbeStats();
     void logPreviewProbeStats(uint64_t frameId, int frameW, int frameH, bool directRaw, const char *presentTag);
+    bool refreshSignalProbe(bool force);
 
 private:
     Microsoft::WRL::ComPtr<IGraphBuilder> graph_;
@@ -93,6 +94,13 @@ private:
     int height_ = 0;
     int negotiatedFpsNum_ = 0;
     int negotiatedFpsDen_ = 0;
+    bool signalValid_ = false;
+    int signalW_ = 0;
+    int signalH_ = 0;
+    int signalFpsNum_ = 0;
+    int signalFpsDen_ = 1;
+    GUID signalSubtype_ = GUID_NULL;
+    uint64_t lastSignalProbeMs_ = 0;
 
     std::atomic<bool> running_{false};
     int currentIndex_ = -1;

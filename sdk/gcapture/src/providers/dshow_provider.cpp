@@ -6,6 +6,7 @@
 
 #include "dshow_provider.h"
 #include "dshow_custom_sink.h"
+#include "dshow_signal_probe.h"
 #include <objbase.h>
 #include <dvdmedia.h>
 #include <stdio.h>
@@ -315,40 +316,53 @@ void DShowProvider::setFramePacketCallback(gcap_on_frame_packet_cb pcb, void *us
     user_ = user;
 }
 
+bool DShowProvider::refreshSignalProbe(bool force)
+{
+    if (currentIndex_ < 0)
+        return false;
+
+    const auto nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                 std::chrono::steady_clock::now().time_since_epoch())
+                                                 .count());
+    if (!force && signalValid_ && (nowMs - lastSignalProbeMs_ < 1000))
+        return true;
+
+    DShowSignalProbeResult probe{};
+    if (dshow_probe_current_signal_by_index(currentIndex_, probe) && probe.ok)
+    {
+        signalValid_ = true;
+        signalW_ = probe.width;
+        signalH_ = probe.height;
+        signalFpsNum_ = probe.fps_num;
+        signalFpsDen_ = (probe.fps_den > 0) ? probe.fps_den : 1;
+        signalSubtype_ = probe.subtype;
+        lastSignalProbeMs_ = nowMs;
+        return true;
+    }
+
+    signalValid_ = false;
+    lastSignalProbeMs_ = nowMs;
+    return false;
+}
+
 bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
 {
     std::lock_guard<std::mutex> lock(mtx_);
+    refreshSignalProbe(false);
+
     memset(&out, 0, sizeof(out));
-    out.width = width_;
-    out.height = height_;
-    out.fps_num = negotiatedFpsNum_ > 0 ? negotiatedFpsNum_ : profile_.fps_num;
-    out.fps_den = negotiatedFpsDen_ > 0 ? negotiatedFpsDen_ : profile_.fps_den;
+    const bool useSignal = signalValid_ && signalW_ > 0 && signalH_ > 0;
+    out.width = useSignal ? signalW_ : width_;
+    out.height = useSignal ? signalH_ : height_;
+    out.fps_num = useSignal ? signalFpsNum_ : (negotiatedFpsNum_ > 0 ? negotiatedFpsNum_ : profile_.fps_num);
+    out.fps_den = useSignal ? signalFpsDen_ : (negotiatedFpsDen_ > 0 ? negotiatedFpsDen_ : profile_.fps_den);
     out.range = GCAP_RANGE_UNKNOWN;
     out.csp = GCAP_CSP_UNKNOWN;
     out.hdr = 0;
-
-    if (subtype_ == MEDIASUBTYPE_NV12)
-    {
-        out.pixfmt = GCAP_FMT_NV12;
-        out.bit_depth = 8;
-    }
-    else if (subtype_ == MEDIASUBTYPE_YUY2)
-    {
-        out.pixfmt = GCAP_FMT_YUY2;
-        out.bit_depth = 8;
-    }
-    else if (subtype_ == MEDIASUBTYPE_Y210)
-    {
-        out.pixfmt = GCAP_FMT_Y210;
-        out.bit_depth = 10;
+    out.pixfmt = gcap_subtype_to_pixfmt(useSignal ? signalSubtype_ : subtype_);
+    out.bit_depth = gcap_pixfmt_bitdepth(out.pixfmt);
+    if (out.pixfmt == GCAP_FMT_Y210)
         out.csp = GCAP_CSP_BT709;
-    }
-    else
-    {
-        out.pixfmt = GCAP_FMT_ARGB;
-        out.bit_depth = 8;
-    }
-
     return (out.width > 0 && out.height > 0);
 }
 
@@ -358,12 +372,26 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     if (!getSignalStatus(out.signal))
         return false;
 
+    memset(&out.negotiated, 0, sizeof(out.negotiated));
+    out.negotiated.width = width_;
+    out.negotiated.height = height_;
+    out.negotiated.fps_num = (negotiatedFpsNum_ > 0) ? negotiatedFpsNum_ : profile_.fps_num;
+    out.negotiated.fps_den = (negotiatedFpsDen_ > 0) ? negotiatedFpsDen_ : profile_.fps_den;
+    out.negotiated.pixfmt = gcap_subtype_to_pixfmt(subtype_);
+    out.negotiated.bit_depth = gcap_pixfmt_bitdepth(out.negotiated.pixfmt);
+    out.negotiated.csp = GCAP_CSP_UNKNOWN;
+    out.negotiated.range = GCAP_RANGE_UNKNOWN;
+    out.negotiated.hdr = 0;
+
+    out.runtime_fps = rawRenderer_.runtimeFpsAvg();
     out.active_backend = GCAP_BACKEND_DSHOW;
     strcpy_s(out.backend_name, rawOnlyActive_ ? "DShow Raw" : "DShow");
     strcpy_s(out.path_name, rawOnlyActive_ ? "DShow Raw Preview" : "DShow VMR9 Preview");
     strcpy_s(out.frame_source, callbackSourceName(lastCallbackSource_.load()));
-    if (out.frame_source[0] == '\0' || strcmp(out.frame_source, "Unknown") == 0)
+    if (out.frame_source[0] == 'NULL' || strcmp(out.frame_source, "Unknown") == 0)
         strcpy_s(out.frame_source, rawOnlyActive_ ? "RawSink" : "RendererImage");
+    strcpy_s(out.source_format, gcap_subtype_name(subtype_));
+    strcpy_s(out.render_format, rawOnlyActive_ ? "FP16 Scene" : "Renderer Native");
     return true;
 }
 
@@ -473,10 +501,10 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
     int wantH = profile_.height;
     int wantFpsNum = profile_.fps_num;
     int wantFpsDen = profile_.fps_den > 0 ? profile_.fps_den : 1;
-    const GUID wantSubtype = (profile_.format == GCAP_FMT_NV12) ? MEDIASUBTYPE_NV12
-                              : (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
-                              : (profile_.format == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
-                                                                    : GUID{};
+    const GUID wantSubtype = (profile_.format == GCAP_FMT_NV12)   ? MEDIASUBTYPE_NV12
+                             : (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
+                             : (profile_.format == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
+                                                                  : GUID{};
 
     if (wantW <= 0 && wantH <= 0 && wantFpsNum <= 0 && wantSubtype == GUID{})
         return false;
@@ -971,6 +999,7 @@ bool DShowProvider::open(int index)
     }
 
     currentIndex_ = index;
+    refreshSignalProbe(true);
     updatePreviewRect();
     if (previewHwnd_)
         createRenderPipeline();
@@ -1176,7 +1205,6 @@ bool DShowProvider::captureCallbackFrameToArgb(std::vector<uint8_t> &out, int &w
     h = targetH;
     return true;
 }
-
 
 void DShowProvider::resetPreviewProbeStats()
 {
@@ -1719,7 +1747,7 @@ void DShowProvider::startFramePumpThread()
     stopFramePumpThread();
     framePumpThreadRunning_ = true;
     framePumpThread_ = std::thread([this]
-                                { framePumpLoop(); });
+                                   { framePumpLoop(); });
 }
 
 void DShowProvider::stopFramePumpThread()
@@ -1765,6 +1793,7 @@ bool DShowProvider::start()
         updatePreviewRect();
         vmrWindowless_->RepaintVideo(previewHwnd_, nullptr);
     }
+    refreshSignalProbe(true);
     running_ = true;
     if (vcb_ || pcb_ || previewHwnd_)
         startFramePumpThread();
@@ -1805,4 +1834,10 @@ void DShowProvider::close()
     height_ = 0;
     subtype_ = MEDIASUBTYPE_NULL;
     currentIndex_ = -1;
+    signalValid_ = false;
+    signalW_ = signalH_ = 0;
+    signalFpsNum_ = 0;
+    signalFpsDen_ = 1;
+    signalSubtype_ = GUID_NULL;
+    lastSignalProbeMs_ = 0;
 }

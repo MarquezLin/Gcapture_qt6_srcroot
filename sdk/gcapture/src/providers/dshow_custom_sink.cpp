@@ -225,7 +225,7 @@ STDMETHODIMP DShowCustomSinkPin::QueryAccept(const AM_MEDIA_TYPE *pmt)
 {
     if (!pmt) return E_POINTER;
     if (pmt->majortype != MEDIATYPE_Video) return S_FALSE;
-    if (pmt->subtype == MEDIASUBTYPE_NV12 || pmt->subtype == MEDIASUBTYPE_YUY2) return S_OK;
+    if (pmt->subtype == MEDIASUBTYPE_NV12 || pmt->subtype == MEDIASUBTYPE_YUY2 || pmt->subtype == MEDIASUBTYPE_Y210) return S_OK;
     return S_FALSE;
 }
 

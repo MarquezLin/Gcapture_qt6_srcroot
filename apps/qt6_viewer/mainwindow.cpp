@@ -176,6 +176,12 @@ MainWindow::MainWindow(QWidget *parent)
     previewWindow_->resize(1280, 720);
     previewWindow_->show();
 
+    runtimeStatusTimer_ = new QTimer(this);
+    runtimeStatusTimer_->setInterval(300);
+    connect(runtimeStatusTimer_, &QTimer::timeout, this, [this]()
+            { updateRuntimeStatusUi(); });
+    runtimeStatusTimer_->start();
+
     // if (ui->statusbar)
     //     ui->statCCusbar->showMessage(QStringLiteral("Record mode：Media Foundation (Sink Writer)"));
 
@@ -1019,19 +1025,28 @@ void MainWindow::updateRuntimeStatusUi()
     if (gcap_get_runtime_info(h_, &rt) != GCAP_OK)
         return;
 
-    const double sigFps = (rt.signal.fps_den > 0) ? (double(rt.signal.fps_num) / double(rt.signal.fps_den)) : 0.0;
-    const double actualFps = avgFps_ > 0.0 ? avgFps_ : sigFps;
+    const double inputFps = (rt.signal.fps_den > 0) ? (double(rt.signal.fps_num) / double(rt.signal.fps_den)) : 0.0;
+    const double negotiatedFps = (rt.negotiated.fps_den > 0) ? (double(rt.negotiated.fps_num) / double(rt.negotiated.fps_den)) : 0.0;
+    const double runtimeFps = (rt.runtime_fps > 0.0) ? rt.runtime_fps : avgFps_;
     const QString backend = QString::fromUtf8(rt.backend_name);
     const QString source = QString::fromUtf8(rt.frame_source);
 
-    const QString fmt = QString::fromUtf8(packetFmtName(rt.signal.pixfmt));
-    QString sb = QStringLiteral("Backend: %1 | Source: %2 | Signal %3x%4 %5fps | fmt=%6")
+    const QString inputFmt = QString::fromUtf8(packetFmtName(rt.signal.pixfmt));
+    const QString negotiatedFmt = QString::fromUtf8(packetFmtName(rt.negotiated.pixfmt));
+    const QString renderFmt = QString::fromUtf8(rt.render_format);
+    QString sb = QStringLiteral("Backend: %1 | Source: %2 | InputSignal %3x%4 %5fps %6 | Negotiated %7x%8 %9fps %10 | Render %11 | Runtime %12fps")
                      .arg(backend)
                      .arg(source)
                      .arg(rt.signal.width)
                      .arg(rt.signal.height)
-                     .arg(QString::number(actualFps, 'f', 2))
-                     .arg(fmt);
+                     .arg(QString::number(inputFps, 'f', 2))
+                     .arg(inputFmt)
+                     .arg(rt.negotiated.width)
+                     .arg(rt.negotiated.height)
+                     .arg(QString::number(negotiatedFps, 'f', 2))
+                     .arg(negotiatedFmt)
+                     .arg(renderFmt.isEmpty() ? QStringLiteral("--") : renderFmt)
+                     .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"));
     ui->statusbar->showMessage(sb);
 }
 
