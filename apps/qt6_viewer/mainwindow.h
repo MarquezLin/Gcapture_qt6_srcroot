@@ -118,6 +118,7 @@ private:
     uint64_t framePacketLogCount_ = 0;
     uint64_t framePacketSessionId_ = 0;
     QTimer *runtimeStatusTimer_ = nullptr;
+    QString lastRuntimeStatusText_;
     void updateRuntimeStatusUi();
 
 signals:

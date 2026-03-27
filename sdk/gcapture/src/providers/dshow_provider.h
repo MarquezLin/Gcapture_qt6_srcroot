@@ -149,5 +149,7 @@ private:
     } previewProbeStats_;
 
     bool rawOnlyActive_ = false;
-    int callbackTargetFps_ = 15;
+    // Preview active: use low-frequency ARGB callback to coexist with smooth preview.
+    // No preview active: callback path may still run per-frame.
+    int callbackTargetFps_ = 10;
 };

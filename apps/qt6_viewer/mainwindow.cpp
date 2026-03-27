@@ -177,7 +177,7 @@ MainWindow::MainWindow(QWidget *parent)
     previewWindow_->show();
 
     runtimeStatusTimer_ = new QTimer(this);
-    runtimeStatusTimer_->setInterval(300);
+    runtimeStatusTimer_->setInterval(500);
     connect(runtimeStatusTimer_, &QTimer::timeout, this, [this]()
             { updateRuntimeStatusUi(); });
     runtimeStatusTimer_->start();
@@ -1017,7 +1017,12 @@ void MainWindow::updateRuntimeStatusUi()
 
     if (!h_)
     {
-        ui->statusbar->showMessage(QStringLiteral("Idle"));
+        const QString sb = QStringLiteral("Idle");
+        if (lastRuntimeStatusText_ != sb)
+        {
+            ui->statusbar->showMessage(sb);
+            lastRuntimeStatusText_ = sb;
+        }
         return;
     }
 
@@ -1034,20 +1039,24 @@ void MainWindow::updateRuntimeStatusUi()
     const QString inputFmt = QString::fromUtf8(packetFmtName(rt.signal.pixfmt));
     const QString negotiatedFmt = QString::fromUtf8(packetFmtName(rt.negotiated.pixfmt));
     const QString renderFmt = QString::fromUtf8(rt.render_format);
-    QString sb = QStringLiteral("Backend: %1 | Source: %2 | InputSignal %3x%4 %5fps %6 | Negotiated %7x%8 %9fps %10 | Render %11 | Runtime %12fps")
-                     .arg(backend)
-                     .arg(source)
-                     .arg(rt.signal.width)
-                     .arg(rt.signal.height)
-                     .arg(QString::number(inputFps, 'f', 2))
-                     .arg(inputFmt)
-                     .arg(rt.negotiated.width)
-                     .arg(rt.negotiated.height)
-                     .arg(QString::number(negotiatedFps, 'f', 2))
-                     .arg(negotiatedFmt)
-                     .arg(renderFmt.isEmpty() ? QStringLiteral("--") : renderFmt)
-                     .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"));
-    ui->statusbar->showMessage(sb);
+    const QString sb = QStringLiteral("Backend: %1 | Source: %2 | InputSignal %3x%4 %5fps %6 | Negotiated %7x%8 %9fps %10 | Render %11 | Runtime %12fps")
+                           .arg(backend)
+                           .arg(source)
+                           .arg(rt.signal.width)
+                           .arg(rt.signal.height)
+                           .arg(QString::number(inputFps, 'f', 2))
+                           .arg(inputFmt)
+                           .arg(rt.negotiated.width)
+                           .arg(rt.negotiated.height)
+                           .arg(QString::number(negotiatedFps, 'f', 2))
+                           .arg(negotiatedFmt)
+                           .arg(renderFmt.isEmpty() ? QStringLiteral("--") : renderFmt)
+                           .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"));
+    if (lastRuntimeStatusText_ != sb)
+    {
+        ui->statusbar->showMessage(sb);
+        lastRuntimeStatusText_ = sb;
+    }
 }
 
 void MainWindow::onSnapshot()

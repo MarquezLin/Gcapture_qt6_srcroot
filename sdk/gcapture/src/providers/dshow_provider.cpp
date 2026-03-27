@@ -324,8 +324,16 @@ bool DShowProvider::refreshSignalProbe(bool force)
     const auto nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                                  std::chrono::steady_clock::now().time_since_epoch())
                                                  .count());
-    if (!force && signalValid_ && (nowMs - lastSignalProbeMs_ < 1000))
-        return true;
+    // Preview-only test mode: while capture is actively running, avoid re-probing
+    // the DShow signal on every runtime UI refresh. Re-probe only on force or when
+    // we do not yet have a valid cached signal.
+    if (!force)
+    {
+        if (signalValid_ && (nowMs - lastSignalProbeMs_ < 5000))
+            return true;
+        if (framePumpThreadRunning_ && signalValid_)
+            return true;
+    }
 
     DShowSignalProbeResult probe{};
     if (dshow_probe_current_signal_by_index(currentIndex_, probe) && probe.ok)
@@ -388,10 +396,12 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     strcpy_s(out.backend_name, rawOnlyActive_ ? "DShow Raw" : "DShow");
     strcpy_s(out.path_name, rawOnlyActive_ ? "DShow Raw Preview" : "DShow VMR9 Preview");
     strcpy_s(out.frame_source, callbackSourceName(lastCallbackSource_.load()));
-    if (out.frame_source[0] == 'NULL' || strcmp(out.frame_source, "Unknown") == 0)
+    if (previewHwnd_ && rawOnlyActive_)
+        strcpy_s(out.frame_source, "RawSink Preview");
+    else if (out.frame_source[0] == 0 || strcmp(out.frame_source, "Unknown") == 0)
         strcpy_s(out.frame_source, rawOnlyActive_ ? "RawSink" : "RendererImage");
     strcpy_s(out.source_format, gcap_subtype_name(subtype_));
-    strcpy_s(out.render_format, rawOnlyActive_ ? "FP16 Scene" : "Renderer Native");
+    strcpy_s(out.render_format, (previewHwnd_ && rawOnlyActive_) ? "FP16 Scene PreviewOnly" : (rawOnlyActive_ ? "FP16 Scene" : "Renderer Native"));
     return true;
 }
 
@@ -503,14 +513,12 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
     int wantH = profile_.height;
     int wantFpsNum = profile_.fps_num;
     int wantFpsDen = profile_.fps_den > 0 ? profile_.fps_den : 1;
-    GUID wantSubtype = GUID{};
-    if (signalValid_ && signalSubtype_ != GUID_NULL)
-        wantSubtype = signalSubtype_;
-    else
-        wantSubtype = (profile_.format == GCAP_FMT_NV12)   ? MEDIASUBTYPE_NV12
+    GUID wantSubtype = (profile_.format == GCAP_FMT_NV12)   ? MEDIASUBTYPE_NV12
                      : (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
                      : (profile_.format == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
                                                           : GUID{};
+    if (wantSubtype == GUID{} && signalValid_ && signalSubtype_ != GUID_NULL)
+        wantSubtype = signalSubtype_;
 
     if (wantW <= 0 && wantH <= 0 && wantFpsNum <= 0 && wantSubtype == GUID{})
         return false;
@@ -1304,7 +1312,7 @@ void DShowProvider::framePumpLoop()
         HANDLE frameEvt = rawRenderer_.frameReadyEvent();
         if (frameEvt)
         {
-            const DWORD wr = WaitForSingleObject(frameEvt, static_cast<DWORD>(framePumpSleepMs()));
+            const DWORD wr = WaitForSingleObject(frameEvt, INFINITE);
             if (!framePumpThreadRunning_)
             {
                 logPumpExit("running-cleared-after-wait", wr);
@@ -1359,9 +1367,16 @@ void DShowProvider::framePumpLoop()
 
         std::vector<uint8_t> buf;
         int w = 0, h = 0, stride = 0;
+        const bool previewOnlyActive = (previewHwnd_ != nullptr);
         const bool canUseSharedRaw = pipeline_ && haveRaw && rawOnlyActive_ &&
                                      (rawSubtype == MEDIASUBTYPE_NV12 || rawSubtype == MEDIASUBTYPE_YUY2 || rawSubtype == MEDIASUBTYPE_Y210);
-        const bool needArgb = !canUseSharedRaw && ((vcb != nullptr) || (previewHwnd_ != nullptr));
+        // DS preview + low-frequency ARGB callback coexist mode:
+        //   - preview path still owns render/present timing when a preview window is active
+        //   - frame-packet callback can still run from raw data
+        //   - ARGB video callback is allowed during preview, but only at a low frequency
+        //     so it does not drag preview smoothness back down.
+        const bool allowVideoCallbackPath = (vcb != nullptr);
+        const bool needArgb = !canUseSharedRaw && (allowVideoCallbackPath || previewOnlyActive);
         const bool haveArgb = needArgb ? captureRawFrameToArgb(buf, w, h, stride) : false;
 
         if (haveRaw || haveArgb)
@@ -1633,8 +1648,18 @@ void DShowProvider::framePumpLoop()
 
             if (vcb)
             {
-                const bool wantReadback = shouldDoSharedReadback(ptsNs, frameId, sharedReady, previewHwnd_ != nullptr, vcb != nullptr, lastReadbackPtsNs);
-                if (pipeline_ && wantReadback)
+                const bool wantVideoCallback = shouldDoSharedReadback(ptsNs, frameId, true, previewOnlyActive, vcb != nullptr, lastReadbackPtsNs);
+                if (previewOnlyActive && frameId == 1)
+                {
+                    char msg[256] = {};
+                    double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
+                    sprintf_s(msg,
+                              "[DShow] preview split active: ARGB video callback low-frequency mode while preview is active (%s %dx%d %.2ffps callback~%dfps)",
+                              subtypeName(subtype_), width_, height_, fps, callbackTargetFps());
+                    dshow_log(msg);
+                }
+
+                if (pipeline_ && sharedReady && wantVideoCallback)
                 {
                     gcap_frame_t f{};
                     {
@@ -1645,7 +1670,7 @@ void DShowProvider::framePumpLoop()
                         ++previewProbeStats_.readbackFrames;
                         if (readbackOk)
                         {
-                            if (frameId == 1)
+                            if (frameId == 1 || (previewOnlyActive && previewProbeStats_.callbackFrames == 0))
                             {
                                 char msg[320] = {};
                                 double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
@@ -1657,23 +1682,13 @@ void DShowProvider::framePumpLoop()
                                           canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : (rawSubtype == MEDIASUBTYPE_Y210 ? "Y210-direct" : "YUY2-direct")) : "ARGB-bridge");
                                 OutputDebugStringA(msg);
                             }
-                            else if ((frameId % 120) == 0 && previewHwnd_ != nullptr)
-                            {
-                                char msg[224] = {};
-                                sprintf_s(msg, "[DShow] shared-scene throttled callback: frame=%llu readbacks=%llu callbacks=%llu target~%dfps",
-                                          static_cast<unsigned long long>(frameId),
-                                          static_cast<unsigned long long>(previewProbeStats_.readbackFrames),
-                                          static_cast<unsigned long long>(previewProbeStats_.callbackFrames + 1),
-                                          callbackTargetFps());
-                                dshow_log(msg);
-                            }
                             vcb(&f, user);
                             ++previewProbeStats_.callbackFrames;
                             ctx_->Unmap(pipeline_->rt_stage_.Get(), 0);
                         }
                     }
                 }
-                else if (haveArgb)
+                else if (haveArgb && wantVideoCallback)
                 {
                     gcap_frame_t f{};
                     f.data[0] = buf.data();
@@ -1684,7 +1699,7 @@ void DShowProvider::framePumpLoop()
                     f.format = GCAP_FMT_ARGB;
                     f.pts_ns = ptsNs;
                     f.frame_id = frameId;
-                    if (f.frame_id == 1)
+                    if (f.frame_id == 1 || (previewOnlyActive && previewProbeStats_.callbackFrames == 0))
                     {
                         char msg[256] = {};
                         double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
@@ -1710,28 +1725,33 @@ void DShowProvider::framePumpLoop()
 
 bool DShowProvider::shouldDoSharedReadback(uint64_t ptsNs, uint64_t frameId, bool sharedReady, bool havePreview, bool haveCallback, uint64_t &lastReadbackPtsNs) const
 {
+    UNREFERENCED_PARAMETER(frameId);
+
     if (!sharedReady || !haveCallback)
         return false;
 
+    // No preview window: keep the callback/readback path fully enabled.
     if (!havePreview)
         return true;
 
+    // Preview window active: allow a low-frequency ARGB callback to coexist with smooth preview.
     const int targetFps = callbackTargetFps();
     if (targetFps <= 0)
         return false;
 
-    if (frameId <= 3)
+    if (lastReadbackPtsNs == 0)
     {
         lastReadbackPtsNs = ptsNs;
         return true;
     }
 
-    const uint64_t kMinReadbackIntervalNs = static_cast<uint64_t>(1000000000.0 / static_cast<double>(targetFps));
-    if (lastReadbackPtsNs == 0 || (ptsNs - lastReadbackPtsNs) >= kMinReadbackIntervalNs)
+    const uint64_t minIntervalNs = static_cast<uint64_t>(1000000000.0 / static_cast<double>(targetFps));
+    if (ptsNs > lastReadbackPtsNs && (ptsNs - lastReadbackPtsNs) >= minIntervalNs)
     {
         lastReadbackPtsNs = ptsNs;
         return true;
     }
+
     return false;
 }
 
@@ -1803,7 +1823,7 @@ bool DShowProvider::start()
     dshow_log("[DShow] start() OK: mediaControl_->Run()");
     {
         char msg[192] = {};
-        sprintf_s(msg, "[DShow] callback target fps=%d (env GCAP_DSHOW_CALLBACK_FPS; 0=off, 5/10/15/30=test)", callbackTargetFps());
+        sprintf_s(msg, "[DShow] callback mode=preview-split low-frequency, target_fps=%d (preview on) / per-frame (preview off)", callbackTargetFps());
         dshow_log(msg);
     }
     if (vmrWindowless_ && previewHwnd_)
