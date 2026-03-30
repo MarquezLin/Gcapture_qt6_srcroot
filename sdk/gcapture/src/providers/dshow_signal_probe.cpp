@@ -1127,6 +1127,7 @@ const char *gcap_pixfmt_name(gcap_pixfmt_t f)
     }
 }
 
+
 const char *gcap_subtype_name(const GUID &sub)
 {
     if (sub == MEDIASUBTYPE_NV12)
@@ -1150,116 +1151,179 @@ const char *gcap_subtype_name(const GUID &sub)
     return "Unknown";
 }
 
+namespace
+{
+    static std::wstring get_clsid_display_name(const CLSID &clsid)
+    {
+        const std::wstring clsidStr = guid_to_wstring(clsid);
+        if (clsidStr.empty())
+            return L"";
+        return read_reg_default_string(HKEY_CLASSES_ROOT, L"CLSID\\" + clsidStr);
+    }
+
+    static bool collect_property_pages_for_target(IUnknown *unk, std::vector<GUID> &outPages)
+    {
+        outPages.clear();
+        if (!unk)
+            return false;
+
+        ComPtr<ISpecifyPropertyPages> spp;
+        HRESULT hr = unk->QueryInterface(IID_PPV_ARGS(&spp));
+        if (FAILED(hr) || !spp)
+            return false;
+
+        CAUUID pages = {};
+        hr = spp->GetPages(&pages);
+        if (FAILED(hr) || !pages.pElems || pages.cElems == 0)
+        {
+            if (pages.pElems)
+                CoTaskMemFree(pages.pElems);
+            return false;
+        }
+
+        for (ULONG i = 0; i < pages.cElems; ++i)
+            outPages.push_back(pages.pElems[i]);
+        CoTaskMemFree(pages.pElems);
+        return !outPages.empty();
+    }
+
+    static bool open_property_page_worker(int devIndex, const wchar_t *pageName, bool capturePin, const wchar_t *windowTitle)
+    {
+        if (!pageName || !*pageName)
+            return false;
+
+        const std::wstring wantedName(pageName);
+        try
+        {
+            std::thread worker([devIndex, wantedName, capturePin, windowTitle]() {
+                HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+                const bool needUninit = SUCCEEDED(hr);
+                if (hr != S_OK && hr != S_FALSE && hr != RPC_E_CHANGED_MODE)
+                {
+                    dshow_probe_log("OleFrame CoInitializeEx(APARTMENTTHREADED) failed hr=0x" + hr_to_hex(hr));
+                    return;
+                }
+
+                ComPtr<IMoniker> moniker;
+                ComPtr<IBaseFilter> filter;
+                if (!find_video_input_filter_by_index(devIndex, moniker, filter) || !filter)
+                {
+                    dshow_probe_log("OleFrame failed to bind filter for device index=" + std::to_string(devIndex));
+                    if (needUninit)
+                        CoUninitialize();
+                    return;
+                }
+
+                IUnknown *targetUnk = filter.Get();
+                ComPtr<IGraphBuilder> graph;
+                ComPtr<ICaptureGraphBuilder2> capBuilder;
+                ComPtr<IPin> pin;
+                if (capturePin)
+                {
+                    hr = CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&graph));
+                    if (SUCCEEDED(hr) && graph)
+                    {
+                        graph->AddFilter(filter.Get(), L"VideoCapture");
+                        hr = CoCreateInstance(CLSID_CaptureGraphBuilder2, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&capBuilder));
+                        if (SUCCEEDED(hr) && capBuilder)
+                        {
+                            capBuilder->SetFiltergraph(graph.Get());
+                            pin.Attach(find_capture_pin(capBuilder.Get(), filter.Get()));
+                        }
+                    }
+                    if (!pin)
+                    {
+                        dshow_probe_log("OleFrame capture pin not found for device index=" + std::to_string(devIndex));
+                        if (needUninit)
+                            CoUninitialize();
+                        return;
+                    }
+                    targetUnk = pin.Get();
+                }
+
+                std::vector<GUID> pages;
+                if (!collect_property_pages_for_target(targetUnk, pages))
+                {
+                    dshow_probe_log("OleFrame target GetPages failed or returned empty list");
+                    if (needUninit)
+                        CoUninitialize();
+                    return;
+                }
+
+                GUID matched = GUID_NULL;
+                for (const GUID &page : pages)
+                {
+                    const std::wstring displayName = get_clsid_display_name(page);
+                    if (!displayName.empty() && _wcsicmp(displayName.c_str(), wantedName.c_str()) == 0)
+                    {
+                        matched = page;
+                        break;
+                    }
+                }
+
+                if (matched == GUID_NULL)
+                {
+                    dshow_probe_log("OleFrame target page name not found: " + wide_to_utf8(wantedName.c_str()));
+                    if (needUninit)
+                        CoUninitialize();
+                    return;
+                }
+
+                GUID *pageBuf = (GUID *)CoTaskMemAlloc(sizeof(GUID));
+                if (!pageBuf)
+                {
+                    dshow_probe_log("OleFrame CoTaskMemAlloc failed for selected page");
+                    if (needUninit)
+                        CoUninitialize();
+                    return;
+                }
+                pageBuf[0] = matched;
+                IUnknown *objects[1] = {targetUnk};
+
+                dshow_probe_log("OleFrame launching OleCreatePropertyFrame for page: " + wide_to_utf8(wantedName.c_str()));
+                hr = OleCreatePropertyFrame(nullptr,
+                                            120,
+                                            120,
+                                            windowTitle,
+                                            1,
+                                            objects,
+                                            1,
+                                            pageBuf,
+                                            GetUserDefaultLCID(),
+                                            0,
+                                            nullptr);
+                if (SUCCEEDED(hr))
+                    dshow_probe_log("OleFrame OleCreatePropertyFrame returned OK for page: " + wide_to_utf8(wantedName.c_str()));
+                else
+                    dshow_probe_log("OleFrame OleCreatePropertyFrame failed hr=0x" + hr_to_hex(hr) + " page=" + wide_to_utf8(wantedName.c_str()));
+
+                CoTaskMemFree(pageBuf);
+                if (needUninit)
+                    CoUninitialize();
+                dshow_probe_log("OleFrame thread exit");
+            });
+
+            worker.detach();
+            dshow_probe_log("OleFrame launch accepted: worker thread detached");
+            return true;
+        }
+        catch (...)
+        {
+            dshow_probe_log("OleFrame launch failed: exception while creating worker thread");
+            return false;
+        }
+    }
+}
 
 bool dshow_open_vendor_property_page_by_index(int devIndex)
 {
-    try
-    {
-        std::thread worker([devIndex]() {
-            HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-            const bool needUninit = SUCCEEDED(hr);
+    return open_property_page_worker(devIndex, L"SC0710 PCI, Custom Property Page", false, L"SC0710 Vendor Property Page");
+}
 
-            if (hr != S_OK && hr != S_FALSE && hr != RPC_E_CHANGED_MODE)
-            {
-                dshow_probe_log("OleFrame CoInitializeEx(APARTMENTTHREADED) failed hr=0x" + hr_to_hex(hr));
-                return;
-            }
-
-            dshow_probe_log("OleFrame thread: COM apartment ready");
-
-            ComPtr<IMoniker> moniker;
-            ComPtr<IBaseFilter> filter;
-            if (!find_video_input_filter_by_index(devIndex, moniker, filter) || !filter)
-            {
-                dshow_probe_log("OleFrame failed to bind filter for device index=" + std::to_string(devIndex));
-                if (needUninit)
-                    CoUninitialize();
-                return;
-            }
-
-            ComPtr<ISpecifyPropertyPages> spp;
-            hr = filter->QueryInterface(IID_PPV_ARGS(&spp));
-            if (FAILED(hr) || !spp)
-            {
-                dshow_probe_log("OleFrame filter QueryInterface(ISpecifyPropertyPages) failed hr=0x" + hr_to_hex(hr));
-                if (needUninit)
-                    CoUninitialize();
-                return;
-            }
-
-            CAUUID pages = {};
-            hr = spp->GetPages(&pages);
-            if (FAILED(hr) || !pages.pElems || pages.cElems == 0)
-            {
-                dshow_probe_log("OleFrame filter GetPages failed hr=0x" + hr_to_hex(hr));
-                if (pages.pElems)
-                    CoTaskMemFree(pages.pElems);
-                if (needUninit)
-                    CoUninitialize();
-                return;
-            }
-
-            CAUUID vendorPages = {};
-            vendorPages.cElems = 0;
-            vendorPages.pElems = (GUID*)CoTaskMemAlloc(sizeof(GUID) * pages.cElems);
-            if (!vendorPages.pElems)
-            {
-                dshow_probe_log("OleFrame CoTaskMemAlloc for vendor page list failed");
-                CoTaskMemFree(pages.pElems);
-                if (needUninit)
-                    CoUninitialize();
-                return;
-            }
-
-            for (ULONG i = 0; i < pages.cElems; ++i)
-            {
-                if (pages.pElems[i] == DSHOW_SC0710_VENDOR_PAGE)
-                    vendorPages.pElems[vendorPages.cElems++] = pages.pElems[i];
-            }
-            CoTaskMemFree(pages.pElems);
-
-            if (vendorPages.cElems == 0)
-            {
-                dshow_probe_log("OleFrame vendor page GUID not found on filter");
-                CoTaskMemFree(vendorPages.pElems);
-                if (needUninit)
-                    CoUninitialize();
-                return;
-            }
-
-            IUnknown *objects[1] = { filter.Get() };
-            dshow_probe_log("OleFrame launching OleCreatePropertyFrame for SC0710 vendor page (non-blocking)");
-            hr = OleCreatePropertyFrame(
-                nullptr,
-                120,
-                120,
-                L"SC0710 Vendor Property Page",
-                1,
-                objects,
-                vendorPages.cElems,
-                vendorPages.pElems,
-                GetUserDefaultLCID(),
-                0,
-                nullptr);
-
-            if (SUCCEEDED(hr))
-                dshow_probe_log("OleFrame OleCreatePropertyFrame returned OK");
-            else
-                dshow_probe_log("OleFrame OleCreatePropertyFrame failed hr=0x" + hr_to_hex(hr));
-
-            CoTaskMemFree(vendorPages.pElems);
-            if (needUninit)
-                CoUninitialize();
-            dshow_probe_log("OleFrame thread exit");
-        });
-
-        worker.detach();
-        dshow_probe_log("OleFrame launch accepted: worker thread detached");
-        return true;
-    }
-    catch (...)
-    {
-        dshow_probe_log("OleFrame launch failed: exception while creating worker thread");
-        return false;
-    }
+bool dshow_open_named_property_page_by_index(int devIndex, const wchar_t *pageName, bool capturePin)
+{
+    return open_property_page_worker(devIndex,
+                                     pageName,
+                                     capturePin,
+                                     capturePin ? L"Capture Pin Property Page" : L"Filter Property Page");
 }

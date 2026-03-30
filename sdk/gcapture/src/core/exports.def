@@ -24,3 +24,4 @@ EXPORTS
     gcap_enum_audio_devices
     gcap_get_active_backend
     gcap_open_vendor_property_page
+    gcap_open_named_property_page

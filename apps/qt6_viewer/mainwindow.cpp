@@ -971,11 +971,11 @@ void MainWindow::onFrameArrived(const QImage &img)
                                       << QStringLiteral("YUY2 800x600 60.00 fps")
                                       << QStringLiteral("YUY2 1024x768 60.00 fps")
                                       << QStringLiteral("YUY2 1152x864 75.00 fps");
-        captureInfo_.propertyPages << QStringLiteral("AVerXBarPropertyPage")
-                                   << QStringLiteral("AVerCertificateProp")
-                                   << QStringLiteral("VideoDecoder Property Page")
-                                   << QStringLiteral("VideoProcAmp Property Page")
-                                   << QStringLiteral("AVerStreamFormatProp");
+        captureInfo_.propertyPages << QStringLiteral("AVerXBarPropertyPage — Filter")
+                                   << QStringLiteral("AVerCertificateProp — Filter")
+                                   << QStringLiteral("VideoDecoder Property Page — Filter")
+                                   << QStringLiteral("VideoProcAmp Property Page — Filter")
+                                   << QStringLiteral("AVerStreamFormatProp — Capture Pin");
     }
 
     // 4. Display / output info
@@ -1183,6 +1183,27 @@ void MainWindow::onShowInputInfo()
                 {
                     recordAudioDeviceIdUtf8_ = id;
                     qDebug() << "[AudioSelect] MainWindow store id=" << id; });
+        connect(infoDlg_, &inputinfodialog::openPropertyPageRequested,
+                this, [this](const QString &pageNameUtf8, bool capturePin)
+                {
+#ifdef _WIN32
+                    const int devIndex = (ui && ui->comboDevice) ? ui->comboDevice->currentIndex() : 0;
+                    MainWindow::postLog(QStringLiteral("[SignalInfo] open property page request: devIndex=%1 page=%2 target=%3")
+                                            .arg(devIndex)
+                                            .arg(pageNameUtf8)
+                                            .arg(capturePin ? QStringLiteral("Capture Pin") : QStringLiteral("Filter")));
+                    const bool ok = (gcap_open_named_property_page(devIndex, pageNameUtf8.toUtf8().constData(), capturePin ? 1 : 0) != 0);
+                    if (!ok)
+                    {
+                        QMessageBox::warning(this,
+                                             tr("Property Page"),
+                                             tr("Open property page failed: %1").arg(pageNameUtf8));
+                    }
+#else
+                    Q_UNUSED(pageNameUtf8);
+                    Q_UNUSED(capturePin);
+#endif
+                });
     }
 
     infoDlg_->setWindowTitle(tr("Signal Info"));
@@ -1233,15 +1254,16 @@ void MainWindow::onShowInputInfo()
                                       << QStringLiteral("YUY2 800x600 60.00 fps")
                                       << QStringLiteral("YUY2 1024x768 60.00 fps")
                                       << QStringLiteral("YUY2 1152x864 75.00 fps");
-        captureInfo_.propertyPages << QStringLiteral("AVerXBarPropertyPage")
-                                   << QStringLiteral("AVerCertificateProp")
-                                   << QStringLiteral("VideoDecoder Property Page")
-                                   << QStringLiteral("VideoProcAmp Property Page")
-                                   << QStringLiteral("AVerStreamFormatProp");
+        captureInfo_.propertyPages << QStringLiteral("AVerXBarPropertyPage — Filter")
+                                   << QStringLiteral("AVerCertificateProp — Filter")
+                                   << QStringLiteral("VideoDecoder Property Page — Filter")
+                                   << QStringLiteral("VideoProcAmp Property Page — Filter")
+                                   << QStringLiteral("AVerStreamFormatProp — Capture Pin");
     }
 
     lastInfoText_ = formatCaptureDeviceInfo(captureInfo_, avgFps_);
     infoDlg_->setInfoText(lastInfoText_);
+    infoDlg_->setPropertyPages(captureInfo_.propertyPages);
     infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
     infoDlg_->show();
     infoDlg_->raise();

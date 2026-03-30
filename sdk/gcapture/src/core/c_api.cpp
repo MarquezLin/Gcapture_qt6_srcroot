@@ -141,6 +141,15 @@ extern "C"
         return dshow_open_vendor_property_page_by_index(device_index) ? 1 : 0;
     }
 
+    int gcap_open_named_property_page(int device_index, const char *page_name_utf8, int capture_pin)
+    {
+        if (!page_name_utf8 || !*page_name_utf8)
+            return 0;
+        wchar_t wname[256] = {};
+        MultiByteToWideChar(CP_UTF8, 0, page_name_utf8, -1, wname, 256);
+        return dshow_open_named_property_page_by_index(device_index, wname, capture_pin != 0) ? 1 : 0;
+    }
+
     gcap_status_t gcap_start(gcap_handle h)
     {
         if (!h)

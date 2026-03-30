@@ -4,6 +4,7 @@
 #include <QDialog>
 #include <QString>
 #include <vector>
+#include <QListWidget>
 
 struct gcap_audio_device_t;
 
@@ -23,15 +24,18 @@ public:
     void setCurrentAudioDevice(const QString &deviceIdUtf8);
 
     void setInfoText(const QString &text);
+    void setPropertyPages(const QStringList &pages);
 
 signals:
     // Selected WASAPI endpoint id (UTF-8). Empty string means "system default".
     void audioDeviceSelected(const QString &deviceIdUtf8);
     void refreshRequested();
+    void openPropertyPageRequested(const QString &pageNameUtf8, bool capturePin);
 
 private slots:
     void onAudioDeviceChanged(int index);
     void onRefreshClicked();
+    void onOpenSelectedPropertyPage();
 
 private:
     Ui::inputinfodialog *ui;
@@ -40,6 +44,8 @@ private:
     bool initializing_ = false;
     QString currentAudioDeviceIdUtf8_;
     void refreshAudioDevices(bool keepSelection);
+    static QString propertyPageNameFromDisplay(const QString &display);
+    static bool propertyPageIsCapturePin(const QString &display);
 };
 
 #endif // INPUTINFODIALOG_H

@@ -42,3 +42,4 @@ const char *gcap_pixfmt_name(gcap_pixfmt_t f);
 const char *gcap_subtype_name(const GUID &sub);
 
 bool dshow_open_vendor_property_page_by_index(int devIndex);
+bool dshow_open_named_property_page_by_index(int devIndex, const wchar_t *pageName, bool capturePin);

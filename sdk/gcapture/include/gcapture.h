@@ -254,6 +254,7 @@ extern "C"
     GCAP_API gcap_status_t gcap_set_preview(gcap_handle h, const gcap_preview_desc_t *desc);
     // Open vendor-specific DShow property page for a device index (test / debug helper).
     GCAP_API int gcap_open_vendor_property_page(int device_index);
+    GCAP_API int gcap_open_named_property_page(int device_index, const char *page_name_utf8, int capture_pin);
 
 #ifdef __cplusplus
 }
