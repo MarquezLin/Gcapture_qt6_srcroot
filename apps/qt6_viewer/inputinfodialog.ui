@@ -11,11 +11,15 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Dialog</string>
+   <string>Signal Info</string>
   </property>
   <layout class="QGridLayout" name="gridLayout">
    <item row="0" column="0">
-    <widget class="QPlainTextEdit" name="plainTextInfo"/>
+    <widget class="QPlainTextEdit" name="plainTextInfo">
+     <property name="readOnly">
+      <bool>true</bool>
+     </property>
+    </widget>
    </item>
    <item row="1" column="0">
     <widget class="QComboBox" name="comboAudioDevice"/>

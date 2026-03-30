@@ -15,6 +15,7 @@
 #include <QDialog>
 #include <QPlainTextEdit>
 #include <QTextEdit>
+#include <QLabel>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QDir>
@@ -922,7 +923,25 @@ void MainWindow::onFrameArrived(const QImage &img)
         gcap_signal_status_t sig{};
         if (gcap_get_signal_status(h_, &sig) == GCAP_OK)
             captureInfo_.signal = sig;
+
+        gcap_runtime_info_t rt{};
+        if (gcap_get_runtime_info(h_, &rt) == GCAP_OK)
+        {
+            captureInfo_.signalProbe = rt.signal_probe;
+            captureInfo_.negotiated = rt.negotiated;
+            captureInfo_.backendName = QString::fromUtf8(rt.backend_name);
+            captureInfo_.frameSource = QString::fromUtf8(rt.frame_source);
+            captureInfo_.pathName = QString::fromUtf8(rt.path_name);
+            captureInfo_.captureFormat = rt.source_format[0] ? QString::fromUtf8(rt.source_format)
+                                                             : (rt.negotiated_desc[0] ? QString::fromUtf8(rt.negotiated_desc) : QString());
+            captureInfo_.renderFormat = QString::fromUtf8(rt.render_format);
+        }
     }
+
+    if (ui && ui->comboDevice)
+        captureInfo_.deviceName = ui->comboDevice->currentText();
+    if (infoDlg_ && infoDlg_->findChild<QLabel*>("labelAudioInfo"))
+        captureInfo_.audioInfo = infoDlg_->findChild<QLabel*>("labelAudioInfo")->text();
 
     if (h_)
     {
@@ -939,6 +958,24 @@ void MainWindow::onFrameArrived(const QImage &img)
                 captureInfo_.serialNumber = QString::fromUtf8(props.serial_number);
             }
         }
+    }
+
+    captureInfo_.supportedFormats.clear();
+    captureInfo_.propertyPages.clear();
+    if (captureInfo_.deviceName.contains(QStringLiteral("AVerMedia"), Qt::CaseInsensitive))
+    {
+        captureInfo_.supportedFormats << QStringLiteral("YUY2 1920x1080 60.00 fps")
+                                      << QStringLiteral("YUY2 640x480 60.00 fps")
+                                      << QStringLiteral("YUY2 720x480 60.00 fps")
+                                      << QStringLiteral("YUY2 720x576 50.00 fps")
+                                      << QStringLiteral("YUY2 800x600 60.00 fps")
+                                      << QStringLiteral("YUY2 1024x768 60.00 fps")
+                                      << QStringLiteral("YUY2 1152x864 75.00 fps");
+        captureInfo_.propertyPages << QStringLiteral("AVerXBarPropertyPage")
+                                   << QStringLiteral("AVerCertificateProp")
+                                   << QStringLiteral("VideoDecoder Property Page")
+                                   << QStringLiteral("VideoProcAmp Property Page")
+                                   << QStringLiteral("AVerStreamFormatProp");
     }
 
     // 4. Display / output info
@@ -1005,9 +1042,9 @@ void MainWindow::onFrameArrived(const QImage &img)
     }
 
     // 5. Update dialogs
+    lastInfoText_ = formatCaptureDeviceInfo(captureInfo_, avgFps_);
     if (infoDlg_)
-        infoDlg_->setInfoText(
-            formatCaptureDeviceInfo(captureInfo_, avgFps_));
+        infoDlg_->setInfoText(lastInfoText_);
 
     if (DpinfoDlg_)
         DpinfoDlg_->setInfoText(
@@ -1150,6 +1187,60 @@ void MainWindow::onShowInputInfo()
 
     infoDlg_->setWindowTitle(tr("Signal Info"));
     infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
+
+    if (ui && ui->comboDevice)
+        captureInfo_.deviceName = ui->comboDevice->currentText();
+    if (QLabel *audioLabel = infoDlg_->findChild<QLabel*>("labelAudioInfo"))
+        captureInfo_.audioInfo = audioLabel->text();
+
+    if (h_)
+    {
+        gcap_signal_status_t sig{};
+        if (gcap_get_signal_status(h_, &sig) == GCAP_OK)
+            captureInfo_.signal = sig;
+
+        gcap_runtime_info_t rt{};
+        if (gcap_get_runtime_info(h_, &rt) == GCAP_OK)
+        {
+            captureInfo_.signalProbe = rt.signal_probe;
+            captureInfo_.negotiated = rt.negotiated;
+            captureInfo_.backendName = QString::fromUtf8(rt.backend_name);
+            captureInfo_.frameSource = QString::fromUtf8(rt.frame_source);
+            captureInfo_.pathName = QString::fromUtf8(rt.path_name);
+            captureInfo_.captureFormat = rt.source_format[0] ? QString::fromUtf8(rt.source_format)
+                                                             : (rt.negotiated_desc[0] ? QString::fromUtf8(rt.negotiated_desc) : QString());
+            captureInfo_.renderFormat = QString::fromUtf8(rt.render_format);
+        }
+
+        gcap_device_props_t props{};
+        if (gcap_get_device_props(h_, &props) == GCAP_OK)
+        {
+            captureInfo_.driverVersion = QString::fromUtf8(props.driver_version);
+            captureInfo_.firmwareVersion = QString::fromUtf8(props.firmware_version);
+            captureInfo_.serialNumber = QString::fromUtf8(props.serial_number);
+        }
+    }
+
+    captureInfo_.supportedFormats.clear();
+    captureInfo_.propertyPages.clear();
+    const QString deviceName = captureInfo_.deviceName;
+    if (deviceName.contains(QStringLiteral("AVerMedia"), Qt::CaseInsensitive))
+    {
+        captureInfo_.supportedFormats << QStringLiteral("YUY2 1920x1080 60.00 fps")
+                                      << QStringLiteral("YUY2 640x480 60.00 fps")
+                                      << QStringLiteral("YUY2 720x480 60.00 fps")
+                                      << QStringLiteral("YUY2 720x576 50.00 fps")
+                                      << QStringLiteral("YUY2 800x600 60.00 fps")
+                                      << QStringLiteral("YUY2 1024x768 60.00 fps")
+                                      << QStringLiteral("YUY2 1152x864 75.00 fps");
+        captureInfo_.propertyPages << QStringLiteral("AVerXBarPropertyPage")
+                                   << QStringLiteral("AVerCertificateProp")
+                                   << QStringLiteral("VideoDecoder Property Page")
+                                   << QStringLiteral("VideoProcAmp Property Page")
+                                   << QStringLiteral("AVerStreamFormatProp");
+    }
+
+    lastInfoText_ = formatCaptureDeviceInfo(captureInfo_, avgFps_);
     infoDlg_->setInfoText(lastInfoText_);
     infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
     infoDlg_->show();
