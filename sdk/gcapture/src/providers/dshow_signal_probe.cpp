@@ -7,12 +7,17 @@
 #include <cmath>
 #include <string>
 #include <sstream>
+#include <atomic>
+#include <thread>
 #include <ks.h>
 #include <ksproxy.h>
 #include <olectl.h>
+#include <ocidl.h>
 #include <strsafe.h>
 #include <windows.h>
 #include <initguid.h>
+
+#pragma comment(lib, "Version.lib")
 
 using Microsoft::WRL::ComPtr;
 
@@ -98,7 +103,527 @@ namespace
         return std::wstring(buf);
     }
 
-    static void log_clsid_registry_info(const CLSID &clsid)
+    static std::wstring resolve_module_path_from_inproc(const std::wstring &inproc)
+    {
+        if (inproc.empty())
+            return L"";
+
+        wchar_t expanded[1024] = {};
+        DWORD n = ExpandEnvironmentStringsW(inproc.c_str(), expanded,
+                                            static_cast<DWORD>(sizeof(expanded) / sizeof(expanded[0])));
+        std::wstring path = (n > 0 && n < (sizeof(expanded) / sizeof(expanded[0])))
+                                ? std::wstring(expanded)
+                                : inproc;
+
+        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
+            return path;
+
+        wchar_t systemDir[MAX_PATH] = {};
+        UINT sysLen = GetSystemDirectoryW(systemDir, MAX_PATH);
+        if (sysLen > 0 && sysLen < MAX_PATH)
+        {
+            std::wstring candidate = std::wstring(systemDir) + L"\\" + path;
+            if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES)
+                return candidate;
+        }
+
+        wchar_t modulePath[MAX_PATH] = {};
+        HMODULE hMod = NULL;
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               inproc.c_str(), &hMod) && hMod)
+        {
+            if (GetModuleFileNameW(hMod, modulePath, MAX_PATH) > 0)
+                return std::wstring(modulePath);
+        }
+
+        return path;
+    }
+
+    static std::string version_msls_to_string(DWORD ms, DWORD ls)
+    {
+        std::ostringstream oss;
+        oss << HIWORD(ms) << "." << LOWORD(ms) << "." << HIWORD(ls) << "." << LOWORD(ls);
+        return oss.str();
+    }
+
+
+    static std::string format_u64(unsigned long long v)
+    {
+        char buf[64] = {};
+        sprintf_s(buf, sizeof(buf), "%llu", v);
+        return std::string(buf);
+    }
+
+    static std::wstring get_directory_part(const std::wstring &path)
+    {
+        const std::wstring::size_type pos = path.find_last_of(L"\\/");
+        if (pos == std::wstring::npos)
+            return L"";
+        return path.substr(0, pos);
+    }
+
+    static std::wstring get_filename_part(const std::wstring &path)
+    {
+        const std::wstring::size_type pos = path.find_last_of(L"\\/");
+        if (pos == std::wstring::npos)
+            return path;
+        return path.substr(pos + 1);
+    }
+
+    static bool starts_with_case_insensitive(const std::wstring &s, const std::wstring &prefix)
+    {
+        if (s.size() < prefix.size())
+            return false;
+        for (size_t i = 0; i < prefix.size(); ++i)
+        {
+            if (towlower(s[i]) != towlower(prefix[i]))
+                return false;
+        }
+        return true;
+    }
+
+    static std::string read_version_string_field(const std::wstring &path, const wchar_t *fieldName)
+    {
+        DWORD handle = 0;
+        DWORD verSize = GetFileVersionInfoSizeW(path.c_str(), &handle);
+        if (verSize == 0)
+            return std::string();
+
+        std::vector<BYTE> verData(verSize);
+        if (!GetFileVersionInfoW(path.c_str(), 0, verSize, verData.data()))
+            return std::string();
+
+        struct LANGANDCODEPAGE { WORD wLanguage; WORD wCodePage; } *translate = NULL;
+        UINT cbTranslate = 0;
+        if (!VerQueryValueW(verData.data(), L"\\VarFileInfo\\Translation",
+                            reinterpret_cast<LPVOID *>(&translate), &cbTranslate) ||
+            !translate || cbTranslate < sizeof(LANGANDCODEPAGE))
+            return std::string();
+
+        wchar_t subBlock[256] = {};
+        StringCchPrintfW(subBlock, sizeof(subBlock) / sizeof(subBlock[0]),
+                         L"\\StringFileInfo\\%04x%04x\\%s",
+                         translate[0].wLanguage, translate[0].wCodePage, fieldName);
+
+        wchar_t *value = NULL;
+        UINT valueLen = 0;
+        if (VerQueryValueW(verData.data(), subBlock,
+                           reinterpret_cast<LPVOID *>(&value), &valueLen) &&
+            value && valueLen > 0)
+            return wide_to_utf8(value);
+        return std::string();
+    }
+
+    static void log_pe_exports(const std::wstring &path)
+    {
+        HMODULE h = LoadLibraryExW(path.c_str(), NULL, LOAD_LIBRARY_AS_DATAFILE | DONT_RESOLVE_DLL_REFERENCES);
+        if (!h)
+        {
+            dshow_probe_log("  Exports=unavailable(load failed)");
+            return;
+        }
+
+        const BYTE *base = reinterpret_cast<const BYTE *>(h);
+        const IMAGE_DOS_HEADER *dos = reinterpret_cast<const IMAGE_DOS_HEADER *>(base);
+        if (!dos || dos->e_magic != IMAGE_DOS_SIGNATURE)
+        {
+            dshow_probe_log("  Exports=unavailable(bad dos header)");
+            FreeLibrary(h);
+            return;
+        }
+
+        const IMAGE_NT_HEADERS *nt = reinterpret_cast<const IMAGE_NT_HEADERS *>(base + dos->e_lfanew);
+        if (!nt || nt->Signature != IMAGE_NT_SIGNATURE)
+        {
+            dshow_probe_log("  Exports=unavailable(bad nt header)");
+            FreeLibrary(h);
+            return;
+        }
+
+        const IMAGE_DATA_DIRECTORY &dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+        if (dir.VirtualAddress == 0 || dir.Size == 0)
+        {
+            dshow_probe_log("  Exports=count=0");
+            FreeLibrary(h);
+            return;
+        }
+
+        const IMAGE_EXPORT_DIRECTORY *exp = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY *>(base + dir.VirtualAddress);
+        dshow_probe_log(std::string("  Exports=count=") + format_u64(exp->NumberOfNames));
+        if (exp->NumberOfNames > 0 && exp->AddressOfNames)
+        {
+            const DWORD *nameRVAs = reinterpret_cast<const DWORD *>(base + exp->AddressOfNames);
+            const DWORD limit = exp->NumberOfNames < 64 ? exp->NumberOfNames : 64;
+            for (DWORD i = 0; i < limit; ++i)
+            {
+                const char *namePtr = reinterpret_cast<const char *>(base + nameRVAs[i]);
+                if (!namePtr)
+                    continue;
+                dshow_probe_log(std::string("  Export[") + format_u64(i) + "]=" + namePtr);
+            }
+            if (exp->NumberOfNames > limit)
+                dshow_probe_log("  Export[...] truncated");
+        }
+        FreeLibrary(h);
+    }
+
+    static void log_sibling_modules(const std::wstring &resolvedPath)
+    {
+        if (resolvedPath.empty())
+            return;
+
+        const std::wstring dir = get_directory_part(resolvedPath);
+        if (dir.empty())
+            return;
+
+        const std::wstring pattern = dir + L"\\SC0710.*";
+        WIN32_FIND_DATAW ffd = {};
+        HANDLE hFind = FindFirstFileW(pattern.c_str(), &ffd);
+        if (hFind == INVALID_HANDLE_VALUE)
+            return;
+
+        int index = 0;
+        do
+        {
+            if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                continue;
+            const std::wstring fileName = ffd.cFileName;
+            std::wstring fullPath = dir + L"\\" + fileName;
+            ULONGLONG size = (static_cast<ULONGLONG>(ffd.nFileSizeHigh) << 32) | ffd.nFileSizeLow;
+            dshow_probe_log(std::string("  Sibling[") + format_u64(index) + "]=" +
+                            wide_to_utf8(fullPath.c_str()) +
+                            " size=" + format_u64(size));
+            const std::string desc = read_version_string_field(fullPath, L"FileDescription");
+            const std::string orig = read_version_string_field(fullPath, L"OriginalFilename");
+            if (!desc.empty())
+                dshow_probe_log(std::string("    FileDescription=") + desc);
+            if (!orig.empty())
+                dshow_probe_log(std::string("    OriginalFilename=") + orig);
+            ++index;
+        } while (FindNextFileW(hFind, &ffd));
+        FindClose(hFind);
+    }
+
+    static void log_module_probe_info(const std::wstring &inproc)
+    {
+        if (inproc.empty())
+            return;
+
+        std::wstring resolved = resolve_module_path_from_inproc(inproc);
+        dshow_probe_log(std::string("  ResolvedModulePath=") +
+                        (resolved.empty() ? std::string("(none)") : wide_to_utf8(resolved.c_str())));
+
+        DWORD attrs = resolved.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(resolved.c_str());
+        bool exists = (attrs != INVALID_FILE_ATTRIBUTES) && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+        dshow_probe_log(std::string("  ModuleExists=") + (exists ? "YES" : "NO"));
+
+        HMODULE h = NULL;
+        if (exists)
+            h = LoadLibraryExW(resolved.c_str(), NULL,
+                               LOAD_LIBRARY_AS_DATAFILE | DONT_RESOLVE_DLL_REFERENCES);
+        dshow_probe_log(std::string("  ModuleLoadable=") + (h ? "YES" : "NO"));
+        if (h)
+            FreeLibrary(h);
+
+        if (!exists)
+            return;
+
+        DWORD handle = 0;
+        DWORD verSize = GetFileVersionInfoSizeW(resolved.c_str(), &handle);
+        if (verSize > 0)
+        {
+            std::vector<BYTE> verData(verSize);
+            if (GetFileVersionInfoW(resolved.c_str(), 0, verSize, verData.data()))
+            {
+                VS_FIXEDFILEINFO *ffi = NULL;
+                UINT ffiLen = 0;
+                if (VerQueryValueW(verData.data(), L"\\",
+                                   reinterpret_cast<LPVOID *>(&ffi), &ffiLen) &&
+                    ffi && ffiLen >= sizeof(VS_FIXEDFILEINFO))
+                {
+                    dshow_probe_log(std::string("  FileVersion=") +
+                                    version_msls_to_string(ffi->dwFileVersionMS,
+                                                           ffi->dwFileVersionLS));
+                }
+            }
+        }
+
+        const std::string company = read_version_string_field(resolved, L"CompanyName");
+        const std::string fileDesc = read_version_string_field(resolved, L"FileDescription");
+        const std::string product = read_version_string_field(resolved, L"ProductName");
+        const std::string original = read_version_string_field(resolved, L"OriginalFilename");
+        if (!company.empty()) dshow_probe_log(std::string("  CompanyName=") + company);
+        if (!fileDesc.empty()) dshow_probe_log(std::string("  FileDescription=") + fileDesc);
+        if (!product.empty()) dshow_probe_log(std::string("  ProductName=") + product);
+        if (!original.empty()) dshow_probe_log(std::string("  OriginalFilename=") + original);
+
+        log_pe_exports(resolved);
+        if (starts_with_case_insensitive(get_filename_part(resolved), L"SC0710."))
+            log_sibling_modules(resolved);
+    }
+
+
+
+    class ProbePropertyPageSite : public IPropertyPageSite
+    {
+    public:
+        ProbePropertyPageSite() : ref_(1) {}
+
+        STDMETHODIMP QueryInterface(REFIID riid, void **ppv) override
+        {
+            if (!ppv)
+                return E_POINTER;
+            *ppv = nullptr;
+            if (riid == IID_IUnknown || riid == IID_IPropertyPageSite)
+            {
+                *ppv = static_cast<IPropertyPageSite *>(this);
+                AddRef();
+                return S_OK;
+            }
+            return E_NOINTERFACE;
+        }
+
+        STDMETHODIMP_(ULONG) AddRef() override
+        {
+            return static_cast<ULONG>(InterlockedIncrement(&ref_));
+        }
+
+        STDMETHODIMP_(ULONG) Release() override
+        {
+            const ULONG v = static_cast<ULONG>(InterlockedDecrement(&ref_));
+            if (v == 0)
+                delete this;
+            return v;
+        }
+
+        STDMETHODIMP OnStatusChange(DWORD dwFlags) override
+        {
+            char buf[128] = {};
+            sprintf_s(buf, sizeof(buf), "PropertyPageSite OnStatusChange dwFlags=0x%08X",
+                      static_cast<unsigned>(dwFlags));
+            dshow_probe_log(buf);
+            return S_OK;
+        }
+
+        STDMETHODIMP GetLocaleID(LCID *pLocaleID) override
+        {
+            if (!pLocaleID)
+                return E_POINTER;
+            *pLocaleID = GetUserDefaultLCID();
+            return S_OK;
+        }
+
+        STDMETHODIMP GetPageContainer(IUnknown **ppUnk) override
+        {
+            if (!ppUnk)
+                return E_POINTER;
+            *ppUnk = nullptr;
+            return E_NOTIMPL;
+        }
+
+        STDMETHODIMP TranslateAccelerator(MSG *) override
+        {
+            return E_NOTIMPL;
+        }
+
+    private:
+        volatile long ref_;
+    };
+
+    static HWND create_probe_page_parent_window(const wchar_t *title, int width, int height)
+    {
+        static const wchar_t kClassName[] = L"DShowSignalProbePageParent";
+        static bool classRegistered = false;
+        if (!classRegistered)
+        {
+            WNDCLASSW wc = {};
+            wc.lpfnWndProc = DefWindowProcW;
+            wc.hInstance = GetModuleHandleW(NULL);
+            wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+            wc.lpszClassName = kClassName;
+            ATOM atom = RegisterClassW(&wc);
+            if (atom)
+                classRegistered = true;
+        }
+
+        if (!classRegistered)
+            return NULL;
+
+        const int w = (width > 0 ? width : 640);
+        const int h = (height > 0 ? height : 480);
+        return CreateWindowExW(WS_EX_TOOLWINDOW, kClassName,
+                               (title && *title) ? title : L"DShow Signal Probe",
+                               WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+                               CW_USEDEFAULT, CW_USEDEFAULT, w, h,
+                               NULL, NULL, GetModuleHandleW(NULL), NULL);
+    }
+
+    static void pump_probe_window_messages(HWND hwnd, DWORD durationMs)
+    {
+        const DWORD start = GetTickCount();
+        MSG msg = {};
+        while ((GetTickCount() - start) < durationMs)
+        {
+            while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            if (hwnd)
+                UpdateWindow(hwnd);
+            Sleep(15);
+        }
+    }
+
+    static bool try_property_page_activate_cycle(const char *label,
+                                                 const CLSID &clsid,
+                                                 IUnknown *target,
+                                                 DShowSignalProbeResult *probeOut)
+    {
+        if (!target)
+            return false;
+
+        ComPtr<IPropertyPage> page;
+        HRESULT hr = CoCreateInstance(clsid, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&page));
+        if (FAILED(hr) || !page)
+        {
+            dshow_probe_log(std::string(label) + " ActivateCycle CoCreateInstance(IPropertyPage) failed hr=0x" + hr_to_hex(hr));
+            return false;
+        }
+
+        ProbePropertyPageSite *rawSite = new ProbePropertyPageSite();
+        if (!rawSite)
+            return false;
+        ComPtr<IPropertyPageSite> site;
+        site.Attach(rawSite);
+
+        PROPPAGEINFO info = {};
+        info.cb = sizeof(info);
+        hr = page->GetPageInfo(&info);
+        if (FAILED(hr))
+        {
+            dshow_probe_log(std::string(label) + " IPropertyPage::GetPageInfo failed hr=0x" + hr_to_hex(hr));
+        }
+        else
+        {
+            std::ostringstream oss;
+            oss << label << " IPropertyPage::GetPageInfo: OK"
+                << " size=" << info.size.cx << "x" << info.size.cy;
+            if (info.pszTitle)
+                oss << " title=" << wide_to_utf8(info.pszTitle);
+            dshow_probe_log(oss.str());
+        }
+
+        hr = page->SetPageSite(site.Get());
+        if (FAILED(hr))
+        {
+            dshow_probe_log(std::string(label) + " IPropertyPage::SetPageSite failed hr=0x" + hr_to_hex(hr));
+            if (info.pszTitle) CoTaskMemFree(info.pszTitle);
+            if (info.pszDocString) CoTaskMemFree(info.pszDocString);
+            if (info.pszHelpFile) CoTaskMemFree(info.pszHelpFile);
+            return false;
+        }
+        dshow_probe_log(std::string(label) + " IPropertyPage::SetPageSite: OK");
+
+        IUnknown *objs[1] = {target};
+        hr = page->SetObjects(1, objs);
+        if (FAILED(hr))
+        {
+            dshow_probe_log(std::string(label) + " ActivateCycle IPropertyPage::SetObjects failed hr=0x" + hr_to_hex(hr));
+            page->SetPageSite(NULL);
+            if (info.pszTitle) CoTaskMemFree(info.pszTitle);
+            if (info.pszDocString) CoTaskMemFree(info.pszDocString);
+            if (info.pszHelpFile) CoTaskMemFree(info.pszHelpFile);
+            return false;
+        }
+        dshow_probe_log(std::string(label) + " ActivateCycle IPropertyPage::SetObjects: OK");
+
+        const int pageW = (info.size.cx > 0 ? info.size.cx : 640);
+        const int pageH = (info.size.cy > 0 ? info.size.cy : 480);
+        HWND hwnd = create_probe_page_parent_window(info.pszTitle, pageW, pageH);
+        if (!hwnd)
+        {
+            dshow_probe_log(std::string(label) + " create hidden parent window failed");
+            page->SetObjects(0, NULL);
+            page->SetPageSite(NULL);
+            if (info.pszTitle) CoTaskMemFree(info.pszTitle);
+            if (info.pszDocString) CoTaskMemFree(info.pszDocString);
+            if (info.pszHelpFile) CoTaskMemFree(info.pszHelpFile);
+            return false;
+        }
+
+        RECT rc = {0, 0, pageW, pageH};
+        hr = page->Activate(hwnd, &rc, FALSE);
+        if (FAILED(hr))
+        {
+            dshow_probe_log(std::string(label) + " IPropertyPage::Activate failed hr=0x" + hr_to_hex(hr));
+            DestroyWindow(hwnd);
+            page->SetObjects(0, NULL);
+            page->SetPageSite(NULL);
+            if (info.pszTitle) CoTaskMemFree(info.pszTitle);
+            if (info.pszDocString) CoTaskMemFree(info.pszDocString);
+            if (info.pszHelpFile) CoTaskMemFree(info.pszHelpFile);
+            return false;
+        }
+        dshow_probe_log(std::string(label) + " IPropertyPage::Activate: OK");
+
+        dshow_probe_log(std::string(label) + " Activate-only probe: skip IPropertyPage::Show/message-loop to avoid vendor page crash");
+
+        page->Deactivate();
+        dshow_probe_log(std::string(label) + " IPropertyPage::Deactivate: OK");
+        DestroyWindow(hwnd);
+        page->SetObjects(0, NULL);
+        page->SetPageSite(NULL);
+
+        if (info.pszTitle) CoTaskMemFree(info.pszTitle);
+        if (info.pszDocString) CoTaskMemFree(info.pszDocString);
+        if (info.pszHelpFile) CoTaskMemFree(info.pszHelpFile);
+
+        if (probeOut && clsid == DSHOW_SC0710_VENDOR_PAGE)
+        {
+            if (strcmp(label, "Filter") == 0)
+                probeOut->sc0710_page_activate_filter_ok = true;
+            else if (strcmp(label, "CapturePin") == 0)
+                probeOut->sc0710_page_activate_capture_pin_ok = true;
+        }
+
+        return true;
+    }
+
+    static bool try_property_page_set_objects(const char *label,
+                                              const CLSID &clsid,
+                                              IUnknown *target,
+                                              DShowSignalProbeResult *probeOut)
+    {
+        if (!target)
+            return false;
+
+        ComPtr<IPropertyPage> page;
+        HRESULT hr = CoCreateInstance(clsid, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&page));
+        if (FAILED(hr) || !page)
+        {
+            dshow_probe_log(std::string(label) + " CoCreateInstance(IPropertyPage) failed hr=0x" + hr_to_hex(hr));
+            return false;
+        }
+
+        dshow_probe_log(std::string(label) + " CoCreateInstance(IPropertyPage): OK");
+        if (probeOut && clsid == DSHOW_SC0710_VENDOR_PAGE)
+            probeOut->sc0710_page_create_ok = true;
+
+        IUnknown *objs[1] = {target};
+        hr = page->SetObjects(1, objs);
+        if (FAILED(hr))
+        {
+            dshow_probe_log(std::string(label) + " IPropertyPage::SetObjects failed hr=0x" + hr_to_hex(hr));
+            return false;
+        }
+
+        dshow_probe_log(std::string(label) + " IPropertyPage::SetObjects: OK");
+        page->SetObjects(0, NULL);
+        return true;
+    }
+
+    static void log_clsid_registry_info(const CLSID &clsid, DShowSignalProbeResult *probeOut)
     {
         std::wstring g = guid_to_wstring(clsid);
         std::wstring base = L"CLSID\\" + g;
@@ -110,6 +635,63 @@ namespace
         dshow_probe_log("  Name=" + (name.empty() ? std::string("(none)") : wide_to_utf8(name.c_str())));
         dshow_probe_log("  InprocServer32=" + (dll.empty() ? std::string("(none)") : wide_to_utf8(dll.c_str())));
         dshow_probe_log("  ProgID=" + (prog.empty() ? std::string("(none)") : wide_to_utf8(prog.c_str())));
+        log_module_probe_info(dll);
+
+        if (probeOut && clsid == DSHOW_SC0710_VENDOR_PAGE)
+        {
+            probeOut->has_sc0710_custom_page = true;
+            if (!dll.empty())
+                wcsncpy_s(probeOut->sc0710_property_module, dll.c_str(), _TRUNCATE);
+        }
+    }
+
+
+
+    static bool find_video_input_filter_by_index(int devIndex, ComPtr<IMoniker> &outMoniker, ComPtr<IBaseFilter> &outFilter)
+    {
+        outMoniker.Reset();
+        outFilter.Reset();
+
+        ComPtr<ICreateDevEnum> devEnum;
+        HRESULT hr = CoCreateInstance(CLSID_SystemDeviceEnum, nullptr, CLSCTX_INPROC_SERVER,
+                                      IID_PPV_ARGS(&devEnum));
+        if (FAILED(hr) || !devEnum)
+        {
+            dshow_probe_log("OleFrame CoCreateInstance(CLSID_SystemDeviceEnum) failed hr=0x" + hr_to_hex(hr));
+            return false;
+        }
+
+        ComPtr<IEnumMoniker> enumMoniker;
+        hr = devEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &enumMoniker, 0);
+        if (hr != S_OK || !enumMoniker)
+        {
+            dshow_probe_log("OleFrame CreateClassEnumerator(CLSID_VideoInputDeviceCategory) failed hr=0x" + hr_to_hex(hr));
+            return false;
+        }
+
+        ULONG fetched = 0;
+        ComPtr<IMoniker> moniker;
+        int cur = 0;
+        while (enumMoniker->Next(1, &moniker, &fetched) == S_OK)
+        {
+            if (cur == devIndex)
+            {
+                ComPtr<IBaseFilter> filter;
+                hr = moniker->BindToObject(nullptr, nullptr, IID_PPV_ARGS(&filter));
+                if (FAILED(hr) || !filter)
+                {
+                    dshow_probe_log("OleFrame moniker->BindToObject(IBaseFilter) failed hr=0x" + hr_to_hex(hr));
+                    return false;
+                }
+                outMoniker = moniker;
+                outFilter = filter;
+                return true;
+            }
+            moniker.Reset();
+            ++cur;
+        }
+        dshow_probe_log("OleFrame target device index not found");
+        return false;
     }
 
     static void read_moniker_strings(IMoniker *moniker, DShowSignalProbeResult &out)
@@ -133,7 +715,7 @@ namespace
         }
     }
 
-    static void log_property_pages(const char *label, IUnknown *unk, bool &hasPages)
+    static void log_property_pages(const char *label, IUnknown *unk, bool &hasPages, DShowSignalProbeResult *probeOut)
     {
         if (!unk)
             return;
@@ -161,7 +743,22 @@ namespace
         dshow_probe_log(oss.str());
 
         for (ULONG i = 0; i < cauuid.cElems; ++i)
-            log_clsid_registry_info(cauuid.pElems[i]);
+        {
+            const CLSID &pageClsid = cauuid.pElems[i];
+            log_clsid_registry_info(pageClsid, probeOut);
+
+            const bool setObjectsOk = try_property_page_set_objects(label, pageClsid, unk, probeOut);
+            if (probeOut && pageClsid == DSHOW_SC0710_VENDOR_PAGE)
+            {
+                if (strcmp(label, "Filter") == 0)
+                    probeOut->sc0710_page_setobjects_filter_ok = setObjectsOk;
+                else if (strcmp(label, "CapturePin") == 0)
+                    probeOut->sc0710_page_setobjects_capture_pin_ok = setObjectsOk;
+            }
+
+            if (setObjectsOk)
+                try_property_page_activate_cycle(label, pageClsid, unk, probeOut);
+        }
 
         if (cauuid.pElems)
             CoTaskMemFree(cauuid.pElems);
@@ -363,7 +960,7 @@ namespace
 
             if (verbose)
             {
-                log_property_pages("Filter", sourceFilter.Get(), out.filter_has_property_pages);
+                log_property_pages("Filter", sourceFilter.Get(), out.filter_has_property_pages, &out);
                 log_ks_support("Filter", sourceFilter.Get(), out.filter_has_ks_property_set, out.filter_has_ks_control);
             }
 
@@ -387,7 +984,7 @@ namespace
             if (capturePin && verbose)
             {
                 log_pin_identity(capturePin.Get());
-                log_property_pages("CapturePin", capturePin.Get(), out.capture_pin_has_property_pages);
+                log_property_pages("CapturePin", capturePin.Get(), out.capture_pin_has_property_pages, &out);
                 log_ks_support("CapturePin", capturePin.Get(), out.capture_pin_has_ks_property_set, out.capture_pin_has_ks_control);
             }
 
@@ -524,7 +1121,7 @@ const char *gcap_pixfmt_name(gcap_pixfmt_t f)
     case GCAP_FMT_Y210:
         return "Y210";
     case GCAP_FMT_ARGB:
-        return "ARGB32";
+        return "ARGB";
     default:
         return "Unknown";
     }
@@ -538,12 +1135,6 @@ const char *gcap_subtype_name(const GUID &sub)
         return "YUY2";
     if (sub == MEDIASUBTYPE_Y210)
         return "Y210";
-    if (sub == MEDIASUBTYPE_RGB24)
-        return "RGB24";
-    if (sub == MEDIASUBTYPE_RGB32)
-        return "RGB32";
-    if (sub == MEDIASUBTYPE_ARGB32)
-        return "ARGB32";
 #ifdef MFVideoFormat_NV12
     if (sub == MFVideoFormat_NV12)
         return "NV12";
@@ -554,7 +1145,121 @@ const char *gcap_subtype_name(const GUID &sub)
     if (sub == MFVideoFormat_Y210)
         return "Y210";
     if (sub == MFVideoFormat_ARGB32)
-        return "ARGB32";
+        return "ARGB";
 #endif
     return "Unknown";
+}
+
+
+bool dshow_open_vendor_property_page_by_index(int devIndex)
+{
+    try
+    {
+        std::thread worker([devIndex]() {
+            HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            const bool needUninit = SUCCEEDED(hr);
+
+            if (hr != S_OK && hr != S_FALSE && hr != RPC_E_CHANGED_MODE)
+            {
+                dshow_probe_log("OleFrame CoInitializeEx(APARTMENTTHREADED) failed hr=0x" + hr_to_hex(hr));
+                return;
+            }
+
+            dshow_probe_log("OleFrame thread: COM apartment ready");
+
+            ComPtr<IMoniker> moniker;
+            ComPtr<IBaseFilter> filter;
+            if (!find_video_input_filter_by_index(devIndex, moniker, filter) || !filter)
+            {
+                dshow_probe_log("OleFrame failed to bind filter for device index=" + std::to_string(devIndex));
+                if (needUninit)
+                    CoUninitialize();
+                return;
+            }
+
+            ComPtr<ISpecifyPropertyPages> spp;
+            hr = filter->QueryInterface(IID_PPV_ARGS(&spp));
+            if (FAILED(hr) || !spp)
+            {
+                dshow_probe_log("OleFrame filter QueryInterface(ISpecifyPropertyPages) failed hr=0x" + hr_to_hex(hr));
+                if (needUninit)
+                    CoUninitialize();
+                return;
+            }
+
+            CAUUID pages = {};
+            hr = spp->GetPages(&pages);
+            if (FAILED(hr) || !pages.pElems || pages.cElems == 0)
+            {
+                dshow_probe_log("OleFrame filter GetPages failed hr=0x" + hr_to_hex(hr));
+                if (pages.pElems)
+                    CoTaskMemFree(pages.pElems);
+                if (needUninit)
+                    CoUninitialize();
+                return;
+            }
+
+            CAUUID vendorPages = {};
+            vendorPages.cElems = 0;
+            vendorPages.pElems = (GUID*)CoTaskMemAlloc(sizeof(GUID) * pages.cElems);
+            if (!vendorPages.pElems)
+            {
+                dshow_probe_log("OleFrame CoTaskMemAlloc for vendor page list failed");
+                CoTaskMemFree(pages.pElems);
+                if (needUninit)
+                    CoUninitialize();
+                return;
+            }
+
+            for (ULONG i = 0; i < pages.cElems; ++i)
+            {
+                if (pages.pElems[i] == DSHOW_SC0710_VENDOR_PAGE)
+                    vendorPages.pElems[vendorPages.cElems++] = pages.pElems[i];
+            }
+            CoTaskMemFree(pages.pElems);
+
+            if (vendorPages.cElems == 0)
+            {
+                dshow_probe_log("OleFrame vendor page GUID not found on filter");
+                CoTaskMemFree(vendorPages.pElems);
+                if (needUninit)
+                    CoUninitialize();
+                return;
+            }
+
+            IUnknown *objects[1] = { filter.Get() };
+            dshow_probe_log("OleFrame launching OleCreatePropertyFrame for SC0710 vendor page (non-blocking)");
+            hr = OleCreatePropertyFrame(
+                nullptr,
+                120,
+                120,
+                L"SC0710 Vendor Property Page",
+                1,
+                objects,
+                vendorPages.cElems,
+                vendorPages.pElems,
+                GetUserDefaultLCID(),
+                0,
+                nullptr);
+
+            if (SUCCEEDED(hr))
+                dshow_probe_log("OleFrame OleCreatePropertyFrame returned OK");
+            else
+                dshow_probe_log("OleFrame OleCreatePropertyFrame failed hr=0x" + hr_to_hex(hr));
+
+            CoTaskMemFree(vendorPages.pElems);
+            if (needUninit)
+                CoUninitialize();
+            dshow_probe_log("OleFrame thread exit");
+        });
+
+        worker.detach();
+        dshow_probe_log("OleFrame launch accepted: worker thread detached");
+        return true;
+    }
+    catch (...)
+    {
+        dshow_probe_log("OleFrame launch failed: exception while creating worker thread");
+        return false;
+    }
 }

@@ -257,6 +257,53 @@ bool WinMFProvider::getDeviceProps(gcap_device_props_t &out)
     return true;
 }
 
+
+static void fill_sc0710_inferred_input_signal_mf(gcap_signal_status_t &out, bool hasCustomPage, const GUID &activeSubtype)
+{
+    if (!hasCustomPage)
+        return;
+
+    const bool rgbPath = (activeSubtype == MFVideoFormat_RGB32) || (activeSubtype == MFVideoFormat_ARGB32);
+    if (!rgbPath)
+        return;
+
+    out.pixfmt = GCAP_FMT_ARGB;
+    out.bit_depth = 8;
+    out.csp = GCAP_CSP_BT709;
+    out.range = GCAP_RANGE_UNKNOWN;
+    out.hdr = 0;
+}
+
+static void fill_runtime_signal_text_mf(gcap_runtime_info_t &out, const GUID &negotiatedSubtype)
+{
+    out.input_signal_desc[0] = 0;
+    out.input_signal_note[0] = 0;
+    out.negotiated_desc[0] = 0;
+
+    if (out.signal.width > 0 && out.signal.height > 0)
+    {
+        if (out.signal.pixfmt == GCAP_FMT_ARGB && out.signal.bit_depth == 8 && out.signal.csp == GCAP_CSP_BT709)
+        {
+            strcpy_s(out.input_signal_desc, "RGB444 / BT.709 / 8-bit");
+            strcpy_s(out.input_signal_note, "Inferred");
+        }
+        else if (out.signal.pixfmt == GCAP_FMT_NV12 || out.signal.pixfmt == GCAP_FMT_YUY2 || out.signal.pixfmt == GCAP_FMT_ARGB || out.signal.pixfmt == GCAP_FMT_P010 || out.signal.pixfmt == GCAP_FMT_Y210 || out.signal.pixfmt == GCAP_FMT_V210 || out.signal.pixfmt == GCAP_FMT_R210)
+        {
+            strcpy_s(out.input_signal_desc, gcap_pixfmt_name(out.signal.pixfmt));
+            strcpy_s(out.input_signal_note, "BestEffort");
+        }
+    }
+
+    const char *negName = gcap_subtype_name(negotiatedSubtype);
+    if (negName && negName[0])
+    {
+        if (strcmp(negName, "ARGB") == 0)
+            strcpy_s(out.negotiated_desc, "ARGB32");
+        else
+            strcpy_s(out.negotiated_desc, negName);
+    }
+}
+
 bool WinMFProvider::refresh_signal_probe(bool force)
 {
     if (current_index_ < 0)
@@ -277,6 +324,11 @@ bool WinMFProvider::refresh_signal_probe(bool force)
         signal_fps_num_ = probe.fps_num;
         signal_fps_den_ = (probe.fps_den > 0) ? probe.fps_den : 1;
         signal_subtype_ = probe.subtype;
+        signal_has_sc0710_custom_page_ = probe.has_sc0710_custom_page;
+        if (probe.sc0710_property_module[0])
+            wcsncpy_s(signal_sc0710_module_, probe.sc0710_property_module, _TRUNCATE);
+        else
+            signal_sc0710_module_[0] = 0;
         last_signal_probe_ms_ = nowMs;
         return true;
     }
@@ -305,6 +357,7 @@ bool WinMFProvider::getSignalStatus(gcap_signal_status_t &out)
     out.csp = GCAP_CSP_UNKNOWN;
     out.range = GCAP_RANGE_UNKNOWN;
     out.hdr = -1;
+    fill_sc0710_inferred_input_signal_mf(out, signal_has_sc0710_custom_page_, haveActive ? cur_subtype_ : signal_subtype_);
     return (out.width > 0 && out.height > 0);
 }
 
@@ -348,6 +401,7 @@ bool WinMFProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     strcpy_s(out.path_name, gpu ? "WinMF GPU Preview" : "WinMF CPU Preview");
     strcpy_s(out.source_format, gcap_subtype_name(cur_subtype_));
     strcpy_s(out.render_format, gpu ? "FP16 Scene" : "BGRA8 CPU");
+    fill_runtime_signal_text_mf(out, cur_subtype_);
     return true;
 }
 

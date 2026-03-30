@@ -8,6 +8,7 @@
 #include <vector>
 #include "../audio/audio_manager.h"
 #include "gcap_audio.h"
+#include "../providers/dshow_signal_probe.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -133,6 +134,11 @@ extern "C"
                          h, reinterpret_cast<void *>(cb), user);
         }
         return h->mgr.setFramePacketCallback(cb, user);
+    }
+
+    int gcap_open_vendor_property_page(int device_index)
+    {
+        return dshow_open_vendor_property_page_by_index(device_index) ? 1 : 0;
     }
 
     gcap_status_t gcap_start(gcap_handle h)

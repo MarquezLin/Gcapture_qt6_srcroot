@@ -23,6 +23,13 @@ struct DShowSignalProbeResult
     bool capture_pin_has_ks_property_set = false;
     bool filter_has_ks_control = false;
     bool capture_pin_has_ks_control = false;
+    bool has_sc0710_custom_page = false;
+    bool sc0710_page_create_ok = false;
+    bool sc0710_page_setobjects_filter_ok = false;
+    bool sc0710_page_setobjects_capture_pin_ok = false;
+    bool sc0710_page_activate_filter_ok = false;
+    bool sc0710_page_activate_capture_pin_ok = false;
+    wchar_t sc0710_property_module[260] = {};
     wchar_t friendly_name[128] = {};
     wchar_t device_path[512] = {};
 };
@@ -33,3 +40,5 @@ gcap_pixfmt_t gcap_subtype_to_pixfmt(const GUID &sub);
 int gcap_pixfmt_bitdepth(gcap_pixfmt_t f);
 const char *gcap_pixfmt_name(gcap_pixfmt_t f);
 const char *gcap_subtype_name(const GUID &sub);
+
+bool dshow_open_vendor_property_page_by_index(int devIndex);

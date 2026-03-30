@@ -117,6 +117,9 @@ extern "C"
         char path_name[64];               // e.g. WinMF GPU Preview / DShow Raw Preview
         char source_format[32];           // legacy: negotiated media subtype name
         char render_format[32];           // canvas / scene processing format
+        char input_signal_desc[64];       // e.g. RGB444 / BT.709 / 8-bit (may be inferred)
+        char input_signal_note[32];       // e.g. Inferred / Driver / Unknown
+        char negotiated_desc[32];         // e.g. RGB24 / NV12 / YUY2 / ARGB32
     } gcap_runtime_info_t;
 
     typedef enum
@@ -249,6 +252,8 @@ extern "C"
 
     const char *gcap_strerror(gcap_status_t);
     GCAP_API gcap_status_t gcap_set_preview(gcap_handle h, const gcap_preview_desc_t *desc);
+    // Open vendor-specific DShow property page for a device index (test / debug helper).
+    GCAP_API int gcap_open_vendor_property_page(int device_index);
 
 #ifdef __cplusplus
 }

@@ -277,6 +277,52 @@ namespace
     } while (0)
 }
 
+
+static void fill_sc0710_inferred_input_signal(gcap_signal_status_t &out, bool hasCustomPage, const GUID &activeSubtype)
+{
+    if (!hasCustomPage)
+        return;
+
+    const bool rgbPath = (activeSubtype == MEDIASUBTYPE_RGB24) || (activeSubtype == MEDIASUBTYPE_RGB32) || (activeSubtype == MEDIASUBTYPE_ARGB32);
+    if (!rgbPath)
+        return;
+
+    out.pixfmt = GCAP_FMT_ARGB;
+    out.bit_depth = 8;
+    out.csp = GCAP_CSP_BT709;
+    out.range = GCAP_RANGE_UNKNOWN;
+    out.hdr = 0;
+}
+
+static void fill_runtime_signal_text(gcap_runtime_info_t &out)
+{
+    out.input_signal_desc[0] = 0;
+    out.input_signal_note[0] = 0;
+    out.negotiated_desc[0] = 0;
+
+    if (out.signal.width > 0 && out.signal.height > 0)
+    {
+        if (out.signal.pixfmt == GCAP_FMT_ARGB && out.signal.bit_depth == 8 && out.signal.csp == GCAP_CSP_BT709)
+        {
+            strcpy_s(out.input_signal_desc, "RGB444 / BT.709 / 8-bit");
+            strcpy_s(out.input_signal_note, "Inferred");
+        }
+        else if (out.signal.pixfmt == GCAP_FMT_NV12 || out.signal.pixfmt == GCAP_FMT_YUY2 || out.signal.pixfmt == GCAP_FMT_ARGB || out.signal.pixfmt == GCAP_FMT_P010 || out.signal.pixfmt == GCAP_FMT_Y210 || out.signal.pixfmt == GCAP_FMT_V210 || out.signal.pixfmt == GCAP_FMT_R210)
+        {
+            strcpy_s(out.input_signal_desc, gcap_pixfmt_name(out.signal.pixfmt));
+            strcpy_s(out.input_signal_note, "BestEffort");
+        }
+    }
+
+    const char *negName = gcap_pixfmt_name(out.negotiated.pixfmt);
+    if (negName && negName[0])
+    {
+        if (strcmp(negName, "ARGB") == 0)
+            strcpy_s(out.negotiated_desc, "ARGB32");
+        else
+            strcpy_s(out.negotiated_desc, negName);
+    }
+}
 DShowProvider::DShowProvider()
 {
     ensure_com();
@@ -344,6 +390,11 @@ bool DShowProvider::refreshSignalProbe(bool force)
         signalFpsNum_ = probe.fps_num;
         signalFpsDen_ = (probe.fps_den > 0) ? probe.fps_den : 1;
         signalSubtype_ = probe.subtype;
+        signalHasSc0710CustomPage_ = probe.has_sc0710_custom_page;
+        if (probe.sc0710_property_module[0])
+            wcsncpy_s(signalSc0710Module_, probe.sc0710_property_module, _TRUNCATE);
+        else
+            signalSc0710Module_[0] = 0;
         lastSignalProbeMs_ = nowMs;
         return true;
     }
@@ -380,6 +431,7 @@ bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
     out.bit_depth = gcap_pixfmt_bitdepth(out.pixfmt);
     if (out.pixfmt == GCAP_FMT_Y210)
         out.csp = GCAP_CSP_BT709;
+    fill_sc0710_inferred_input_signal(out, signalHasSc0710CustomPage_, haveActive ? subtype_ : signalSubtype_);
     return (out.width > 0 && out.height > 0);
 }
 
@@ -426,6 +478,7 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
         strcpy_s(out.frame_source, rawOnlyActive_ ? "RawSink" : "RendererImage");
     strcpy_s(out.source_format, gcap_subtype_name(subtype_));
     strcpy_s(out.render_format, (previewHwnd_ && rawOnlyActive_) ? "FP16 Scene PreviewOnly" : (rawOnlyActive_ ? "FP16 Scene" : "Renderer Native"));
+    fill_runtime_signal_text(out);
     return true;
 }
 
@@ -1916,4 +1969,6 @@ void DShowProvider::close()
     signalFpsDen_ = 1;
     signalSubtype_ = GUID_NULL;
     lastSignalProbeMs_ = 0;
+    signalHasSc0710CustomPage_ = false;
+    signalSc0710Module_[0] = 0;
 }

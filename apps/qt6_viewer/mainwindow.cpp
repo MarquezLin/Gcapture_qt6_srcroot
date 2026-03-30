@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "gcapture.h"
+
 #include "./ui_mainwindow.h"
 #include <QVBoxLayout>
 #include <QPushButton>
@@ -62,7 +64,7 @@ namespace
         case GCAP_FMT_Y210:
             return "Y210";
         case GCAP_FMT_ARGB:
-            return "ARGB32";
+            return "ARGB";
         default:
             return "UNKNOWN";
         }
@@ -369,6 +371,8 @@ connect(procampDlg_, &ProcAmp::valuesChanged,
         connect(ui->actionDisplayInfo, &QAction::triggered, this, &MainWindow::onShowDisplayInfo);
     if (ui->btnSnapshot)
         connect(ui->btnSnapshot, &QPushButton::clicked, this, &MainWindow::onSnapshot);
+    if (ui->actionOpenVendorPropertyPageTest)
+        connect(ui->actionOpenVendorPropertyPageTest, &QAction::triggered, this, &MainWindow::onOpenVendorPropertyPageTest);
 
     g_mainWindow = this;
 
@@ -1036,23 +1040,19 @@ void MainWindow::updateRuntimeStatusUi()
     const QString backend = QString::fromUtf8(rt.backend_name);
     const QString source = QString::fromUtf8(rt.frame_source);
 
-    const QString inputFmt = [&]() -> QString {
-        if (rt.signal.width <= 0 || rt.signal.height <= 0)
-            return QStringLiteral("--");
-        const QString fmt = QString::fromUtf8(packetFmtName(rt.signal.pixfmt));
-        if (fmt.isEmpty() || fmt == QStringLiteral("Unknown") || fmt == QStringLiteral("ARGB32"))
-            return QStringLiteral("Unknown(true signal)");
-        return fmt;
-    }();
-
-    const QString negotiatedFmt = [&]() -> QString {
-        const QString fmt = QString::fromUtf8(rt.source_format).trimmed();
-        if (!fmt.isEmpty())
-            return fmt;
-        return QString::fromUtf8(packetFmtName(rt.negotiated.pixfmt));
-    }();
-
-    const QString renderFmt = QString::fromUtf8(rt.render_format).trimmed();
+    QString inputFmt;
+    if (rt.input_signal_desc[0])
+        inputFmt = QString::fromUtf8(rt.input_signal_desc);
+    else
+        inputFmt = QString::fromUtf8(packetFmtName(rt.signal.pixfmt));
+    if (rt.input_signal_note[0])
+        inputFmt += QStringLiteral(" (%1)").arg(QString::fromUtf8(rt.input_signal_note));
+    QString negotiatedFmt;
+    if (rt.negotiated_desc[0])
+        negotiatedFmt = QString::fromUtf8(rt.negotiated_desc);
+    else
+        negotiatedFmt = QString::fromUtf8(packetFmtName(rt.negotiated.pixfmt));
+    const QString renderFmt = QString::fromUtf8(rt.render_format);
     const auto statusBlock = [](const char *label, const gcap_signal_status_t &s, double fps, const QString &fmt) {
         if (s.width <= 0 || s.height <= 0)
             return QStringLiteral("%1 --").arg(QString::fromUtf8(label));
@@ -1144,6 +1144,32 @@ void MainWindow::onShowInputInfo()
     infoDlg_->show();
     infoDlg_->raise();
     infoDlg_->activateWindow();
+}
+
+
+void MainWindow::onOpenVendorPropertyPageTest()
+{
+#ifdef _WIN32
+    const int devIndex = ui && ui->comboDevice ? ui->comboDevice->currentIndex() : 0;
+    qDebug() << "[VendorPageTest] trigger devIndex=" << devIndex;
+    MainWindow::postLog(QStringLiteral("[VendorPageTest] begin devIndex=%1").arg(devIndex));
+
+    const bool ok = (gcap_open_vendor_property_page(devIndex) != 0);
+    MainWindow::postLog(QStringLiteral("[VendorPageTest] end result=%1 devIndex=%2")
+                            .arg(ok ? QStringLiteral("OK") : QStringLiteral("FAIL"))
+                            .arg(devIndex),
+                        !ok);
+    if (!ok)
+    {
+        QMessageBox::warning(this,
+                             tr("Vendor Property Page"),
+                             tr("Open Vendor Property Page failed.\nPlease check debug log."));
+    }
+#else
+    QMessageBox::information(this,
+                             tr("Vendor Property Page"),
+                             tr("This test is only available on Windows."));
+#endif
 }
 
 void MainWindow::onShowDisplayInfo()

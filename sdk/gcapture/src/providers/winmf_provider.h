@@ -110,6 +110,8 @@ private:
     int signal_fps_den_ = 1;
     GUID signal_subtype_ = GUID_NULL;
     uint64_t last_signal_probe_ms_ = 0;
+    bool signal_has_sc0710_custom_page_ = false;
+    wchar_t signal_sc0710_module_[260] = {};
 
     // ---- ProcAmp (CPU conversion path) ----
     // Default is neutral (128).
