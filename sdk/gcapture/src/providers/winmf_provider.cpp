@@ -126,12 +126,17 @@ static GUID mf_subtype_from_profile_fmt(gcap_pixfmt_t fmt)
                                   : GUID_NULL;
 }
 
+static const char *mf_explicit_name(const GUID &g)
+{
+    return (g == GUID_NULL) ? "AUTO" : gcap_subtype_name(g);
+}
+
 static int mf_quality_rank(const GUID &s)
 {
     return (s == MFVideoFormat_P010) ? 5
          : (s == MFVideoFormat_Y210) ? 4
-         : (s == MFVideoFormat_NV12) ? 3
-         : (s == MFVideoFormat_YUY2) ? 2
+         : (s == MFVideoFormat_YUY2) ? 3
+         : (s == MFVideoFormat_NV12) ? 2
          : (s == MFVideoFormat_ARGB32) ? 1
                                        : 0;
 }
@@ -791,7 +796,7 @@ bool WinMFProvider::open(int index)
                 ensure_rt_and_pipeline(cur_w_, cur_h_);
 
                 std::ostringstream oss;
-                oss << "[WinMF] negotiated by HQ policy: explicit=" << mf_subtype_name(preferredSub)
+                oss << "[WinMF] negotiated by HQ policy: explicit=" << mf_explicit_name(preferredSub)
                     << ", negotiated=" << mf_subtype_name(cur_subtype_);
                 emit_error(GCAP_OK, oss.str().c_str());
                 return true;
@@ -1369,7 +1374,7 @@ bool WinMFProvider::pick_best_native(const GUID &preferredSub, GUID &sub, UINT32
             }
 
             std::ostringstream oss;
-            oss << "[WinMF] pick_best_native: explicit=" << mf_subtype_name(preferredSub)
+            oss << "[WinMF] pick_best_native: explicit=" << mf_explicit_name(preferredSub)
                 << ", subtype=" << mf_subtype_name(rsub)
                 << ", " << rw << "x" << rh
                 << " @ " << rfn;
@@ -1436,7 +1441,7 @@ bool WinMFProvider::pick_best_native(const GUID &preferredSub, GUID &sub, UINT32
     cpu_path_ = true; // 明確走 CPU
 
     std::ostringstream oss;
-    oss << "[WinMF] pick_best_native: explicit=" << mf_subtype_name(preferredSub)
+    oss << "[WinMF] pick_best_native: explicit=" << mf_explicit_name(preferredSub)
         << ", fallback=ARGB32 from native " << mf_subtype_name(best.sub);
     emit_error(GCAP_OK, oss.str().c_str());
     return true;

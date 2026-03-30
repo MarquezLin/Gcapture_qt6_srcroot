@@ -130,9 +130,9 @@ namespace
     {
         if (g == MEDIASUBTYPE_Y210)
             return 5;
-        if (g == MEDIASUBTYPE_NV12)
-            return 4;
         if (g == MEDIASUBTYPE_YUY2)
+            return 4;
+        if (g == MEDIASUBTYPE_NV12)
             return 3;
         if (g == MEDIASUBTYPE_RGB24)
             return 2;
@@ -656,14 +656,14 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
     {
         if (y210Available)
             preferredSubtype = MEDIASUBTYPE_Y210;
-        else if (nv12Available)
-            preferredSubtype = MEDIASUBTYPE_NV12;
         else if (yuy2Available)
             preferredSubtype = MEDIASUBTYPE_YUY2;
+        else if (nv12Available)
+            preferredSubtype = MEDIASUBTYPE_NV12;
         else if (rgb24Available)
             preferredSubtype = MEDIASUBTYPE_RGB24;
 
-        dshow_log("[DShow] capture format policy: high-quality preferred order Y210 > NV12 > YUY2 > RGB24");
+        dshow_log("[DShow] capture format policy: high-quality preferred order Y210 > YUY2 > NV12 > RGB24");
     }
 
     AM_MEDIA_TYPE *best = nullptr;

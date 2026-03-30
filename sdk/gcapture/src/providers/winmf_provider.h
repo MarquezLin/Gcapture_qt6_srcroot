@@ -122,7 +122,7 @@ private:
     ComPtr<IMFSourceReader> reader_;
 
     // Requested profile (hint)
-    gcap_profile_t profile_{1920, 1080, 60, 1, GCAP_FMT_NV12};
+    gcap_profile_t profile_{};
 
     // Negotiated native output (kept as NV12 or P010)
     int cur_w_ = 0;
