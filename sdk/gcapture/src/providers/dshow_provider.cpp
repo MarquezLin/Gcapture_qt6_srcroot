@@ -607,6 +607,8 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 
     std::vector<unsigned char> caps(static_cast<size_t>(capSize));
     bool preferredSubtypeAvailable = false;
+    bool nv12Available = false;
+    bool yuy2Available = false;
     bool rgb24Available = false;
     for (int i = 0; i < capCount; ++i)
     {
@@ -615,17 +617,35 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
             continue;
         if (wantSubtype != GUID{} && scan->subtype == wantSubtype)
             preferredSubtypeAvailable = true;
-        if (scan->subtype == MEDIASUBTYPE_RGB24)
+        if (scan->subtype == MEDIASUBTYPE_NV12)
+            nv12Available = true;
+        else if (scan->subtype == MEDIASUBTYPE_YUY2)
+            yuy2Available = true;
+        else if (scan->subtype == MEDIASUBTYPE_RGB24)
             rgb24Available = true;
         freeMediaType(scan);
     }
 
-    const bool rgb24PriorityTest = rgb24Available;
-    if (rgb24PriorityTest && wantSubtype != MEDIASUBTYPE_RGB24)
+    if (wantSubtype != GUID{} && !preferredSubtypeAvailable)
     {
-        wantSubtype = MEDIASUBTYPE_RGB24;
-        preferredSubtypeAvailable = true;
-        dshow_log("[DShow] RGB24 priority test mode: RGB24 capability found, prefer RGB24 over profile subtype");
+        if (nv12Available)
+        {
+            wantSubtype = MEDIASUBTYPE_NV12;
+            preferredSubtypeAvailable = true;
+            dshow_log("[DShow] preferred subtype unavailable -> fallback priority select NV12");
+        }
+        else if (yuy2Available)
+        {
+            wantSubtype = MEDIASUBTYPE_YUY2;
+            preferredSubtypeAvailable = true;
+            dshow_log("[DShow] preferred subtype unavailable -> fallback priority select YUY2");
+        }
+        else if (rgb24Available)
+        {
+            wantSubtype = MEDIASUBTYPE_RGB24;
+            preferredSubtypeAvailable = true;
+            dshow_log("[DShow] preferred subtype unavailable -> fallback priority select RGB24");
+        }
     }
 
     AM_MEDIA_TYPE *best = nullptr;

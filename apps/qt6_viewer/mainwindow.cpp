@@ -1034,21 +1034,15 @@ void MainWindow::updateRuntimeStatusUi()
     if (gcap_get_runtime_info(h_, &rt) != GCAP_OK)
         return;
 
-    const double inputFps = (rt.signal.fps_den > 0) ? (double(rt.signal.fps_num) / double(rt.signal.fps_den)) : 0.0;
     const double negotiatedFps = (rt.negotiated.fps_den > 0) ? (double(rt.negotiated.fps_num) / double(rt.negotiated.fps_den)) : 0.0;
     const double runtimeFps = (rt.runtime_fps > 0.0) ? rt.runtime_fps : avgFps_;
     const QString backend = QString::fromUtf8(rt.backend_name);
     const QString source = QString::fromUtf8(rt.frame_source);
 
-    QString inputFmt;
-    if (rt.input_signal_desc[0])
-        inputFmt = QString::fromUtf8(rt.input_signal_desc);
-    else
-        inputFmt = QString::fromUtf8(packetFmtName(rt.signal.pixfmt));
-    if (rt.input_signal_note[0])
-        inputFmt += QStringLiteral(" (%1)").arg(QString::fromUtf8(rt.input_signal_note));
     QString negotiatedFmt;
-    if (rt.negotiated_desc[0])
+    if (rt.source_format[0])
+        negotiatedFmt = QString::fromUtf8(rt.source_format);
+    else if (rt.negotiated_desc[0])
         negotiatedFmt = QString::fromUtf8(rt.negotiated_desc);
     else
         negotiatedFmt = QString::fromUtf8(packetFmtName(rt.negotiated.pixfmt));
@@ -1064,11 +1058,10 @@ void MainWindow::updateRuntimeStatusUi()
             .arg(QString::number(fps, 'f', 2))
             .arg(fmt);
     };
-    const QString sb = QStringLiteral("Backend: %1 | Source: %2 | %3 | Render %4 | Runtime %5fps")
+    const QString sb = QStringLiteral("Backend: %1 | Source: %2 | %3 | AppInternal %4 | Runtime %5fps")
                            .arg(backend)
                            .arg(source)
-                           //    .arg(statusBlock("InputSignal", rt.signal, inputFps, inputFmt))
-                           .arg(statusBlock("Negotiated", rt.negotiated, negotiatedFps, negotiatedFmt))
+                           .arg(statusBlock("BackendFmt", rt.negotiated, negotiatedFps, negotiatedFmt))
                            .arg(renderFmt.isEmpty() ? QStringLiteral("--") : renderFmt)
                            .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"));
     if (lastRuntimeStatusText_ != sb)
