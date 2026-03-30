@@ -2,6 +2,8 @@
 
 #include <objbase.h>
 #include <dvdmedia.h>
+#include <mfapi.h>
+#include <mfobjects.h>
 #include <wrl/client.h>
 #include <vector>
 #include <cmath>
@@ -1136,7 +1138,7 @@ const char *gcap_subtype_name(const GUID &sub)
         return "YUY2";
     if (sub == MEDIASUBTYPE_Y210)
         return "Y210";
-#ifdef MFVideoFormat_NV12
+
     if (sub == MFVideoFormat_NV12)
         return "NV12";
     if (sub == MFVideoFormat_YUY2)
@@ -1146,8 +1148,12 @@ const char *gcap_subtype_name(const GUID &sub)
     if (sub == MFVideoFormat_Y210)
         return "Y210";
     if (sub == MFVideoFormat_ARGB32)
-        return "ARGB";
-#endif
+        return "ARGB32";
+    if (sub == MFVideoFormat_RGB32)
+        return "RGB32";
+    if (sub == MFVideoFormat_MJPG)
+        return "MJPG";
+
     return "Unknown";
 }
 

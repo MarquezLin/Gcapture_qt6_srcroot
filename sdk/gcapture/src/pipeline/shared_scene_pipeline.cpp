@@ -135,8 +135,8 @@ float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
 )";
 
 static const char *g_ps_p010 = R"(
-Texture2D<uint>  texY16   : register(t0);
-Texture2D<uint2> texUV16  : register(t1);
+Texture2D<float>  texY16   : register(t0);
+Texture2D<float2> texUV16  : register(t1);
 SamplerState samL: register(s0);
 
 
@@ -200,8 +200,7 @@ float loadY(int2 ip)
 {
     ip.x = clamp(ip.x, 0, (int)width - 1);
     ip.y = clamp(ip.y, 0, (int)height - 1);
-    uint yy = texY16.Load(int3(ip, 0)).r;
-    return (float)((yy >> 6) & 1023) / 1023.0;
+    return saturate(texY16.Load(int3(ip, 0)).r);
 }
 
 float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
@@ -217,9 +216,10 @@ float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
     float blur = (yC*4.0 + yL + yR + yU + yD) / 8.0;
     float y = saturate(yC + sharpAmt * (yC - blur));
 
-    uint2 uvv = texUV16.Load(int3(ip, 0)).rg;
-    float u = (float)((uvv.x >> 6) & 1023) / 1023.0;
-    float v = (float)((uvv.y >> 6) & 1023) / 1023.0;
+    int2 uvp = int2(ip.x / 2, ip.y / 2);
+    float2 uvv = saturate(texUV16.Load(int3(uvp, 0)).rg);
+    float u = uvv.x;
+    float v = uvv.y;
 
     float2 uv2 = rotate_uv(float2(u, v));
 

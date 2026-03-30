@@ -1547,8 +1547,8 @@ float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
 )";
 
 static const char *g_ps_p010 = R"(
-Texture2D<uint>  texY16   : register(t0);
-Texture2D<uint2> texUV16  : register(t1);
+Texture2D<float>  texY16   : register(t0);
+Texture2D<float2> texUV16  : register(t1);
 SamplerState samL: register(s0);
 
 
@@ -1612,8 +1612,7 @@ float loadY(int2 ip)
 {
     ip.x = clamp(ip.x, 0, (int)width - 1);
     ip.y = clamp(ip.y, 0, (int)height - 1);
-    uint yy = texY16.Load(int3(ip, 0)).r;
-    return (float)((yy >> 6) & 1023) / 1023.0;
+    return saturate(texY16.Load(int3(ip, 0)).r);
 }
 
 float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
@@ -1629,9 +1628,10 @@ float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target
     float blur = (yC*4.0 + yL + yR + yU + yD) / 8.0;
     float y = saturate(yC + sharpAmt * (yC - blur));
 
-    uint2 uvv = texUV16.Load(int3(ip, 0)).rg;
-    float u = (float)((uvv.x >> 6) & 1023) / 1023.0;
-    float v = (float)((uvv.y >> 6) & 1023) / 1023.0;
+    int2 uvp = int2(ip.x / 2, ip.y / 2);
+    float2 uvv = saturate(texUV16.Load(int3(uvp, 0)).rg);
+    float u = uvv.x;
+    float v = uvv.y;
 
     float2 uv2 = rotate_uv(float2(u, v));
 
@@ -2718,9 +2718,10 @@ void WinMFProvider::loop()
 
         // refresh_signal_probe(false);
 
-        const GUID osdSubtype = signal_valid_ ? signal_subtype_ : cur_subtype_;
-        const int osdW = signal_valid_ ? signal_w_ : cur_w_;
-        const int osdH = signal_valid_ ? signal_h_ : cur_h_;
+        // OSD 跟 UI status bar 一致：顯示 backend negotiated subtype，而不是 true-input signal subtype
+        const GUID osdSubtype = cur_subtype_;
+        const int osdW = cur_w_;
+        const int osdH = cur_h_;
 
         const wchar_t *fmtName =
             (osdSubtype == MFVideoFormat_P010)     ? L"P010"
@@ -2735,8 +2736,8 @@ void WinMFProvider::loop()
                                                                                    : L"8-bit";
 
         double fps_show = 0.0;
-        if (signal_valid_ && signal_fps_num_ > 0 && signal_fps_den_ > 0)
-            fps_show = (double)signal_fps_num_ / (double)signal_fps_den_;
+        if (cur_fps_num_ > 0 && cur_fps_den_ > 0)
+            fps_show = (double)cur_fps_num_ / (double)cur_fps_den_;
         else if (fps_avg_ > 0.0)
             fps_show = fps_avg_;
 
@@ -2746,7 +2747,7 @@ void WinMFProvider::loop()
         wchar_t line[512];
         swprintf(line,
                  512,
-                 L"%s | GPU: %s | Signal: %dx%d @ %.2f fps | %s %s | #%llu",
+                 L"%s | GPU: %s | BackendFmt: %dx%d @ %.2f fps | %s %s | #%llu",
                  (wdev[0] ? wdev : L"Device"),
                  gpuName,
                  osdW,

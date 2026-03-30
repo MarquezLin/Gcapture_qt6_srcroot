@@ -932,8 +932,8 @@ void MainWindow::onFrameArrived(const QImage &img)
             captureInfo_.backendName = QString::fromUtf8(rt.backend_name);
             captureInfo_.frameSource = QString::fromUtf8(rt.frame_source);
             captureInfo_.pathName = QString::fromUtf8(rt.path_name);
-            captureInfo_.captureFormat = rt.source_format[0] ? QString::fromUtf8(rt.source_format)
-                                                             : (rt.negotiated_desc[0] ? QString::fromUtf8(rt.negotiated_desc) : QString());
+            captureInfo_.captureFormat = rt.negotiated_desc[0] ? QString::fromUtf8(rt.negotiated_desc)
+                                                             : (rt.source_format[0] ? QString::fromUtf8(rt.source_format) : QString());
             captureInfo_.renderFormat = QString::fromUtf8(rt.render_format);
         }
     }
@@ -1077,10 +1077,10 @@ void MainWindow::updateRuntimeStatusUi()
     const QString source = QString::fromUtf8(rt.frame_source);
 
     QString negotiatedFmt;
-    if (rt.source_format[0])
-        negotiatedFmt = QString::fromUtf8(rt.source_format);
-    else if (rt.negotiated_desc[0])
+    if (rt.negotiated_desc[0])
         negotiatedFmt = QString::fromUtf8(rt.negotiated_desc);
+    else if (rt.source_format[0])
+        negotiatedFmt = QString::fromUtf8(rt.source_format);
     else
         negotiatedFmt = QString::fromUtf8(packetFmtName(rt.negotiated.pixfmt));
     const QString renderFmt = QString::fromUtf8(rt.render_format);
@@ -1228,8 +1228,8 @@ void MainWindow::onShowInputInfo()
             captureInfo_.backendName = QString::fromUtf8(rt.backend_name);
             captureInfo_.frameSource = QString::fromUtf8(rt.frame_source);
             captureInfo_.pathName = QString::fromUtf8(rt.path_name);
-            captureInfo_.captureFormat = rt.source_format[0] ? QString::fromUtf8(rt.source_format)
-                                                             : (rt.negotiated_desc[0] ? QString::fromUtf8(rt.negotiated_desc) : QString());
+            captureInfo_.captureFormat = rt.negotiated_desc[0] ? QString::fromUtf8(rt.negotiated_desc)
+                                                             : (rt.source_format[0] ? QString::fromUtf8(rt.source_format) : QString());
             captureInfo_.renderFormat = QString::fromUtf8(rt.render_format);
         }
 
