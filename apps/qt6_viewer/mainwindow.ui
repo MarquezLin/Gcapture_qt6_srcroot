@@ -99,6 +99,11 @@
     <addaction name="actionInputInfo"/>
     <addaction name="actionDisplayInfo"/>
     <addaction name="actionProcAmp"/>
+    </widget>
+   <widget class="QMenu" name="menuDebug">
+    <property name="title">
+     <string>Debug</string>
+    </property>
     <addaction name="actionOpenVendorPropertyPageTest"/>
    </widget>
    <widget class="QMenu" name="menuOpen">
@@ -111,6 +116,7 @@
    </widget>
    <addaction name="menuView"/>
    <addaction name="menuOpen"/>
+   <addaction name="menuDebug"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <action name="actionDebugLog">
@@ -125,7 +131,7 @@
   </action>
   <action name="actionInputInfo">
    <property name="text">
-    <string>Input Info</string>
+    <string>Signal Info...</string>
    </property>
   </action>
   <action name="actionOpenSnapshot">
@@ -135,7 +141,7 @@
   </action>
   <action name="actionDisplayInfo">
    <property name="text">
-    <string>Display Info</string>
+    <string>Display Output Info...</string>
    </property>
   </action>
   <action name="actionProcAmp">

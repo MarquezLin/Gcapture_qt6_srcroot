@@ -148,9 +148,9 @@ namespace
                 {
                     const int base = x * 2;
                     const int Y0 = ((int)(srcRow[base + 0] & 1023u) * 255 + 511) / 1023;
-                    const int U  = ((int)(srcRow[base + 1] & 1023u) * 255 + 511) / 1023;
+                    const int U = ((int)(srcRow[base + 1] & 1023u) * 255 + 511) / 1023;
                     const int Y1 = (x + 1 < pkt.width) ? (((int)(srcRow[base + 2] & 1023u) * 255 + 511) / 1023) : Y0;
-                    const int V  = (x + 1 < pkt.width) ? (((int)(srcRow[base + 3] & 1023u) * 255 + 511) / 1023) : U;
+                    const int V = (x + 1 < pkt.width) ? (((int)(srcRow[base + 3] & 1023u) * 255 + 511) / 1023) : U;
                     uint8_t b = 0, g = 0, r = 0;
                     yuvToRgbLocal(Y0, U, V, b, g, r);
                     dst[x] = qRgba(r, g, b, 255);
@@ -1053,7 +1053,8 @@ void MainWindow::updateRuntimeStatusUi()
     else
         negotiatedFmt = QString::fromUtf8(packetFmtName(rt.negotiated.pixfmt));
     const QString renderFmt = QString::fromUtf8(rt.render_format);
-    const auto statusBlock = [](const char *label, const gcap_signal_status_t &s, double fps, const QString &fmt) {
+    const auto statusBlock = [](const char *label, const gcap_signal_status_t &s, double fps, const QString &fmt)
+    {
         if (s.width <= 0 || s.height <= 0)
             return QStringLiteral("%1 --").arg(QString::fromUtf8(label));
         return QStringLiteral("%1 %2x%3 %4fps %5")
@@ -1063,10 +1064,10 @@ void MainWindow::updateRuntimeStatusUi()
             .arg(QString::number(fps, 'f', 2))
             .arg(fmt);
     };
-    const QString sb = QStringLiteral("Backend: %1 | Source: %2 | %3 | %4 | Render %5 | Runtime %6fps")
+    const QString sb = QStringLiteral("Backend: %1 | Source: %2 | %3 | Render %4 | Runtime %5fps")
                            .arg(backend)
                            .arg(source)
-                           .arg(statusBlock("InputSignal", rt.signal, inputFps, inputFmt))
+                           //    .arg(statusBlock("InputSignal", rt.signal, inputFps, inputFmt))
                            .arg(statusBlock("Negotiated", rt.negotiated, negotiatedFps, negotiatedFmt))
                            .arg(renderFmt.isEmpty() ? QStringLiteral("--") : renderFmt)
                            .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"));
@@ -1121,31 +1122,47 @@ void MainWindow::onSnapshot()
 
 void MainWindow::onShowInputInfo()
 {
-    // 第一次打開時建一個 Dialog，之後就重用
+#ifdef _WIN32
+    const QString deviceText = (ui && ui->comboDevice) ? ui->comboDevice->currentText() : QString();
+    const int devIndex = (ui && ui->comboDevice) ? ui->comboDevice->currentIndex() : 0;
+    const bool isSc0710 = deviceText.contains(QStringLiteral("SC0710"), Qt::CaseInsensitive);
+    if (isSc0710)
+    {
+        MainWindow::postLog(QStringLiteral("[SignalInfo] SC0710 detected, launching vendor property page. devIndex=%1 name=%2")
+                                .arg(devIndex)
+                                .arg(deviceText));
+        const bool ok = (gcap_open_vendor_property_page(devIndex) != 0);
+        if (ok)
+            return;
+
+        MainWindow::postLog(QStringLiteral("[SignalInfo] vendor property page launch failed, fallback to generic dialog. devIndex=%1")
+                                .arg(devIndex),
+                            true);
+        QMessageBox::warning(this,
+                             tr("Signal Info"),
+                             tr("Open SC0710 vendor signal page failed.\nFallback to generic signal info dialog."));
+    }
+#endif
+
     if (!infoDlg_)
     {
         infoDlg_ = new inputinfodialog(this);
-        infoDlg_->setWindowTitle(tr("Input Signal Info"));
-        // 如果不想關掉就刪除物件，可以加：
-        // infoDlg_->setAttribute(Qt::WA_DeleteOnClose, false);
+        infoDlg_->setWindowTitle(tr("Signal Info"));
         connect(infoDlg_, &inputinfodialog::audioDeviceSelected,
                 this, [this](const QString &id)
-                { recordAudioDeviceIdUtf8_ = id; 
-                qDebug() << "[AudioSelect] MainWindow store id=" << id; });
+                {
+                    recordAudioDeviceIdUtf8_ = id;
+                    qDebug() << "[AudioSelect] MainWindow store id=" << id; });
     }
 
+    infoDlg_->setWindowTitle(tr("Signal Info"));
     infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
-    // 把目前最新的資訊丟進去
     infoDlg_->setInfoText(lastInfoText_);
-
     infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
-
-    // 顯示成「非 modal」的小視窗（可以一邊看畫面一邊開著）
     infoDlg_->show();
     infoDlg_->raise();
     infoDlg_->activateWindow();
 }
-
 
 void MainWindow::onOpenVendorPropertyPageTest()
 {
@@ -1155,8 +1172,8 @@ void MainWindow::onOpenVendorPropertyPageTest()
     MainWindow::postLog(QStringLiteral("[VendorPageTest] begin devIndex=%1").arg(devIndex));
 
     const bool ok = (gcap_open_vendor_property_page(devIndex) != 0);
-    MainWindow::postLog(QStringLiteral("[VendorPageTest] end result=%1 devIndex=%2")
-                            .arg(ok ? QStringLiteral("OK") : QStringLiteral("FAIL"))
+    MainWindow::postLog(QStringLiteral("[VendorPageTest] launch result=%1 devIndex=%2")
+                            .arg(ok ? QStringLiteral("STARTED") : QStringLiteral("FAIL"))
                             .arg(devIndex),
                         !ok);
     if (!ok)
