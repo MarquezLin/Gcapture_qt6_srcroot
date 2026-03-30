@@ -359,15 +359,24 @@ bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
     refreshSignalProbe(false);
 
     memset(&out, 0, sizeof(out));
-    const bool useSignal = signalValid_ && signalW_ > 0 && signalH_ > 0;
-    out.width = useSignal ? signalW_ : width_;
-    out.height = useSignal ? signalH_ : height_;
-    out.fps_num = useSignal ? signalFpsNum_ : (negotiatedFpsNum_ > 0 ? negotiatedFpsNum_ : profile_.fps_num);
-    out.fps_den = useSignal ? signalFpsDen_ : (negotiatedFpsDen_ > 0 ? negotiatedFpsDen_ : profile_.fps_den);
+
+    // "Input Signal" shown to UI is a best-effort live status.
+    // While DShow is actively running, prefer the currently negotiated/active format
+    // so UI reflects what the graph is truly delivering now.
+    // Keep the separate DShow GetFormat/GetStreamCaps result in runtime_info.signal_probe.
+    const bool haveActive = (width_ > 0 && height_ > 0);
+    const bool haveProbe = signalValid_ && signalW_ > 0 && signalH_ > 0;
+
+    out.width = haveActive ? width_ : (haveProbe ? signalW_ : 0);
+    out.height = haveActive ? height_ : (haveProbe ? signalH_ : 0);
+    out.fps_num = haveActive ? (negotiatedFpsNum_ > 0 ? negotiatedFpsNum_ : profile_.fps_num)
+                          : (haveProbe ? signalFpsNum_ : 0);
+    out.fps_den = haveActive ? (negotiatedFpsDen_ > 0 ? negotiatedFpsDen_ : profile_.fps_den)
+                          : (haveProbe ? signalFpsDen_ : 1);
     out.range = GCAP_RANGE_UNKNOWN;
     out.csp = GCAP_CSP_UNKNOWN;
     out.hdr = 0;
-    out.pixfmt = gcap_subtype_to_pixfmt(useSignal ? signalSubtype_ : subtype_);
+    out.pixfmt = gcap_subtype_to_pixfmt(haveActive ? subtype_ : (haveProbe ? signalSubtype_ : subtype_));
     out.bit_depth = gcap_pixfmt_bitdepth(out.pixfmt);
     if (out.pixfmt == GCAP_FMT_Y210)
         out.csp = GCAP_CSP_BT709;
@@ -379,6 +388,21 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     memset(&out, 0, sizeof(out));
     if (!getSignalStatus(out.signal))
         return false;
+
+    refreshSignalProbe(false);
+    memset(&out.signal_probe, 0, sizeof(out.signal_probe));
+    if (signalValid_ && signalW_ > 0 && signalH_ > 0)
+    {
+        out.signal_probe.width = signalW_;
+        out.signal_probe.height = signalH_;
+        out.signal_probe.fps_num = signalFpsNum_;
+        out.signal_probe.fps_den = signalFpsDen_;
+        out.signal_probe.pixfmt = gcap_subtype_to_pixfmt(signalSubtype_);
+        out.signal_probe.bit_depth = gcap_pixfmt_bitdepth(out.signal_probe.pixfmt);
+        out.signal_probe.csp = (out.signal_probe.pixfmt == GCAP_FMT_Y210) ? GCAP_CSP_BT709 : GCAP_CSP_UNKNOWN;
+        out.signal_probe.range = GCAP_RANGE_UNKNOWN;
+        out.signal_probe.hdr = 0;
+    }
 
     memset(&out.negotiated, 0, sizeof(out.negotiated));
     out.negotiated.width = width_;
@@ -516,6 +540,7 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
     GUID wantSubtype = (profile_.format == GCAP_FMT_NV12)   ? MEDIASUBTYPE_NV12
                      : (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
                      : (profile_.format == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
+                     : (profile_.format == GCAP_FMT_ARGB) ? MEDIASUBTYPE_RGB24
                                                           : GUID{};
     if (wantSubtype == GUID{} && signalValid_ && signalSubtype_ != GUID_NULL)
         wantSubtype = signalSubtype_;
@@ -529,6 +554,7 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 
     std::vector<unsigned char> caps(static_cast<size_t>(capSize));
     bool preferredSubtypeAvailable = false;
+    bool rgb24Available = false;
     for (int i = 0; i < capCount; ++i)
     {
         AM_MEDIA_TYPE *scan = nullptr;
@@ -536,7 +562,17 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
             continue;
         if (wantSubtype != GUID{} && scan->subtype == wantSubtype)
             preferredSubtypeAvailable = true;
+        if (scan->subtype == MEDIASUBTYPE_RGB24)
+            rgb24Available = true;
         freeMediaType(scan);
+    }
+
+    const bool rgb24PriorityTest = rgb24Available;
+    if (rgb24PriorityTest && wantSubtype != MEDIASUBTYPE_RGB24)
+    {
+        wantSubtype = MEDIASUBTYPE_RGB24;
+        preferredSubtypeAvailable = true;
+        dshow_log("[DShow] RGB24 priority test mode: RGB24 capability found, prefer RGB24 over profile subtype");
     }
 
     AM_MEDIA_TYPE *best = nullptr;
@@ -606,7 +642,8 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 
 bool DShowProvider::isRawCandidate() const
 {
-    return (subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210);
+    return (subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210 ||
+            subtype_ == MEDIASUBTYPE_RGB24 || subtype_ == MEDIASUBTYPE_RGB32 || subtype_ == MEDIASUBTYPE_ARGB32);
 }
 
 const char *DShowProvider::callbackSourceName(CallbackSource src) const
@@ -1025,6 +1062,7 @@ bool DShowProvider::open(int index)
     }
 
     currentIndex_ = index;
+    dshow_dump_signal_diagnostics_by_index(index);
     refreshSignalProbe(true);
     updatePreviewRect();
     if (previewHwnd_)
@@ -1376,7 +1414,7 @@ void DShowProvider::framePumpLoop()
         //   - ARGB video callback is allowed during preview, but only at a low frequency
         //     so it does not drag preview smoothness back down.
         const bool allowVideoCallbackPath = (vcb != nullptr);
-        const bool needArgb = !canUseSharedRaw && (allowVideoCallbackPath || previewOnlyActive);
+        const bool needArgb = !canUseSharedRaw && (allowVideoCallbackPath || previewOnlyActive || rawSubtype == MEDIASUBTYPE_RGB24 || rawSubtype == MEDIASUBTYPE_RGB32 || rawSubtype == MEDIASUBTYPE_ARGB32);
         const bool haveArgb = needArgb ? captureRawFrameToArgb(buf, w, h, stride) : false;
 
         if (haveRaw || haveArgb)
@@ -1679,7 +1717,7 @@ void DShowProvider::framePumpLoop()
                                           callbackSourceName(lastCallbackSource_.load()),
                                           isRawCandidate() ? "YES" : "NO",
                                           rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO",
-                                          canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : (rawSubtype == MEDIASUBTYPE_Y210 ? "Y210-direct" : "YUY2-direct")) : "ARGB-bridge");
+                                          canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : (rawSubtype == MEDIASUBTYPE_Y210 ? "Y210-direct" : "YUY2-direct")) : ((rawSubtype == MEDIASUBTYPE_RGB24 || rawSubtype == MEDIASUBTYPE_RGB32 || rawSubtype == MEDIASUBTYPE_ARGB32) ? "RGB-bridge" : "ARGB-bridge"));
                                 OutputDebugStringA(msg);
                             }
                             vcb(&f, user);

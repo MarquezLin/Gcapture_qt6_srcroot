@@ -48,7 +48,7 @@ QString formatCaptureDeviceInfo(const CaptureDeviceInfo &info,
 {
     QStringList lines;
 
-    lines << "Input Signal";
+    lines << "Signal Probe (DShow fallback)";
     lines << "────────────";
 
     if (info.hasSignal())
@@ -62,9 +62,9 @@ QString formatCaptureDeviceInfo(const CaptureDeviceInfo &info,
                      .arg(info.signal.height);
         lines << QString("Frame Rate    : %1 fps")
                      .arg(fps, 0, 'f', 2);
-        lines << QString("Sample Format : %1")
+        lines << QString("Pin Format    : %1")
                      .arg(pixFmtToString(info.signal.pixfmt));
-        lines << QString("Sample Family : %1")
+        lines << QString("Pin Family    : %1")
                      .arg(sampleFamilyToString(info.signal.pixfmt));
         lines << QString("Bit Depth     : %1-bit")
                      .arg(info.signal.bit_depth);

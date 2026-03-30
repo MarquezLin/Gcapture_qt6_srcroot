@@ -62,7 +62,7 @@ namespace
         case GCAP_FMT_Y210:
             return "Y210";
         case GCAP_FMT_ARGB:
-            return "ARGB";
+            return "ARGB32";
         default:
             return "UNKNOWN";
         }
@@ -1036,20 +1036,38 @@ void MainWindow::updateRuntimeStatusUi()
     const QString backend = QString::fromUtf8(rt.backend_name);
     const QString source = QString::fromUtf8(rt.frame_source);
 
-    const QString inputFmt = QString::fromUtf8(packetFmtName(rt.signal.pixfmt));
-    const QString negotiatedFmt = QString::fromUtf8(packetFmtName(rt.negotiated.pixfmt));
-    const QString renderFmt = QString::fromUtf8(rt.render_format);
-    const QString sb = QStringLiteral("Backend: %1 | Source: %2 | InputSignal %3x%4 %5fps %6 | Negotiated %7x%8 %9fps %10 | Render %11 | Runtime %12fps")
+    const QString inputFmt = [&]() -> QString {
+        if (rt.signal.width <= 0 || rt.signal.height <= 0)
+            return QStringLiteral("--");
+        const QString fmt = QString::fromUtf8(packetFmtName(rt.signal.pixfmt));
+        if (fmt.isEmpty() || fmt == QStringLiteral("Unknown") || fmt == QStringLiteral("ARGB32"))
+            return QStringLiteral("Unknown(true signal)");
+        return fmt;
+    }();
+
+    const QString negotiatedFmt = [&]() -> QString {
+        const QString fmt = QString::fromUtf8(rt.source_format).trimmed();
+        if (!fmt.isEmpty())
+            return fmt;
+        return QString::fromUtf8(packetFmtName(rt.negotiated.pixfmt));
+    }();
+
+    const QString renderFmt = QString::fromUtf8(rt.render_format).trimmed();
+    const auto statusBlock = [](const char *label, const gcap_signal_status_t &s, double fps, const QString &fmt) {
+        if (s.width <= 0 || s.height <= 0)
+            return QStringLiteral("%1 --").arg(QString::fromUtf8(label));
+        return QStringLiteral("%1 %2x%3 %4fps %5")
+            .arg(QString::fromUtf8(label))
+            .arg(s.width)
+            .arg(s.height)
+            .arg(QString::number(fps, 'f', 2))
+            .arg(fmt);
+    };
+    const QString sb = QStringLiteral("Backend: %1 | Source: %2 | %3 | %4 | Render %5 | Runtime %6fps")
                            .arg(backend)
                            .arg(source)
-                           .arg(rt.signal.width)
-                           .arg(rt.signal.height)
-                           .arg(QString::number(inputFps, 'f', 2))
-                           .arg(inputFmt)
-                           .arg(rt.negotiated.width)
-                           .arg(rt.negotiated.height)
-                           .arg(QString::number(negotiatedFps, 'f', 2))
-                           .arg(negotiatedFmt)
+                           .arg(statusBlock("InputSignal", rt.signal, inputFps, inputFmt))
+                           .arg(statusBlock("Negotiated", rt.negotiated, negotiatedFps, negotiatedFmt))
                            .arg(renderFmt.isEmpty() ? QStringLiteral("--") : renderFmt)
                            .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"));
     if (lastRuntimeStatusText_ != sb)

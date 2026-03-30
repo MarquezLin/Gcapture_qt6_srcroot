@@ -107,8 +107,9 @@ extern "C"
 
     typedef struct
     {
-        gcap_signal_status_t signal;      // true input signal probe (front-end / current signal)
-        gcap_signal_status_t negotiated;  // negotiated media type actually delivered to app/backend
+        gcap_signal_status_t signal;       // best-effort input signal shown to UI
+        gcap_signal_status_t signal_probe; // raw probe / fallback (e.g. DShow GetFormat)
+        gcap_signal_status_t negotiated;   // negotiated media type actually delivered to app/backend
         double runtime_fps;               // measured FPS from actual delivered frames (0 = unknown)
         int active_backend;               // GCAP_BACKEND_*
         char backend_name[32];            // e.g. WinMF GPU / WinMF CPU / DShow Raw

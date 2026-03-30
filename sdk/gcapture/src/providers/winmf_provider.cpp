@@ -292,12 +292,15 @@ bool WinMFProvider::getSignalStatus(gcap_signal_status_t &out)
 
     memset(&out, 0, sizeof(out));
 
-    const bool useSignal = signal_valid_ && signal_w_ > 0 && signal_h_ > 0;
-    out.width = useSignal ? signal_w_ : cur_w_;
-    out.height = useSignal ? signal_h_ : cur_h_;
-    out.fps_num = useSignal ? signal_fps_num_ : ((cur_fps_num_ > 0) ? cur_fps_num_ : 0);
-    out.fps_den = useSignal ? signal_fps_den_ : ((cur_fps_den_ > 0) ? cur_fps_den_ : 1);
-    out.pixfmt = mfsub_to_gcap(useSignal ? signal_subtype_ : cur_subtype_);
+    // UI "Input Signal": prefer the currently active MF media type while running.
+    // Keep the DShow fallback probe separately in runtime_info.signal_probe.
+    const bool haveActive = (cur_w_ > 0 && cur_h_ > 0);
+    const bool haveProbe = signal_valid_ && signal_w_ > 0 && signal_h_ > 0;
+    out.width = haveActive ? cur_w_ : (haveProbe ? signal_w_ : 0);
+    out.height = haveActive ? cur_h_ : (haveProbe ? signal_h_ : 0);
+    out.fps_num = haveActive ? ((cur_fps_num_ > 0) ? cur_fps_num_ : 0) : (haveProbe ? signal_fps_num_ : 0);
+    out.fps_den = haveActive ? ((cur_fps_den_ > 0) ? cur_fps_den_ : 1) : (haveProbe ? signal_fps_den_ : 1);
+    out.pixfmt = mfsub_to_gcap(haveActive ? cur_subtype_ : (haveProbe ? signal_subtype_ : cur_subtype_));
     out.bit_depth = pixfmt_bitdepth(out.pixfmt);
     out.csp = GCAP_CSP_UNKNOWN;
     out.range = GCAP_RANGE_UNKNOWN;
@@ -310,6 +313,21 @@ bool WinMFProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     memset(&out, 0, sizeof(out));
     if (!getSignalStatus(out.signal))
         return false;
+
+    refresh_signal_probe(false);
+    memset(&out.signal_probe, 0, sizeof(out.signal_probe));
+    if (signal_valid_ && signal_w_ > 0 && signal_h_ > 0)
+    {
+        out.signal_probe.width = signal_w_;
+        out.signal_probe.height = signal_h_;
+        out.signal_probe.fps_num = signal_fps_num_;
+        out.signal_probe.fps_den = signal_fps_den_;
+        out.signal_probe.pixfmt = mfsub_to_gcap(signal_subtype_);
+        out.signal_probe.bit_depth = pixfmt_bitdepth(out.signal_probe.pixfmt);
+        out.signal_probe.csp = GCAP_CSP_UNKNOWN;
+        out.signal_probe.range = GCAP_RANGE_UNKNOWN;
+        out.signal_probe.hdr = -1;
+    }
 
     memset(&out.negotiated, 0, sizeof(out.negotiated));
     out.negotiated.width = cur_w_;

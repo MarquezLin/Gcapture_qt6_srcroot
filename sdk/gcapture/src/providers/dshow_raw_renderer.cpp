@@ -103,7 +103,8 @@ void DShowRawRenderer::setNegotiated(const GUID &subtype, int width, int height,
 
 bool DShowRawRenderer::isSupportedSubtype() const
 {
-    return subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210;
+    return subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210 ||
+           subtype_ == MEDIASUBTYPE_RGB24 || subtype_ == MEDIASUBTYPE_RGB32 || subtype_ == MEDIASUBTYPE_ARGB32;
 }
 
 GUID DShowRawRenderer::negotiatedFormat() const
@@ -111,6 +112,9 @@ GUID DShowRawRenderer::negotiatedFormat() const
     if (subtype_ == MEDIASUBTYPE_NV12) return MEDIASUBTYPE_NV12;
     if (subtype_ == MEDIASUBTYPE_YUY2) return MEDIASUBTYPE_YUY2;
     if (subtype_ == MEDIASUBTYPE_Y210) return MEDIASUBTYPE_Y210;
+    if (subtype_ == MEDIASUBTYPE_RGB24) return MEDIASUBTYPE_RGB24;
+    if (subtype_ == MEDIASUBTYPE_RGB32) return MEDIASUBTYPE_RGB32;
+    if (subtype_ == MEDIASUBTYPE_ARGB32) return MEDIASUBTYPE_ARGB32;
     return MEDIASUBTYPE_NULL;
 }
 
@@ -176,6 +180,14 @@ bool DShowRawRenderer::copyLatestRaw(std::vector<uint8_t> &out, int &w, int &h, 
     {
         stride = width_ * 4;
     }
+    else if (subtype_ == MEDIASUBTYPE_RGB24)
+    {
+        stride = width_ * 3;
+    }
+    else if (subtype_ == MEDIASUBTYPE_RGB32 || subtype_ == MEDIASUBTYPE_ARGB32)
+    {
+        stride = width_ * 4;
+    }
     else
     {
         stride = 0;
@@ -203,6 +215,16 @@ bool DShowRawRenderer::copyLatestFrameToArgb(std::vector<uint8_t> &out, int &w, 
     if (subtype == MEDIASUBTYPE_Y210)
     {
         y210ToArgb(raw.data(), w, h, stride, out, stride);
+        return true;
+    }
+    if (subtype == MEDIASUBTYPE_RGB24)
+    {
+        rgb24ToArgb(raw.data(), w, h, stride, out, stride);
+        return true;
+    }
+    if (subtype == MEDIASUBTYPE_RGB32 || subtype == MEDIASUBTYPE_ARGB32)
+    {
+        bgraToArgb(raw.data(), w, h, stride, out, stride);
         return true;
     }
     return false;
@@ -322,6 +344,43 @@ HANDLE DShowRawRenderer::frameReadyEvent() const
     return frameReadyEvent_;
 }
 
+
+
+void DShowRawRenderer::rgb24ToArgb(const uint8_t *src, int width, int height, int srcStride, std::vector<uint8_t> &dst, int &dstStride)
+{
+    dstStride = width * 4;
+    dst.resize(static_cast<size_t>(dstStride) * static_cast<size_t>(height));
+
+    // DShow RGB24 samples are commonly delivered bottom-up. Flip rows here so
+    // preview/callback ARGB becomes top-down for Qt / D3D upload.
+    for (int y = 0; y < height; ++y)
+    {
+        const uint8_t *srcRow = src + static_cast<size_t>(height - 1 - y) * static_cast<size_t>(srcStride);
+        uint8_t *dstRow = dst.data() + static_cast<size_t>(y) * static_cast<size_t>(dstStride);
+        for (int x = 0; x < width; ++x)
+        {
+            const uint8_t *s = srcRow + static_cast<size_t>(x) * 3;
+            uint8_t *d = dstRow + static_cast<size_t>(x) * 4;
+            d[0] = s[0];
+            d[1] = s[1];
+            d[2] = s[2];
+            d[3] = 255;
+        }
+    }
+}
+
+void DShowRawRenderer::bgraToArgb(const uint8_t *src, int width, int height, int srcStride, std::vector<uint8_t> &dst, int &dstStride)
+{
+    dstStride = width * 4;
+    dst.resize(static_cast<size_t>(dstStride) * static_cast<size_t>(height));
+
+    for (int y = 0; y < height; ++y)
+    {
+        const uint8_t *srcRow = src + static_cast<size_t>(y) * static_cast<size_t>(srcStride);
+        uint8_t *dstRow = dst.data() + static_cast<size_t>(y) * static_cast<size_t>(dstStride);
+        std::memcpy(dstRow, srcRow, static_cast<size_t>(dstStride));
+    }
+}
 
 double DShowRawRenderer::runtimeFpsAvg() const
 {
