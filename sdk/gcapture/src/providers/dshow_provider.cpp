@@ -117,6 +117,30 @@ namespace
         return "UNKNOWN";
     }
 
+    static GUID subtypeFromProfileFmt(gcap_pixfmt_t fmt)
+    {
+        return (fmt == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
+             : (fmt == GCAP_FMT_NV12) ? MEDIASUBTYPE_NV12
+             : (fmt == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
+             : (fmt == GCAP_FMT_ARGB) ? MEDIASUBTYPE_RGB24
+                                       : GUID{};
+    }
+
+    static int dshowQualityRank(const GUID &g)
+    {
+        if (g == MEDIASUBTYPE_Y210)
+            return 5;
+        if (g == MEDIASUBTYPE_NV12)
+            return 4;
+        if (g == MEDIASUBTYPE_YUY2)
+            return 3;
+        if (g == MEDIASUBTYPE_RGB24)
+            return 2;
+        if (g == MEDIASUBTYPE_RGB32 || g == MEDIASUBTYPE_ARGB32)
+            return 1;
+        return 0;
+    }
+
     static IPin *findUnconnectedPin(IBaseFilter *filter, PIN_DIRECTION dir)
     {
         if (!filter)
@@ -586,27 +610,22 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 
     refreshSignalProbe(false);
 
-    int wantW = profile_.width;
-    int wantH = profile_.height;
-    int wantFpsNum = profile_.fps_num;
-    int wantFpsDen = profile_.fps_den > 0 ? profile_.fps_den : 1;
-    GUID wantSubtype = (profile_.format == GCAP_FMT_NV12)   ? MEDIASUBTYPE_NV12
-                     : (profile_.format == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
-                     : (profile_.format == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
-                     : (profile_.format == GCAP_FMT_ARGB) ? MEDIASUBTYPE_RGB24
-                                                          : GUID{};
-    if (wantSubtype == GUID{} && signalValid_ && signalSubtype_ != GUID_NULL)
-        wantSubtype = signalSubtype_;
+    int wantW = signalValid_ && signalW_ > 0 ? signalW_ : profile_.width;
+    int wantH = signalValid_ && signalH_ > 0 ? signalH_ : profile_.height;
+    int wantFpsNum = signalValid_ && signalFpsNum_ > 0 ? signalFpsNum_ : profile_.fps_num;
+    int wantFpsDen = signalValid_ && signalFpsDen_ > 0 ? signalFpsDen_ : (profile_.fps_den > 0 ? profile_.fps_den : 1);
 
-    if (wantW <= 0 && wantH <= 0 && wantFpsNum <= 0 && wantSubtype == GUID{})
-        return false;
+    const bool profileAuto = (profile_.width <= 0 && profile_.height <= 0 && profile_.fps_num <= 0 && profile_.fps_den <= 0 && profile_.format == GCAP_FMT_NV12);
+    const GUID explicitSubtype = profileAuto ? GUID{} : subtypeFromProfileFmt(profile_.format);
+    GUID preferredSubtype = GUID{};
 
     int capCount = 0, capSize = 0;
     if (FAILED(streamConfig->GetNumberOfCapabilities(&capCount, &capSize)) || capCount <= 0 || capSize <= 0)
         return false;
 
     std::vector<unsigned char> caps(static_cast<size_t>(capSize));
-    bool preferredSubtypeAvailable = false;
+    bool explicitSubtypeAvailable = false;
+    bool y210Available = false;
     bool nv12Available = false;
     bool yuy2Available = false;
     bool rgb24Available = false;
@@ -615,9 +634,11 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
         AM_MEDIA_TYPE *scan = nullptr;
         if (FAILED(streamConfig->GetStreamCaps(i, &scan, caps.data())) || !scan)
             continue;
-        if (wantSubtype != GUID{} && scan->subtype == wantSubtype)
-            preferredSubtypeAvailable = true;
-        if (scan->subtype == MEDIASUBTYPE_NV12)
+        if (explicitSubtype != GUID{} && scan->subtype == explicitSubtype)
+            explicitSubtypeAvailable = true;
+        if (scan->subtype == MEDIASUBTYPE_Y210)
+            y210Available = true;
+        else if (scan->subtype == MEDIASUBTYPE_NV12)
             nv12Available = true;
         else if (scan->subtype == MEDIASUBTYPE_YUY2)
             yuy2Available = true;
@@ -626,26 +647,23 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
         freeMediaType(scan);
     }
 
-    if (wantSubtype != GUID{} && !preferredSubtypeAvailable)
+    if (explicitSubtype != GUID{} && explicitSubtypeAvailable)
     {
-        if (nv12Available)
-        {
-            wantSubtype = MEDIASUBTYPE_NV12;
-            preferredSubtypeAvailable = true;
-            dshow_log("[DShow] preferred subtype unavailable -> fallback priority select NV12");
-        }
+        preferredSubtype = explicitSubtype;
+        dshow_log("[DShow] capture format policy: explicit profile format is available; use it as first preference");
+    }
+    else
+    {
+        if (y210Available)
+            preferredSubtype = MEDIASUBTYPE_Y210;
+        else if (nv12Available)
+            preferredSubtype = MEDIASUBTYPE_NV12;
         else if (yuy2Available)
-        {
-            wantSubtype = MEDIASUBTYPE_YUY2;
-            preferredSubtypeAvailable = true;
-            dshow_log("[DShow] preferred subtype unavailable -> fallback priority select YUY2");
-        }
+            preferredSubtype = MEDIASUBTYPE_YUY2;
         else if (rgb24Available)
-        {
-            wantSubtype = MEDIASUBTYPE_RGB24;
-            preferredSubtypeAvailable = true;
-            dshow_log("[DShow] preferred subtype unavailable -> fallback priority select RGB24");
-        }
+            preferredSubtype = MEDIASUBTYPE_RGB24;
+
+        dshow_log("[DShow] capture format policy: high-quality preferred order Y210 > NV12 > YUY2 > RGB24");
     }
 
     AM_MEDIA_TYPE *best = nullptr;
@@ -665,8 +683,8 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
         }
 
         long long score = 0;
-        if (wantSubtype != GUID{} && preferredSubtypeAvailable)
-            score += (pmt->subtype == wantSubtype) ? 0 : 1000000000LL;
+        if (preferredSubtype != GUID{})
+            score += (pmt->subtype == preferredSubtype) ? 0 : 1000000000LL;
 
         if (wantW > 0)
             score += 1000LL * llabs((long long)w - wantW);
@@ -678,6 +696,9 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
             double wantFps = (double)wantFpsNum / (double)wantFpsDen;
             score += (long long)(100.0 * fabs(fps - wantFps));
         }
+
+        const int pref = dshowQualityRank(pmt->subtype);
+        score = score * 100 + (100 - pref);
 
         if (score < bestScore)
         {
@@ -704,9 +725,10 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 
     int w = 0, h = 0, fpsNum = 0, fpsDen = 0;
     mediaTypeToVideoInfo(best, w, h, fpsNum, fpsDen);
-    char buf[512] = {};
-    sprintf_s(buf, "[DShow] apply profile -> preferred=%s available=%d negotiated=%s %dx%d %.2ffps",
-              subtypeName(wantSubtype), preferredSubtypeAvailable ? 1 : 0,
+    char buf[640] = {};
+    sprintf_s(buf, "[DShow] negotiated by HQ policy -> explicit=%s available=%d preferred=%s negotiated=%s %dx%d %.2ffps",
+              subtypeName(explicitSubtype), explicitSubtypeAvailable ? 1 : 0,
+              subtypeName(preferredSubtype),
               subtypeName(best->subtype), w, h, (fpsNum > 0 && fpsDen > 0) ? ((double)fpsNum / (double)fpsDen) : 0.0);
     OutputDebugStringA(buf);
     freeMediaType(best);

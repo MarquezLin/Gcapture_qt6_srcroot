@@ -116,6 +116,26 @@ static gcap_pixfmt_t mfsub_to_gcap(const GUID &sub)
     return GCAP_FMT_ARGB; // fallback（你也可改成 NV12）
 }
 
+static GUID mf_subtype_from_profile_fmt(gcap_pixfmt_t fmt)
+{
+    return (fmt == GCAP_FMT_P010) ? MFVideoFormat_P010
+         : (fmt == GCAP_FMT_Y210) ? MFVideoFormat_Y210
+         : (fmt == GCAP_FMT_NV12) ? MFVideoFormat_NV12
+         : (fmt == GCAP_FMT_YUY2) ? MFVideoFormat_YUY2
+         : (fmt == GCAP_FMT_ARGB) ? MFVideoFormat_ARGB32
+                                  : GUID_NULL;
+}
+
+static int mf_quality_rank(const GUID &s)
+{
+    return (s == MFVideoFormat_P010) ? 5
+         : (s == MFVideoFormat_Y210) ? 4
+         : (s == MFVideoFormat_NV12) ? 3
+         : (s == MFVideoFormat_YUY2) ? 2
+         : (s == MFVideoFormat_ARGB32) ? 1
+                                       : 0;
+}
+
 static int pixfmt_bitdepth(gcap_pixfmt_t f)
 {
     switch (f)
@@ -749,7 +769,8 @@ bool WinMFProvider::open(int index)
     last_signal_probe_ms_ = 0;
 
     refresh_signal_probe(true);
-    const GUID preferredSub = signal_valid_ ? signal_subtype_ : GUID_NULL;
+    const bool profileAuto = (profile_.width <= 0 && profile_.height <= 0 && profile_.fps_num <= 0 && profile_.fps_den <= 0 && profile_.format == GCAP_FMT_NV12);
+    const GUID preferredSub = profileAuto ? GUID_NULL : mf_subtype_from_profile_fmt(profile_.format);
 
     if (prefer_gpu_)
     {
@@ -770,7 +791,7 @@ bool WinMFProvider::open(int index)
                 ensure_rt_and_pipeline(cur_w_, cur_h_);
 
                 std::ostringstream oss;
-                oss << "[WinMF] preferred negotiation: input=" << mf_subtype_name(preferredSub)
+                oss << "[WinMF] negotiated by HQ policy: explicit=" << mf_subtype_name(preferredSub)
                     << ", negotiated=" << mf_subtype_name(cur_subtype_);
                 emit_error(GCAP_OK, oss.str().c_str());
                 return true;
@@ -1302,10 +1323,7 @@ bool WinMFProvider::pick_best_native(const GUID &preferredSub, GUID &sub, UINT32
             score += (long long)(100.0 * fabs(fps - wantFps));
         }
 
-        int pref = (s == MFVideoFormat_P010) ? 4 : (s == MFVideoFormat_Y210) ? 3
-                                               : (s == MFVideoFormat_NV12)   ? 2
-                                               : (s == MFVideoFormat_YUY2)   ? 1
-                                                                             : 0;
+        const int pref = mf_quality_rank(s);
         score = score * 100 + (100 - pref);
         list.push_back({s, cw, ch, fnum, fden, score, t});
     }
@@ -1351,7 +1369,7 @@ bool WinMFProvider::pick_best_native(const GUID &preferredSub, GUID &sub, UINT32
             }
 
             std::ostringstream oss;
-            oss << "[WinMF] pick_best_native: preferred=" << mf_subtype_name(preferredSub)
+            oss << "[WinMF] pick_best_native: explicit=" << mf_subtype_name(preferredSub)
                 << ", subtype=" << mf_subtype_name(rsub)
                 << ", " << rw << "x" << rh
                 << " @ " << rfn;
@@ -1418,7 +1436,7 @@ bool WinMFProvider::pick_best_native(const GUID &preferredSub, GUID &sub, UINT32
     cpu_path_ = true; // 明確走 CPU
 
     std::ostringstream oss;
-    oss << "[WinMF] pick_best_native: preferred=" << mf_subtype_name(preferredSub)
+    oss << "[WinMF] pick_best_native: explicit=" << mf_subtype_name(preferredSub)
         << ", fallback=ARGB32 from native " << mf_subtype_name(best.sub);
     emit_error(GCAP_OK, oss.str().c_str());
     return true;
