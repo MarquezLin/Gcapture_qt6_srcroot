@@ -38,4 +38,15 @@ namespace gcap
                       int width, int height, int yuy2Stride,
                       uint8_t *outARGB, int outStride,
                       const ProcAmpParams &p);
+
+    // Y210 (YUV422 10-bit packed) → ARGB
+    void y210_to_argb(const uint8_t *y210,
+                      int width, int height, int y210Stride,
+                      uint8_t *outARGB, int outStride);
+
+    // Y210 (YUV422 10-bit packed) → ARGB + ProcAmp
+    void y210_to_argb(const uint8_t *y210,
+                      int width, int height, int y210Stride,
+                      uint8_t *outARGB, int outStride,
+                      const ProcAmpParams &p);
 }

@@ -964,7 +964,9 @@ void MainWindow::onFrameArrived(const QImage &img)
     captureInfo_.propertyPages.clear();
     if (captureInfo_.deviceName.contains(QStringLiteral("AVerMedia"), Qt::CaseInsensitive))
     {
-        captureInfo_.supportedFormats << QStringLiteral("YUY2 1920x1080 60.00 fps")
+        captureInfo_.supportedFormats << QStringLiteral("Y210 1920x1080 60.00 fps")
+                                      << QStringLiteral("Y210 3840x2160 30.00 fps")
+                                      << QStringLiteral("YUY2 1920x1080 60.00 fps")
                                       << QStringLiteral("YUY2 640x480 60.00 fps")
                                       << QStringLiteral("YUY2 720x480 60.00 fps")
                                       << QStringLiteral("YUY2 720x576 50.00 fps")
@@ -1247,7 +1249,9 @@ void MainWindow::onShowInputInfo()
     const QString deviceName = captureInfo_.deviceName;
     if (deviceName.contains(QStringLiteral("AVerMedia"), Qt::CaseInsensitive))
     {
-        captureInfo_.supportedFormats << QStringLiteral("YUY2 1920x1080 60.00 fps")
+        captureInfo_.supportedFormats << QStringLiteral("Y210 1920x1080 60.00 fps")
+                                      << QStringLiteral("Y210 3840x2160 30.00 fps")
+                                      << QStringLiteral("YUY2 1920x1080 60.00 fps")
                                       << QStringLiteral("YUY2 640x480 60.00 fps")
                                       << QStringLiteral("YUY2 720x480 60.00 fps")
                                       << QStringLiteral("YUY2 720x576 50.00 fps")

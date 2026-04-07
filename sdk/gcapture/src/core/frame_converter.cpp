@@ -238,3 +238,75 @@ void gcap::yuy2_to_argb(const uint8_t *yuy2,
     if (p.sharpness != 128)
         apply_sharpness_bgra(outARGB, width, height, outStride, p.sharpness);
 }
+
+// ------------------------------------------------------------
+// Y210 (YUV422 10-bit packed) → ARGB
+// layout per 2 pixels: Y0 U Y1 V, each component stored in 16-bit container
+// ------------------------------------------------------------
+void gcap::y210_to_argb(const uint8_t *y210,
+                        int width, int height,
+                        int strideY210,
+                        uint8_t *outARGB, int outStride)
+{
+    ProcAmpParams p;
+    y210_to_argb(y210, width, height, strideY210, outARGB, outStride, p);
+}
+
+void gcap::y210_to_argb(const uint8_t *y210,
+                        int width, int height,
+                        int strideY210,
+                        uint8_t *outARGB, int outStride,
+                        const ProcAmpParams &p)
+{
+    for (int y = 0; y < height; ++y)
+    {
+        const uint16_t *src = reinterpret_cast<const uint16_t *>(y210 + (size_t)y * (size_t)strideY210);
+        uint8_t *dst = outARGB + (size_t)y * (size_t)outStride;
+
+        for (int x = 0; x < width; x += 2)
+        {
+            const int base = x * 2;
+
+            // Many drivers place valid 10-bit values in the low 10 bits for Y210.
+            // This matches the rest of this project’s current Y210 handling.
+            const int Y0 = (int)((src[base + 0] & 1023u) * 255u + 511u) / 1023;
+            uint8_t U = (uint8_t)(((src[base + 1] & 1023u) * 255u + 511u) / 1023);
+            const int Y1 = (x + 1 < width)
+                               ? (int)(((src[base + 2] & 1023u) * 255u + 511u) / 1023)
+                               : Y0;
+            uint8_t V = (uint8_t)(((src[base + 3] & 1023u) * 255u + 511u) / 1023);
+
+            if (p.hue != 128)
+                apply_hue_to_uv(U, V, p);
+
+            uint8_t r0, g0, b0;
+            uint8_t r1, g1, b1;
+
+            yuv_to_rgb(Y0, U, V, r0, g0, b0);
+            if (p.brightness != 128 || p.contrast != 128 || p.saturation != 128)
+                apply_bcs_rgb(r0, g0, b0, p);
+
+            yuv_to_rgb(Y1, U, V, r1, g1, b1);
+            if (p.brightness != 128 || p.contrast != 128 || p.saturation != 128)
+                apply_bcs_rgb(r1, g1, b1, p);
+
+            dst[0] = b0;
+            dst[1] = g0;
+            dst[2] = r0;
+            dst[3] = 255;
+
+            if (x + 1 < width)
+            {
+                dst[4] = b1;
+                dst[5] = g1;
+                dst[6] = r1;
+                dst[7] = 255;
+            }
+
+            dst += 8;
+        }
+    }
+
+    if (p.sharpness != 128)
+        apply_sharpness_bgra(outARGB, width, height, outStride, p.sharpness);
+}

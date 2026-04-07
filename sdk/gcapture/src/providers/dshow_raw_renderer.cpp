@@ -1,4 +1,5 @@
 #include "dshow_raw_renderer.h"
+#include "../core/frame_converter.h"
 
 #include <algorithm>
 #include <cstring>
@@ -295,36 +296,7 @@ void DShowRawRenderer::y210ToArgb(const uint8_t *src, int width, int height, int
     dstStride = width * 4;
     dst.resize(static_cast<size_t>(dstStride) * static_cast<size_t>(height));
 
-    for (int y = 0; y < height; ++y)
-    {
-        const uint16_t *srcRow = reinterpret_cast<const uint16_t *>(src + static_cast<size_t>(y) * static_cast<size_t>(srcStride));
-        uint8_t *dstRow = dst.data() + static_cast<size_t>(y) * static_cast<size_t>(dstStride);
-        for (int x = 0; x < width; x += 2)
-        {
-            const int base = x * 2;
-            const uint16_t y0_10 = srcRow[base + 0] & 1023u;
-            const uint16_t u_10  = srcRow[base + 1] & 1023u;
-            const uint16_t y1_10 = (x + 1 < width) ? (srcRow[base + 2] & 1023u) : y0_10;
-            const uint16_t v_10  = (x + 1 < width) ? (srcRow[base + 3] & 1023u) : (srcRow[base + 1] & 1023u);
-
-            const int y0 = (y0_10 * 255 + 511) / 1023;
-            const int y1 = (y1_10 * 255 + 511) / 1023;
-            const int u  = (u_10  * 255 + 511) / 1023;
-            const int v  = (v_10  * 255 + 511) / 1023;
-
-            uint8_t b = 0, g = 0, r = 0;
-            yuvToRgb(y0, u, v, b, g, r);
-            uint8_t *p0 = dstRow + static_cast<size_t>(x) * 4;
-            p0[0] = b; p0[1] = g; p0[2] = r; p0[3] = 255;
-
-            if (x + 1 < width)
-            {
-                yuvToRgb(y1, u, v, b, g, r);
-                uint8_t *p1 = dstRow + static_cast<size_t>(x + 1) * 4;
-                p1[0] = b; p1[1] = g; p1[2] = r; p1[3] = 255;
-            }
-        }
-    }
+    gcap::y210_to_argb(src, width, height, srcStride, dst.data(), dstStride);
 }
 
 uint64_t DShowRawRenderer::sampleCount() const
