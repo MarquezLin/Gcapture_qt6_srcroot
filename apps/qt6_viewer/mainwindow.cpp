@@ -245,7 +245,7 @@ connect(procampDlg_, &ProcAmp::valuesChanged,
             procampDlg_->raise();
             procampDlg_->activateWindow(); });
 
-    ui->comboBackend->addItem("Auto (WinMF→DShow)", 3);
+    // ui->comboBackend->addItem("Auto (WinMF→DShow)", 3);
     ui->comboBackend->addItem("WinMF GPU", 1);
     ui->comboBackend->addItem("WinMF CPU", 0);
     ui->comboBackend->addItem("DirectShow", 2);
@@ -933,15 +933,15 @@ void MainWindow::onFrameArrived(const QImage &img)
             captureInfo_.frameSource = QString::fromUtf8(rt.frame_source);
             captureInfo_.pathName = QString::fromUtf8(rt.path_name);
             captureInfo_.captureFormat = rt.negotiated_desc[0] ? QString::fromUtf8(rt.negotiated_desc)
-                                                             : (rt.source_format[0] ? QString::fromUtf8(rt.source_format) : QString());
+                                                               : (rt.source_format[0] ? QString::fromUtf8(rt.source_format) : QString());
             captureInfo_.renderFormat = QString::fromUtf8(rt.render_format);
         }
     }
 
     if (ui && ui->comboDevice)
         captureInfo_.deviceName = ui->comboDevice->currentText();
-    if (infoDlg_ && infoDlg_->findChild<QLabel*>("labelAudioInfo"))
-        captureInfo_.audioInfo = infoDlg_->findChild<QLabel*>("labelAudioInfo")->text();
+    if (infoDlg_ && infoDlg_->findChild<QLabel *>("labelAudioInfo"))
+        captureInfo_.audioInfo = infoDlg_->findChild<QLabel *>("labelAudioInfo")->text();
 
     if (h_)
     {
@@ -1211,7 +1211,7 @@ void MainWindow::onShowInputInfo()
 
     if (ui && ui->comboDevice)
         captureInfo_.deviceName = ui->comboDevice->currentText();
-    if (QLabel *audioLabel = infoDlg_->findChild<QLabel*>("labelAudioInfo"))
+    if (QLabel *audioLabel = infoDlg_->findChild<QLabel *>("labelAudioInfo"))
         captureInfo_.audioInfo = audioLabel->text();
 
     if (h_)
@@ -1229,7 +1229,7 @@ void MainWindow::onShowInputInfo()
             captureInfo_.frameSource = QString::fromUtf8(rt.frame_source);
             captureInfo_.pathName = QString::fromUtf8(rt.path_name);
             captureInfo_.captureFormat = rt.negotiated_desc[0] ? QString::fromUtf8(rt.negotiated_desc)
-                                                             : (rt.source_format[0] ? QString::fromUtf8(rt.source_format) : QString());
+                                                               : (rt.source_format[0] ? QString::fromUtf8(rt.source_format) : QString());
             captureInfo_.renderFormat = QString::fromUtf8(rt.render_format);
         }
 

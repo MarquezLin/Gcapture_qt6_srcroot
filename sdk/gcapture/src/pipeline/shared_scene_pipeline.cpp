@@ -21,6 +21,27 @@ static void SSP_DBG(const char *stage, HRESULT hr)
 
 using Microsoft::WRL::ComPtr;
 
+static const char *ss_dxgi_format_name(DXGI_FORMAT fmt)
+{
+    switch (fmt)
+    {
+    case DXGI_FORMAT_UNKNOWN: return "UNKNOWN";
+    case DXGI_FORMAT_B8G8R8A8_UNORM: return "B8G8R8A8_UNORM";
+    case DXGI_FORMAT_R10G10B10A2_UNORM: return "R10G10B10A2_UNORM";
+    case DXGI_FORMAT_R16G16B16A16_FLOAT: return "R16G16B16A16_FLOAT";
+    case DXGI_FORMAT_NV12: return "NV12";
+    case DXGI_FORMAT_P010: return "P010";
+    default: return "OTHER";
+    }
+}
+
+static void ssp_log_text(const char *msg)
+{
+    if (!msg) return;
+    ::OutputDebugStringA(msg);
+    ::OutputDebugStringA("\n");
+}
+
 static ComPtr<ID3D11ShaderResourceView> createSRV_NV12(ID3D11Device *dev, ID3D11Texture2D *tex, bool uv)
 {
     if (!dev || !tex)
@@ -1493,6 +1514,14 @@ bool SharedScenePipeline::ensure_preview_swapchain(int w, int h)
         if (FAILED(hr) || !preview_swapchain_)
             return false;
 
+        {
+            char msg[256] = {};
+            std::snprintf(msg, sizeof(msg),
+                          "[SharedScene] preview swapchain created: %dx%d format=%s preview_swapchain_10bit=%d",
+                          clientW, clientH, ss_dxgi_format_name(sd.Format), preview_swapchain_10bit_ ? 1 : 0);
+            ssp_log_text(msg);
+        }
+
         factory->MakeWindowAssociation((HWND)preview_hwnd_, DXGI_MWA_NO_ALT_ENTER);
     }
     else if (preview_w_ != clientW || preview_h_ != clientH)
@@ -1509,6 +1538,14 @@ bool SharedScenePipeline::ensure_preview_swapchain(int w, int h)
 
         if (FAILED(hr))
             return false;
+
+        {
+            char msg[256] = {};
+            std::snprintf(msg, sizeof(msg),
+                          "[SharedScene] preview swapchain resized: %dx%d",
+                          clientW, clientH);
+            ssp_log_text(msg);
+        }
     }
 
     if (!preview_backbuf_)
@@ -1530,6 +1567,7 @@ bool SharedScenePipeline::ensure_preview_swapchain(int w, int h)
 
 bool SharedScenePipeline::present_preview(int src_w, int src_h)
 {
+    static bool s_loggedPresentPath = false;
     if (!preview_enabled_ || !preview_swapchain_ || !preview_backbuf_ || !ctx_)
         return false;
 
@@ -1612,6 +1650,19 @@ bool SharedScenePipeline::present_preview(int src_w, int src_h)
         srv = srv_rgba_.Get();
     }
 
+    if (!s_loggedPresentPath)
+    {
+        char msg[320] = {};
+        std::snprintf(msg, sizeof(msg),
+                      "[SharedScene] preview render path: scene=%s linear=%s backbuffer=%s present_shader=%s",
+                      ss_dxgi_format_name(scene_texture_format()),
+                      ss_dxgi_format_name(linear_fp16_texture_format()),
+                      ss_dxgi_format_name(preview_backbuffer_format()),
+                      preview_swapchain_10bit_ ? "FP16->R10G10B10A2" : "RGBA8->BGRA8");
+        ssp_log_text(msg);
+        s_loggedPresentPath = true;
+    }
+
     ID3D11ShaderResourceView *srvs[1] = {srv};
     ctx_->PSSetShaderResources(0, 1, srvs);
 
@@ -1625,4 +1676,32 @@ bool SharedScenePipeline::present_preview(int src_w, int src_h)
 
     HRESULT hr = preview_swapchain_->Present(1, 0);
     return SUCCEEDED(hr);
+}
+
+
+DXGI_FORMAT SharedScenePipeline::preview_backbuffer_format() const
+{
+    if (!preview_backbuf_)
+        return DXGI_FORMAT_UNKNOWN;
+    D3D11_TEXTURE2D_DESC d{};
+    preview_backbuf_->GetDesc(&d);
+    return d.Format;
+}
+
+DXGI_FORMAT SharedScenePipeline::scene_texture_format() const
+{
+    if (!rt_scene_fp16_)
+        return DXGI_FORMAT_UNKNOWN;
+    D3D11_TEXTURE2D_DESC d{};
+    rt_scene_fp16_->GetDesc(&d);
+    return d.Format;
+}
+
+DXGI_FORMAT SharedScenePipeline::linear_fp16_texture_format() const
+{
+    if (!rt_fp16_)
+        return DXGI_FORMAT_UNKNOWN;
+    D3D11_TEXTURE2D_DESC d{};
+    rt_fp16_->GetDesc(&d);
+    return d.Format;
 }

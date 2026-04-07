@@ -35,6 +35,9 @@ public:
     bool ensure_preview_swapchain(int w, int h);
     bool preview_swapchain_10bit() const { return preview_swapchain_10bit_; }
     bool present_preview(int src_w, int src_h);
+    DXGI_FORMAT preview_backbuffer_format() const;
+    DXGI_FORMAT scene_texture_format() const;
+    DXGI_FORMAT linear_fp16_texture_format() const;
     bool gpu_overlay_text(const wchar_t *text, int frame_w, int frame_h);
     bool composite_overlay_to_scene_fp16(int frame_w, int frame_h);
     bool blit_fp16_to_rgba8(int frame_w, int frame_h);

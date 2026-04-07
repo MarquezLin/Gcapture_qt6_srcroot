@@ -26,6 +26,9 @@
 #include <dshow.h>
 #include <dvdmedia.h>
 #include <cmath>
+#include <set>
+#include <array>
+#include <vector>
 namespace
 {
     // DEVPROPKEY = { fmtid(GUID), pid }
@@ -74,6 +77,175 @@ static std::string hr_msg(HRESULT hr)
     return oss.str();
 }
 
+static const char *dxgi_format_name_local(DXGI_FORMAT fmt)
+{
+    switch (fmt)
+    {
+    case DXGI_FORMAT_UNKNOWN: return "UNKNOWN";
+    case DXGI_FORMAT_B8G8R8A8_UNORM: return "B8G8R8A8_UNORM";
+    case DXGI_FORMAT_R10G10B10A2_UNORM: return "R10G10B10A2_UNORM";
+    case DXGI_FORMAT_R16G16B16A16_FLOAT: return "R16G16B16A16_FLOAT";
+    case DXGI_FORMAT_NV12: return "NV12";
+    case DXGI_FORMAT_P010: return "P010";
+    default: return "OTHER";
+    }
+}
+
+
+struct P010EvidenceStats
+{
+    uint64_t samples = 0;
+    uint16_t min10 = 1023;
+    uint16_t max10 = 0;
+    uint32_t low2_hist[4] = {};
+    size_t unique_levels = 0;
+    bool likely_true_10bit = false;
+
+    int roi_x = 0;
+    int roi_y = 0;
+    int roi_w = 0;
+    int roi_h = 0;
+
+    int linescan_y = 0;
+    int linescan_x0 = 0;
+    int linescan_count = 0;
+    std::vector<uint16_t> linescan_values;
+};
+
+static P010EvidenceStats analyze_p010_plane(const uint8_t *src, int strideBytes, int w, int h)
+{
+    P010EvidenceStats st{};
+    if (!src || strideBytes < w * 2 || w <= 0 || h <= 0)
+        return st;
+
+    std::array<bool, 1024> seen{};
+
+    const int roiW = (std::min)(w, 256);
+    const int roiH = (std::min)(h, 64);
+    st.roi_w = roiW;
+    st.roi_h = roiH;
+    st.roi_x = (w > roiW) ? ((w - roiW) / 2) : 0;
+    st.roi_y = (h > roiH) ? ((h - roiH) / 2) : 0;
+
+    for (int y = 0; y < roiH; ++y)
+    {
+        const uint16_t *row = reinterpret_cast<const uint16_t *>(src + size_t(st.roi_y + y) * size_t(strideBytes));
+        row += st.roi_x;
+        for (int x = 0; x < roiW; ++x)
+        {
+            const uint16_t raw16 = row[x];
+            const uint16_t v10 = static_cast<uint16_t>(raw16 >> 6);
+            st.samples++;
+            st.min10 = (std::min)(st.min10, v10);
+            st.max10 = (std::max)(st.max10, v10);
+            st.low2_hist[v10 & 0x3u]++;
+            if (!seen[v10])
+            {
+                seen[v10] = true;
+                st.unique_levels++;
+            }
+        }
+    }
+
+    st.linescan_y = h / 2;
+    st.linescan_count = (std::min)(64, w);
+    st.linescan_x0 = (w > st.linescan_count) ? ((w - st.linescan_count) / 2) : 0;
+    st.linescan_values.reserve((size_t)st.linescan_count);
+    {
+        const uint16_t *row = reinterpret_cast<const uint16_t *>(src + size_t(st.linescan_y) * size_t(strideBytes));
+        row += st.linescan_x0;
+        for (int x = 0; x < st.linescan_count; ++x)
+        {
+            const uint16_t raw16 = row[x];
+            const uint16_t v10 = static_cast<uint16_t>(raw16 >> 6);
+            st.linescan_values.push_back(v10);
+        }
+    }
+
+    int nonZeroBins = 0;
+    for (int i = 0; i < 4; ++i)
+        if (st.low2_hist[i] > 0)
+            nonZeroBins++;
+    st.likely_true_10bit = (nonZeroBins >= 2) && (st.unique_levels > 256);
+    return st;
+}
+
+static std::vector<std::string> p010_evidence_log_lines(const char *tag, const P010EvidenceStats &st, int w, int h, int strideBytes)
+{
+    std::vector<std::string> lines;
+    {
+        std::ostringstream oss;
+        oss << "[WinMF] 10bit-evidence(" << (tag ? tag : "?") << "): "
+            << "sampled=" << st.samples
+            << " y_plane=" << w << "x" << h
+            << " stride=" << strideBytes
+            << " value10[min..max]=" << st.min10 << ".." << st.max10
+            << " verdict=" << (st.likely_true_10bit ? "LIKELY_TRUE_10BIT" : "LIKELY_8BIT_EXPANDED_OR_FLAT_PATTERN");
+        lines.push_back(oss.str());
+    }
+    {
+        std::ostringstream oss;
+        oss << "[WinMF] 10bit-center-roi(" << (tag ? tag : "?") << "): "
+            << "roi=(" << st.roi_x << "," << st.roi_y << " " << st.roi_w << "x" << st.roi_h << ")"
+            << " unique_levels=" << st.unique_levels
+            << " low2_hist=[" << st.low2_hist[0] << "," << st.low2_hist[1] << "," << st.low2_hist[2] << "," << st.low2_hist[3] << "]";
+        lines.push_back(oss.str());
+    }
+    {
+        std::ostringstream oss;
+        oss << "[WinMF] 10bit-linescan(" << (tag ? tag : "?") << "): "
+            << "y=" << st.linescan_y
+            << " x=" << st.linescan_x0 << ".." << (st.linescan_x0 + (st.linescan_count > 0 ? st.linescan_count - 1 : 0))
+            << " values=[";
+        for (int i = 0; i < st.linescan_count; ++i)
+        {
+            if (i) oss << ",";
+            oss << st.linescan_values[(size_t)i];
+        }
+        oss << "]";
+        lines.push_back(oss.str());
+    }
+    return lines;
+}
+
+static bool analyze_p010_texture_once(ID3D11Device *dev, ID3D11DeviceContext *ctx, ID3D11Texture2D *tex, int w, int h, std::vector<std::string> &outLogs)
+{
+    outLogs.clear();
+    if (!dev || !ctx || !tex || w <= 0 || h <= 0)
+        return false;
+
+    D3D11_TEXTURE2D_DESC td{};
+    tex->GetDesc(&td);
+    if (td.Format != DXGI_FORMAT_P010)
+        return false;
+
+    td.BindFlags = 0;
+    td.MiscFlags = 0;
+    td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    td.Usage = D3D11_USAGE_STAGING;
+
+    ComPtr<ID3D11Texture2D> staging;
+    HRESULT hr = dev->CreateTexture2D(&td, nullptr, &staging);
+    if (FAILED(hr) || !staging)
+    {
+        outLogs.push_back(std::string("[WinMF] 10bit-evidence(DXGI): staging texture create failed: ") + hr_msg(hr));
+        return true;
+    }
+
+    ctx->CopyResource(staging.Get(), tex);
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    hr = ctx->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    if (FAILED(hr))
+    {
+        outLogs.push_back(std::string("[WinMF] 10bit-evidence(DXGI): map staging failed: ") + hr_msg(hr));
+        return true;
+    }
+
+    P010EvidenceStats st = analyze_p010_plane(static_cast<const uint8_t *>(mapped.pData), static_cast<int>(mapped.RowPitch), w, h);
+    ctx->Unmap(staging.Get(), 0);
+    outLogs = p010_evidence_log_lines("DXGI", st, w, h, static_cast<int>(mapped.RowPitch));
+    return true;
+}
 // --- local helper: wide string -> UTF-8 string ---
 static std::string wide_to_utf8(const std::wstring &ws)
 {
@@ -425,7 +597,7 @@ bool WinMFProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     strcpy_s(out.frame_source, gpu ? "DXGI" : "CPU");
     strcpy_s(out.path_name, gpu ? "WinMF GPU Preview" : "WinMF CPU Preview");
     strcpy_s(out.source_format, gcap_subtype_name(cur_subtype_));
-    strcpy_s(out.render_format, gpu ? "FP16 Scene" : "BGRA8 CPU");
+    strcpy_s(out.render_format, gpu ? (pipeline_ && pipeline_->preview_swapchain_10bit() ? "FP16 Scene -> 10bit Swapchain" : "FP16 Scene -> 8bit Swapchain") : "BGRA8 CPU");
     fill_runtime_signal_text_mf(out, cur_subtype_);
     return true;
 }
@@ -2250,6 +2422,9 @@ void WinMFProvider::loop()
     // Log stride/buffer length diagnostics only once per run (avoid spamming).
     bool logged_layout = false;
     bool logged_len_mismatch = false;
+    bool logged_render_chain = false;
+    bool logged_p010_cpu_evidence = false;
+    bool logged_p010_dxgi_evidence = false;
 
     while (running_)
     {
@@ -2264,6 +2439,13 @@ void WinMFProvider::loop()
         }
         if (!sample)
             continue;
+
+        if (flags & MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED)
+            emit_error(GCAP_OK, "[WinMF] SourceReader flag: NATIVEMEDIATYPECHANGED");
+        if (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED)
+            emit_error(GCAP_OK, "[WinMF] SourceReader flag: CURRENTMEDIATYPECHANGED");
+        if (flags & MF_SOURCE_READERF_STREAMTICK)
+            emit_error(GCAP_OK, "[WinMF] SourceReader flag: STREAMTICK");
 
         if (cpu_path_)
         {
@@ -2307,6 +2489,16 @@ void WinMFProvider::loop()
                     emit_error(GCAP_OK, oss.str().c_str());
                     logged_len_mismatch = true;
                 }
+            }
+
+            if (cur_subtype_ == MFVideoFormat_P010 && !logged_p010_cpu_evidence)
+            {
+                const int stride = (cur_stride_ > 0) ? cur_stride_ : mf_row_bytes(cur_subtype_, cur_w_);
+                P010EvidenceStats st = analyze_p010_plane(pData, stride, cur_w_, cur_h_);
+                const auto lines = p010_evidence_log_lines("CPU", st, cur_w_, cur_h_, stride);
+                for (const auto &line : lines)
+                    emit_error(GCAP_OK, line.c_str());
+                logged_p010_cpu_evidence = true;
             }
 
             gcap_frame_t f{};
@@ -2420,6 +2612,20 @@ void WinMFProvider::loop()
 
         last_pts_ns_ = (uint64_t)ts * 100;
 
+        if (!logged_render_chain && pipeline_)
+        {
+            std::ostringstream oss;
+            oss << "[WinMF] render-chain: negotiated=" << mf_subtype_name(cur_subtype_)
+                << " backend=" << (isUsingGpu() ? "WinMF GPU" : "WinMF CPU")
+                << " render_format=" << (isUsingGpu() ? "FP16 Scene" : "BGRA8 CPU")
+                << " linear_rt=" << dxgi_format_name_local(pipeline_->linear_fp16_texture_format())
+                << " scene_rt=" << dxgi_format_name_local(pipeline_->scene_texture_format())
+                << " preview_backbuffer=" << dxgi_format_name_local(pipeline_->preview_backbuffer_format())
+                << " preview_swapchain_10bit=" << (pipeline_->preview_swapchain_10bit() ? 1 : 0);
+            emit_error(GCAP_OK, oss.str().c_str());
+            logged_render_chain = true;
+        }
+
         ComPtr<IMFMediaBuffer> buf;
         if (FAILED(sample->ConvertToContiguousBuffer(&buf)))
             continue;
@@ -2440,6 +2646,17 @@ void WinMFProvider::loop()
                 continue;
             }
             dxgibuf->GetSubresourceIndex(&subres);
+
+            if (cur_subtype_ == MFVideoFormat_P010 && !logged_p010_dxgi_evidence)
+            {
+                std::vector<std::string> proofs;
+                if (analyze_p010_texture_once(d3d_.Get(), ctx_.Get(), yuvTex.Get(), cur_w_, cur_h_, proofs) && !proofs.empty())
+                {
+                    for (const auto &line : proofs)
+                        emit_error(GCAP_OK, line.c_str());
+                    logged_p010_dxgi_evidence = true;
+                }
+            }
         }
         else
         {
@@ -2470,6 +2687,16 @@ void WinMFProvider::loop()
             {
                 if (FAILED(buf->Lock(&pData, &maxLen, &curLen)) || !pData)
                     continue;
+            }
+
+            if (cur_subtype_ == MFVideoFormat_P010 && !logged_p010_cpu_evidence)
+            {
+                const int stride = (locked2d && srcPitchLong > 0) ? (int)srcPitchLong : ((cur_stride_ > 0) ? cur_stride_ : mf_row_bytes(cur_subtype_, cur_w_));
+                P010EvidenceStats st = analyze_p010_plane(pData, stride, cur_w_, cur_h_);
+                const auto lines = p010_evidence_log_lines("UploadFallback", st, cur_w_, cur_h_, stride);
+                for (const auto &line : lines)
+                    emit_error(GCAP_OK, line.c_str());
+                logged_p010_cpu_evidence = true;
             }
 
             // (GPU upload fallback) log stride/bufferLen once
