@@ -950,16 +950,25 @@ void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)
     }
 }
 
-void MainWindow::onFrameArrived(const QImage &img)
+int MainWindow::currentDeviceIndex() const
 {
-    lastFrameImage_ = img;
+    return (ui && ui->comboDevice) ? ui->comboDevice->currentIndex() : 0;
+}
 
-    // 主畫面不再顯示 labelView。
-    // DShow raw-only 路徑沒有 VMR9 native preview，因此這裡也要把 callback frame 畫到 previewwindow。
-    if (previewWindow_)
-        previewWindow_->setFrame(img);
+QString MainWindow::currentAudioInfoText() const
+{
+    if (infoDlg_)
+    {
+        if (QLabel *audioLabel = infoDlg_->findChild<QLabel *>("labelAudioInfo"))
+            return audioLabel->text();
+    }
+    return captureInfo_.audioInfo;
+}
 
-    updateRuntimeStatusUi();
+void MainWindow::refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps)
+{
+    captureInfo_.deviceName = (ui && ui->comboDevice) ? ui->comboDevice->currentText() : QString();
+    captureInfo_.audioInfo = currentAudioInfoText();
 
     if (h_)
     {
@@ -979,17 +988,9 @@ void MainWindow::onFrameArrived(const QImage &img)
                                                                : (rt.source_format[0] ? QString::fromUtf8(rt.source_format) : QString());
             captureInfo_.renderFormat = QString::fromUtf8(rt.render_format);
         }
-    }
 
-    if (ui && ui->comboDevice)
-        captureInfo_.deviceName = ui->comboDevice->currentText();
-    if (infoDlg_ && infoDlg_->findChild<QLabel *>("labelAudioInfo"))
-        captureInfo_.audioInfo = infoDlg_->findChild<QLabel *>("labelAudioInfo")->text();
-
-    if (h_)
-    {
-        qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-        if (nowMs - lastPropsQueryMs_ > 1000)
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (!throttleDeviceProps || (nowMs - lastPropsQueryMs_ > 1000))
         {
             lastPropsQueryMs_ = nowMs;
 
@@ -1003,9 +1004,12 @@ void MainWindow::onFrameArrived(const QImage &img)
         }
     }
 
-    fillDeviceCapabilitiesFromSdk(ui && ui->comboDevice ? ui->comboDevice->currentIndex() : 0, captureInfo_);
+    fillDeviceCapabilitiesFromSdk(currentDeviceIndex(), captureInfo_);
+    lastInfoText_ = formatCaptureDeviceInfo(captureInfo_, avgFps_);
+}
 
-    // 4. Display / output info
+void MainWindow::refreshDisplayInfoFromFrame(const QImage &img)
+{
     displayInfo_.video.size = img.size();
     displayInfo_.video.fps = avgFps_;
 
@@ -1019,13 +1023,10 @@ void MainWindow::onFrameArrived(const QImage &img)
     }
     else
     {
-        displayInfo_.desktop = {}; // reset
+        displayInfo_.desktop = {};
     }
 
-    // ---- Output color info (DXGI/NVAPI) ----
-    // 你專案已有：queryDisplayInfoForMonitor(hmon) -> GpuDisplayInfo
-    displayInfo_.color = {}; // reset
-
+    displayInfo_.color = {};
     if (windowHandle())
     {
         HWND hwnd = reinterpret_cast<HWND>(windowHandle()->winId());
@@ -1042,7 +1043,6 @@ void MainWindow::onFrameArrived(const QImage &img)
         }
     }
 
-    // ---- Pipeline (runtime state) ----
     displayInfo_.pipe = {};
     int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
     int actualBackend = backend;
@@ -1067,15 +1067,40 @@ void MainWindow::onFrameArrived(const QImage &img)
     {
         displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::DirectShow;
     }
+}
 
-    // 5. Update dialogs
-    lastInfoText_ = formatCaptureDeviceInfo(captureInfo_, avgFps_);
+void MainWindow::refreshSignalInfoDialog()
+{
+    refreshCaptureInfoFromSdkAndRuntime(false);
+    if (!infoDlg_)
+        return;
+
+    infoDlg_->setWindowTitle(tr("Signal Info"));
+    infoDlg_->setInfoText(lastInfoText_);
+    infoDlg_->setPropertyPages(captureInfo_.propertyPages);
+    infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
+}
+
+void MainWindow::onFrameArrived(const QImage &img)
+{
+    lastFrameImage_ = img;
+
+    // 這條路徑是 callback/QImage 顯示入口：
+    // - CaptureSDK frameReady
+    // - MainWindow::sigFrame（例如 packet callback / CPU fallback）
+    // 真正的 native GPU preview 不一定會經過這裡。
+    if (previewWindow_)
+        previewWindow_->setFrame(img);
+
+    updateRuntimeStatusUi();
+    refreshCaptureInfoFromSdkAndRuntime(true);
+    refreshDisplayInfoFromFrame(img);
+
     if (infoDlg_)
         infoDlg_->setInfoText(lastInfoText_);
 
     if (DpinfoDlg_)
-        DpinfoDlg_->setInfoText(
-            formatDisplayOutputInfo(displayInfo_));
+        DpinfoDlg_->setInfoText(formatDisplayOutputInfo(displayInfo_));
 }
 
 void MainWindow::updateRuntimeStatusUi()
@@ -1234,48 +1259,7 @@ void MainWindow::onShowInputInfo()
                 });
     }
 
-    infoDlg_->setWindowTitle(tr("Signal Info"));
-    infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
-
-    if (ui && ui->comboDevice)
-        captureInfo_.deviceName = ui->comboDevice->currentText();
-    if (QLabel *audioLabel = infoDlg_->findChild<QLabel *>("labelAudioInfo"))
-        captureInfo_.audioInfo = audioLabel->text();
-
-    if (h_)
-    {
-        gcap_signal_status_t sig{};
-        if (gcap_get_signal_status(h_, &sig) == GCAP_OK)
-            captureInfo_.signal = sig;
-
-        gcap_runtime_info_t rt{};
-        if (gcap_get_runtime_info(h_, &rt) == GCAP_OK)
-        {
-            captureInfo_.signalProbe = rt.signal_probe;
-            captureInfo_.negotiated = rt.negotiated;
-            captureInfo_.backendName = QString::fromUtf8(rt.backend_name);
-            captureInfo_.frameSource = QString::fromUtf8(rt.frame_source);
-            captureInfo_.pathName = QString::fromUtf8(rt.path_name);
-            captureInfo_.captureFormat = rt.negotiated_desc[0] ? QString::fromUtf8(rt.negotiated_desc)
-                                                               : (rt.source_format[0] ? QString::fromUtf8(rt.source_format) : QString());
-            captureInfo_.renderFormat = QString::fromUtf8(rt.render_format);
-        }
-
-        gcap_device_props_t props{};
-        if (gcap_get_device_props(h_, &props) == GCAP_OK)
-        {
-            captureInfo_.driverVersion = QString::fromUtf8(props.driver_version);
-            captureInfo_.firmwareVersion = QString::fromUtf8(props.firmware_version);
-            captureInfo_.serialNumber = QString::fromUtf8(props.serial_number);
-        }
-    }
-
-    fillDeviceCapabilitiesFromSdk(ui && ui->comboDevice ? ui->comboDevice->currentIndex() : 0, captureInfo_);
-
-    lastInfoText_ = formatCaptureDeviceInfo(captureInfo_, avgFps_);
-    infoDlg_->setInfoText(lastInfoText_);
-    infoDlg_->setPropertyPages(captureInfo_.propertyPages);
-    infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
+    refreshSignalInfoDialog();
     infoDlg_->show();
     infoDlg_->raise();
     infoDlg_->activateWindow();

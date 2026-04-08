@@ -121,6 +121,11 @@ private:
     QTimer *runtimeStatusTimer_ = nullptr;
     QString lastRuntimeStatusText_;
     void updateRuntimeStatusUi();
+    int currentDeviceIndex() const;
+    QString currentAudioInfoText() const;
+    void refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps);
+    void refreshDisplayInfoFromFrame(const QImage &img);
+    void refreshSignalInfoDialog();
 
 signals:
     void sigFrame(const QImage &);
