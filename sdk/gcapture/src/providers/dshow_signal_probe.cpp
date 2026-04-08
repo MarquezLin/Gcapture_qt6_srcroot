@@ -1321,6 +1321,42 @@ namespace
     }
 }
 
+
+
+static bool dshow_extract_video_cap(const AM_MEDIA_TYPE &mt, gcap_video_cap_t &out)
+{
+    DShowSignalProbeResult tmp{};
+    if (!dshow_extract_media_type(mt, tmp))
+        return false;
+
+    out.width = tmp.width;
+    out.height = tmp.height;
+    out.fps_num = tmp.fps_num;
+    out.fps_den = tmp.fps_den;
+    out.pixfmt = gcap_subtype_to_pixfmt(tmp.subtype);
+    out.bit_depth = gcap_pixfmt_bitdepth(out.pixfmt);
+    return (out.width > 0 && out.height > 0);
+}
+
+static int copy_video_cap_out(const gcap_video_cap_t &src, gcap_video_cap_t *outCaps, int maxCaps, int written)
+{
+    if (outCaps && written < maxCaps)
+        outCaps[written] = src;
+    return written + 1;
+}
+
+static int copy_property_page_out(const std::wstring &name, bool capturePin, gcap_property_page_t *outPages, int maxPages, int written)
+{
+    if (outPages && written < maxPages)
+    {
+        auto &dst = outPages[written];
+        ZeroMemory(&dst, sizeof(dst));
+        WideCharToMultiByte(CP_UTF8, 0, name.c_str(), -1, dst.page_name, static_cast<int>(sizeof(dst.page_name)), nullptr, nullptr);
+        dst.capture_pin = capturePin ? 1 : 0;
+    }
+    return written + 1;
+}
+
 bool dshow_open_vendor_property_page_by_index(int devIndex)
 {
     return open_property_page_worker(devIndex, L"SC0710 PCI, Custom Property Page", false, L"SC0710 Vendor Property Page");
@@ -1332,4 +1368,128 @@ bool dshow_open_named_property_page_by_index(int devIndex, const wchar_t *pageNa
                                      pageName,
                                      capturePin,
                                      capturePin ? L"Capture Pin Property Page" : L"Filter Property Page");
+}
+
+
+int dshow_enum_video_caps_by_index(int devIndex, gcap_video_cap_t *outCaps, int maxCaps)
+{
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool need_uninit = SUCCEEDED(hr);
+    if (hr != S_OK && hr != S_FALSE && hr != RPC_E_CHANGED_MODE)
+        return 0;
+
+    int written = 0;
+    do
+    {
+        ComPtr<IMoniker> moniker;
+        ComPtr<IBaseFilter> sourceFilter;
+        if (!find_video_input_filter_by_index(devIndex, moniker, sourceFilter) || !sourceFilter)
+            break;
+
+        ComPtr<IGraphBuilder> graph;
+        hr = CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&graph));
+        if (FAILED(hr) || !graph)
+            break;
+        hr = graph->AddFilter(sourceFilter.Get(), L"VideoCapture");
+        if (FAILED(hr))
+            break;
+
+        ComPtr<ICaptureGraphBuilder2> capBuilder;
+        hr = CoCreateInstance(CLSID_CaptureGraphBuilder2, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&capBuilder));
+        if (FAILED(hr) || !capBuilder)
+            break;
+        capBuilder->SetFiltergraph(graph.Get());
+
+        ComPtr<IAMStreamConfig> cfg;
+        hr = capBuilder->FindInterface(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video, sourceFilter.Get(), IID_PPV_ARGS(&cfg));
+        if (FAILED(hr) || !cfg)
+            break;
+
+        int count = 0;
+        int capSize = 0;
+        hr = cfg->GetNumberOfCapabilities(&count, &capSize);
+        if (FAILED(hr) || count <= 0 || capSize <= 0)
+            break;
+
+        std::vector<unsigned char> caps(static_cast<size_t>(capSize));
+        for (int i = 0; i < count; ++i)
+        {
+            AM_MEDIA_TYPE *capsMt = nullptr;
+            if (FAILED(cfg->GetStreamCaps(i, &capsMt, caps.data())) || !capsMt)
+                continue;
+
+            gcap_video_cap_t cap{};
+            if (dshow_extract_video_cap(*capsMt, cap))
+                written = copy_video_cap_out(cap, outCaps, maxCaps, written);
+
+            dshow_free_media_type(*capsMt);
+            CoTaskMemFree(capsMt);
+        }
+    } while (false);
+
+    if (need_uninit)
+        CoUninitialize();
+    return written;
+}
+
+int dshow_enum_property_pages_by_index(int devIndex, gcap_property_page_t *outPages, int maxPages)
+{
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool need_uninit = SUCCEEDED(hr);
+    if (hr != S_OK && hr != S_FALSE && hr != RPC_E_CHANGED_MODE)
+        return 0;
+
+    int written = 0;
+    do
+    {
+        ComPtr<IMoniker> moniker;
+        ComPtr<IBaseFilter> filter;
+        if (!find_video_input_filter_by_index(devIndex, moniker, filter) || !filter)
+            break;
+
+        std::vector<GUID> filterPages;
+        if (collect_property_pages_for_target(filter.Get(), filterPages))
+        {
+            for (const GUID &page : filterPages)
+            {
+                const std::wstring displayName = get_clsid_display_name(page);
+                if (!displayName.empty())
+                    written = copy_property_page_out(displayName, false, outPages, maxPages, written);
+            }
+        }
+
+        ComPtr<IGraphBuilder> graph;
+        hr = CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&graph));
+        if (FAILED(hr) || !graph)
+            break;
+        hr = graph->AddFilter(filter.Get(), L"VideoCapture");
+        if (FAILED(hr))
+            break;
+
+        ComPtr<ICaptureGraphBuilder2> capBuilder;
+        hr = CoCreateInstance(CLSID_CaptureGraphBuilder2, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&capBuilder));
+        if (FAILED(hr) || !capBuilder)
+            break;
+        capBuilder->SetFiltergraph(graph.Get());
+
+        ComPtr<IPin> pin;
+        pin.Attach(find_capture_pin(capBuilder.Get(), filter.Get()));
+        if (pin)
+        {
+            std::vector<GUID> pinPages;
+            if (collect_property_pages_for_target(pin.Get(), pinPages))
+            {
+                for (const GUID &page : pinPages)
+                {
+                    const std::wstring displayName = get_clsid_display_name(page);
+                    if (!displayName.empty())
+                        written = copy_property_page_out(displayName, true, outPages, maxPages, written);
+                }
+            }
+        }
+    } while (false);
+
+    if (need_uninit)
+        CoUninitialize();
+    return written;
 }

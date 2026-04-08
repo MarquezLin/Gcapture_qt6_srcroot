@@ -136,6 +136,30 @@ extern "C"
         return h->mgr.setFramePacketCallback(cb, user);
     }
 
+    int gcap_enum_video_caps(int device_index, gcap_video_cap_t *out_caps, int max_caps)
+    {
+#ifdef _WIN32
+        return dshow_enum_video_caps_by_index(device_index, out_caps, max_caps);
+#else
+        (void)device_index;
+        (void)out_caps;
+        (void)max_caps;
+        return 0;
+#endif
+    }
+
+    int gcap_enum_property_pages(int device_index, gcap_property_page_t *out_pages, int max_pages)
+    {
+#ifdef _WIN32
+        return dshow_enum_property_pages_by_index(device_index, out_pages, max_pages);
+#else
+        (void)device_index;
+        (void)out_pages;
+        (void)max_pages;
+        return 0;
+#endif
+    }
+
     int gcap_open_vendor_property_page(int device_index)
     {
         return dshow_open_vendor_property_page_by_index(device_index) ? 1 : 0;

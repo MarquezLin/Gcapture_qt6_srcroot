@@ -104,6 +104,22 @@ extern "C"
         int hdr;               // 0/1, -1=unknown
     } gcap_signal_status_t;
 
+    typedef struct
+    {
+        int width;
+        int height;
+        int fps_num;
+        int fps_den;
+        gcap_pixfmt_t pixfmt;
+        int bit_depth;
+    } gcap_video_cap_t;
+
+    typedef struct
+    {
+        char page_name[128];
+        int capture_pin; // 0=filter, 1=capture pin
+    } gcap_property_page_t;
+
 
     typedef struct
     {
@@ -252,6 +268,13 @@ extern "C"
 
     const char *gcap_strerror(gcap_status_t);
     GCAP_API gcap_status_t gcap_set_preview(gcap_handle h, const gcap_preview_desc_t *desc);
+    // Enumerate DirectShow video format capabilities for a device index.
+    // Returns actual written count. Pass nullptr or max_caps<=0 to query supported count only.
+    GCAP_API int gcap_enum_video_caps(int device_index, gcap_video_cap_t *out_caps, int max_caps);
+    // Enumerate available DirectShow property pages (filter + capture pin) for a device index.
+    // Returns actual written count. Pass nullptr or max_pages<=0 to query supported count only.
+    GCAP_API int gcap_enum_property_pages(int device_index, gcap_property_page_t *out_pages, int max_pages);
+
     // Open vendor-specific DShow property page for a device index (test / debug helper).
     GCAP_API int gcap_open_vendor_property_page(int device_index);
     GCAP_API int gcap_open_named_property_page(int device_index, const char *page_name_utf8, int capture_pin);

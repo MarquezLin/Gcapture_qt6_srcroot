@@ -18,6 +18,7 @@
 #include <QLabel>
 #include <QDesktopServices>
 #include <QUrl>
+#include <vector>
 #include "edid_reader.h"
 #ifdef _WIN32
 #include <dxgi1_2.h>
@@ -70,28 +71,49 @@ namespace
         }
     }
 
-    static void fillKnownAverMediaInfo(CaptureDeviceInfo &info)
+    static QString formatVideoCapDisplay(const gcap_video_cap_t &cap)
+    {
+        const double fps = (cap.fps_den > 0) ? (double(cap.fps_num) / double(cap.fps_den)) : 0.0;
+        QString text = QStringLiteral("%1 %2x%3")
+                           .arg(QString::fromLatin1(packetFmtName(cap.pixfmt)))
+                           .arg(cap.width)
+                           .arg(cap.height);
+        if (fps > 0.0)
+            text += QStringLiteral(" %1 fps").arg(fps, 0, 'f', 2);
+        if (cap.bit_depth > 0)
+            text += QStringLiteral(" (%1-bit)").arg(cap.bit_depth);
+        return text;
+    }
+
+    static QString formatPropertyPageDisplay(const gcap_property_page_t &page)
+    {
+        return QStringLiteral("%1 — %2")
+            .arg(QString::fromUtf8(page.page_name))
+            .arg(page.capture_pin ? QStringLiteral("Capture Pin") : QStringLiteral("Filter"));
+    }
+
+    static void fillDeviceCapabilitiesFromSdk(int deviceIndex, CaptureDeviceInfo &info)
     {
         info.supportedFormats.clear();
         info.propertyPages.clear();
 
-        if (!info.deviceName.contains(QStringLiteral("AVerMedia"), Qt::CaseInsensitive))
-            return;
+        const int capCount = gcap_enum_video_caps(deviceIndex, nullptr, 0);
+        if (capCount > 0)
+        {
+            std::vector<gcap_video_cap_t> caps(static_cast<size_t>(capCount));
+            const int written = gcap_enum_video_caps(deviceIndex, caps.data(), static_cast<int>(caps.size()));
+            for (int i = 0; i < written; ++i)
+                info.supportedFormats << formatVideoCapDisplay(caps[static_cast<size_t>(i)]);
+        }
 
-        info.supportedFormats << QStringLiteral("Y210 1920x1080 60.00 fps")
-                              << QStringLiteral("Y210 3840x2160 30.00 fps")
-                              << QStringLiteral("YUY2 1920x1080 60.00 fps")
-                              << QStringLiteral("YUY2 640x480 60.00 fps")
-                              << QStringLiteral("YUY2 720x480 60.00 fps")
-                              << QStringLiteral("YUY2 720x576 50.00 fps")
-                              << QStringLiteral("YUY2 800x600 60.00 fps")
-                              << QStringLiteral("YUY2 1024x768 60.00 fps")
-                              << QStringLiteral("YUY2 1152x864 75.00 fps");
-        info.propertyPages << QStringLiteral("AVerXBarPropertyPage — Filter")
-                           << QStringLiteral("AVerCertificateProp — Filter")
-                           << QStringLiteral("VideoDecoder Property Page — Filter")
-                           << QStringLiteral("VideoProcAmp Property Page — Filter")
-                           << QStringLiteral("AVerStreamFormatProp — Capture Pin");
+        const int pageCount = gcap_enum_property_pages(deviceIndex, nullptr, 0);
+        if (pageCount > 0)
+        {
+            std::vector<gcap_property_page_t> pages(static_cast<size_t>(pageCount));
+            const int written = gcap_enum_property_pages(deviceIndex, pages.data(), static_cast<int>(pages.size()));
+            for (int i = 0; i < written; ++i)
+                info.propertyPages << formatPropertyPageDisplay(pages[static_cast<size_t>(i)]);
+        }
     }
 
     static QImage framePacketToQImage(const gcap_frame_packet_t &pkt)
@@ -981,7 +1003,7 @@ void MainWindow::onFrameArrived(const QImage &img)
         }
     }
 
-    fillKnownAverMediaInfo(captureInfo_);
+    fillDeviceCapabilitiesFromSdk(ui && ui->comboDevice ? ui->comboDevice->currentIndex() : 0, captureInfo_);
 
     // 4. Display / output info
     displayInfo_.video.size = img.size();
@@ -1248,7 +1270,7 @@ void MainWindow::onShowInputInfo()
         }
     }
 
-    fillKnownAverMediaInfo(captureInfo_);
+    fillDeviceCapabilitiesFromSdk(ui && ui->comboDevice ? ui->comboDevice->currentIndex() : 0, captureInfo_);
 
     lastInfoText_ = formatCaptureDeviceInfo(captureInfo_, avgFps_);
     infoDlg_->setInfoText(lastInfoText_);

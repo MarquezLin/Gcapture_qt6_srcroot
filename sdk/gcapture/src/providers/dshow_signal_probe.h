@@ -43,3 +43,6 @@ const char *gcap_subtype_name(const GUID &sub);
 
 bool dshow_open_vendor_property_page_by_index(int devIndex);
 bool dshow_open_named_property_page_by_index(int devIndex, const wchar_t *pageName, bool capturePin);
+
+int dshow_enum_video_caps_by_index(int devIndex, gcap_video_cap_t *outCaps, int maxCaps);
+int dshow_enum_property_pages_by_index(int devIndex, gcap_property_page_t *outPages, int maxPages);
