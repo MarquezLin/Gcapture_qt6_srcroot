@@ -128,6 +128,21 @@ private:
     void refreshDisplayInfoFromCurrentState();
     void refreshSignalInfoDialog();
     void refreshDisplayInfoDialog();
+    void setupPreviewWindow();
+    void setupRuntimeStatusTimer();
+    void setupDebugDock();
+    void setupProcAmpAction();
+    void setupBackendControls();
+    void initializeDeviceList();
+    void initializeGpuList();
+    void setupConnections();
+    void logStartupInfo();
+    void updateFrameSourceState(uint64_t ptsNs, int width, int height, uint64_t &lastPtsTracker);
+    void dispatchFrameImage(const QImage &img);
+    void refreshFrameDependentUi(const QImage &img);
+    void logFramePacketIfNeeded(const gcap_frame_packet_t &pkt);
+    QString buildSnapshotPath() const;
+    bool saveSnapshotImage(QString *outPath);
 
 signals:
     void sigFrame(const QImage &);

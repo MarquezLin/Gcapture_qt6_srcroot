@@ -219,213 +219,17 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
-    previewWindow_ = new previewwindow();
-    previewWindow_->setWindowTitle(QStringLiteral("Preview"));
-    previewWindow_->resize(1280, 720);
-    previewWindow_->show();
-
-    runtimeStatusTimer_ = new QTimer(this);
-    runtimeStatusTimer_->setInterval(500);
-    connect(runtimeStatusTimer_, &QTimer::timeout, this, [this]()
-            { updateRuntimeStatusUi(); });
-    runtimeStatusTimer_->start();
-
-    // if (ui->statusbar)
-    //     ui->statCCusbar->showMessage(QStringLiteral("Record mode：Media Foundation (Sink Writer)"));
-
-    // ui->labelView->setMinimumSize(640, 360);
-    // ui->labelView->setAlignment(Qt::AlignCenter);
-
-    // --- Debug Log Dock ---
-    debugDock_ = new QDockWidget(tr("Debug Log"), this);
-    debugDock_->setObjectName("DebugLogDock"); // 重要：給 Qt 記狀態用
-    debugDock_->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
-
-    debugText_ = new QTextEdit(debugDock_);
-    debugText_->setReadOnly(true);
-    debugDock_->setWidget(debugText_);
-
-    addDockWidget(Qt::BottomDockWidgetArea, debugDock_);
-    debugDock_->hide(); // 預設不顯示
-
-    // --- Menu action ---
-    ui->actionDebugLog->setCheckable(true);
-    ui->actionDebugLog->setChecked(false);
-
-    // ProcAmp dialog
-    m_currentProcAmp = {128, 128, 128, 128, 128};
-    if (ui->actionProcAmp)
-        connect(ui->actionProcAmp, &QAction::triggered, this, [this]()
-                {
-            // Create dialog lazily
-            if (!procampDlg_)
-            {
-                procampDlg_ = new ProcAmp(this);
-                procampDlg_->setWindowTitle(tr("ProcAmp"));
-                procampDlg_->setValues(m_currentProcAmp);
-
-                // Live preview.
-//                 connect(procampDlg_, &ProcAmp::valuesChanged, this, [this](const gcap_procamp_t& p) {
-//     if (h_) gcap_set_procamp(h_, &m_currentProcAmp);
-// });
-
-connect(procampDlg_, &ProcAmp::valuesChanged,
-        this,
-        [this](const gcap_procamp_t& p)
-{
-    m_currentProcAmp = p;
-
-    if (h_)
-        gcap_set_procamp(h_, &p);
-});
-            }
-
-            // Enable/disable based on backend support
-            const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
-    usePacketCallback_ = (backend == 2);
-            const bool supported = (backend == 0 || backend == 1 || backend == 3); // Auto 可能最後落在 WinMF
-            procampDlg_->setControlsEnabled(supported);
-            procampDlg_->setValues(m_currentProcAmp);
-            procampDlg_->show();
-            procampDlg_->raise();
-            procampDlg_->activateWindow(); });
-
-    // ui->comboBackend->addItem("Auto (WinMF→DShow)", 3);
-    ui->comboBackend->addItem("WinMF GPU", 1);
-    ui->comboBackend->addItem("WinMF CPU", 0);
-    ui->comboBackend->addItem("DirectShow", 2);
-
-#ifdef _WIN32
-    // Optional backend: external CaptureSDK.dll (loaded at runtime)
-    ui->comboBackend->addItem("CaptureSDK", 100);
-    capSdk_ = new CaptureSdkSource(this);
-    connect(capSdk_, &CaptureSdkSource::frameReady, this, &MainWindow::onFrameArrived, Qt::QueuedConnection);
-    connect(capSdk_, &CaptureSdkSource::errorOccurred, this, [this](const QString &m)
-            { MainWindow::postLog(QStringLiteral("[CaptureSDK] %1").arg(m), true); });
-
-    // When CaptureSDK selected, device list is irrelevant (keep UI simple).
-    if (ui->comboBackend && ui->comboDevice)
-    {
-        connect(ui->comboBackend, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
-                {
-            const int backend = ui->comboBackend->currentData().toInt();
-            const bool isCapSdk = (backend == 100);
-            ui->comboDevice->setEnabled(!isCapSdk); });
-    }
-#endif
-
-    gcap_device_info_t list[16];
-
-    int n = 0;
-    if (gcap_enumerate(list, 16, &n) == GCAP_OK)
-    {
-        for (int i = 0; i < n; ++i)
-            ui->comboDevice->addItem(QString::fromUtf8(list[i].name), i);
-    }
-
-    if (ui->comboDevice->count() > 0)
-    {
-        ui->comboDevice->setCurrentIndex(0);
-        deviceIndex_ = ui->comboDevice->itemData(0).toInt();
-    }
-
-    connect(ui->comboDevice, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int idx)
-            { deviceIndex_ = ui->comboDevice->itemData(idx).toInt(); });
-
-#ifdef _WIN32
-    // ---- 初始化 GPU ComboBox：列舉 DXGI Adapter ----
-    if (ui->comboGpu)
-    {
-        ComPtr<IDXGIFactory1> fac;
-        if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),
-                                         reinterpret_cast<void **>(fac.GetAddressOf()))) &&
-            fac)
-        {
-            UINT idx = 0;
-            while (true)
-            {
-                ComPtr<IDXGIAdapter1> ad;
-                HRESULT hr = fac->EnumAdapters1(idx, &ad);
-                if (hr == DXGI_ERROR_NOT_FOUND)
-                    break;
-                if (FAILED(hr) || !ad)
-                {
-                    ++idx;
-                    continue;
-                }
-
-                DXGI_ADAPTER_DESC1 desc{};
-                if (SUCCEEDED(ad->GetDesc1(&desc)))
-                {
-                    if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
-                    {
-                        ++idx;
-                        continue;
-                    }
-                    QString name = QString::fromWCharArray(desc.Description);
-                    ui->comboGpu->addItem(name, static_cast<int>(idx));
-                }
-                ++idx;
-            }
-        }
-
-        if (ui->comboGpu->count() == 0)
-        {
-            // 沒成功列舉任何東西時，放一個 default 選項
-            ui->comboGpu->addItem(QStringLiteral("Default GPU (DXGI)"), -1);
-        }
-
-        ui->comboGpu->setCurrentIndex(0);
-        gpuIndex_ = ui->comboGpu->currentData().toInt();
-        gpuName_ = ui->comboGpu->currentText();
-
-        // 通知 DLL，以後 create_d3d() 要用這張 Adapter
-        gcap_set_d3d_adapter(gpuIndex_);
-
-        // 切換 GPU 時更新 adapter index
-        connect(ui->comboGpu,
-                QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this,
-                [this](int idx)
-                {
-                    gpuIndex_ = ui->comboGpu->itemData(idx).toInt();
-                    gpuName_ = ui->comboGpu->itemText(idx);
-                    gcap_set_d3d_adapter(gpuIndex_);
-                });
-    }
-#endif
-
-    connect(ui->btnStart, &QPushButton::clicked, this, &MainWindow::onStart);
-    connect(ui->btnStop, &QPushButton::clicked, this, &MainWindow::onStop);
-    connect(this, &MainWindow::sigFrame, this, &MainWindow::onFrameArrived, Qt::QueuedConnection);
-    connect(ui->actionDebugLog, &QAction::toggled, this, &MainWindow::onToggleDebugLog);
-    connect(debugDock_, &QDockWidget::visibilityChanged, ui->actionDebugLog, &QAction::setChecked);
-    if (ui->btnShowEdid)
-        connect(ui->btnShowEdid, &QPushButton::clicked, this, &MainWindow::onShowEdid);
-    if (ui->btnRecord)
-        connect(ui->btnRecord, &QPushButton::clicked, this, &MainWindow::onRecord);
-    if (ui->actionOpenRecordFolder)
-        connect(ui->actionOpenRecordFolder, &QAction::triggered, this, &MainWindow::onOpenRecordFolder);
-    if (ui->actionOpenLogFolder)
-        connect(ui->actionOpenLogFolder, &QAction::triggered, this, &MainWindow::onOpenLogFolder);
-    if (ui->actionOpenSnapshot)
-        connect(ui->actionOpenSnapshot, &QAction::triggered, this, &MainWindow::onOpenSnapshot);
-    if (ui->actionInputInfo)
-        connect(ui->actionInputInfo, &QAction::triggered, this, &MainWindow::onShowInputInfo);
-    if (ui->actionDisplayInfo)
-        connect(ui->actionDisplayInfo, &QAction::triggered, this, &MainWindow::onShowDisplayInfo);
-    if (ui->btnSnapshot)
-        connect(ui->btnSnapshot, &QPushButton::clicked, this, &MainWindow::onSnapshot);
-    if (ui->actionOpenVendorPropertyPageTest)
-        connect(ui->actionOpenVendorPropertyPageTest, &QAction::triggered, this, &MainWindow::onOpenVendorPropertyPageTest);
+    setupPreviewWindow();
+    setupRuntimeStatusTimer();
+    setupDebugDock();
+    setupProcAmpAction();
+    setupBackendControls();
+    initializeDeviceList();
+    initializeGpuList();
+    setupConnections();
 
     g_mainWindow = this;
-
-    // 印出 log 檔路徑（給外部測試用）
-    const QString logPath = qApp ? qApp->property("logPath").toString() : QString();
-    if (!logPath.isEmpty())
-        MainWindow::postLog(QStringLiteral("Log file: %1").arg(logPath));
+    logStartupInfo();
 }
 
 MainWindow::~MainWindow()
@@ -453,24 +257,11 @@ void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
         return;
     if (self->usePacketCallback_ || self->packetLogOnly_)
         return;
-    // 更新「實際來源」資訊
-    self->lastFramePtsNs_ = f->pts_ns;
-    self->lastFrameWidth_ = f->width;
-    self->lastFrameHeight_ = f->height;
-
-    // FPS：集中在 callback 算（避免 UI thread 又算一次造成重複/不一致）
-    if (self->lastVideoCallbackPtsNs_ != 0 && self->lastFramePtsNs_ > self->lastVideoCallbackPtsNs_)
-    {
-        uint64_t delta = self->lastFramePtsNs_ - self->lastVideoCallbackPtsNs_;
-        double fps = 1e9 / double(delta);
-        if (fps > 0.0)
-            self->avgFps_ = (self->avgFps_ <= 0.0) ? fps : (self->avgFps_ * 0.9 + fps * 0.1);
-    }
-    self->lastVideoCallbackPtsNs_ = self->lastFramePtsNs_;
+    self->updateFrameSourceState(f->pts_ns, f->width, f->height, self->lastVideoCallbackPtsNs_);
 
     // 這裡 f 是 BGRA 一張圖，直接包成 QImage
     QImage img((const uchar *)f->data[0], f->width, f->height, f->stride[0], QImage::Format_ARGB32);
-    self->sigFrame(img.copy()); // copy 確保 thread-safe
+    self->dispatchFrameImage(img);
 }
 
 void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
@@ -479,51 +270,8 @@ void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
     if (!self || !pkt)
         return;
 
-    self->lastFramePtsNs_ = pkt->pts_ns;
-    self->lastFrameWidth_ = pkt->width;
-    self->lastFrameHeight_ = pkt->height;
-    if (self->lastPacketCallbackPtsNs_ != 0 && self->lastFramePtsNs_ > self->lastPacketCallbackPtsNs_)
-    {
-        uint64_t delta = self->lastFramePtsNs_ - self->lastPacketCallbackPtsNs_;
-        double fps = 1e9 / double(delta);
-        if (fps > 0.0)
-            self->avgFps_ = (self->avgFps_ <= 0.0) ? fps : (self->avgFps_ * 0.9 + fps * 0.1);
-    }
-    self->lastPacketCallbackPtsNs_ = self->lastFramePtsNs_;
-
-    ++self->framePacketLogCount_;
-    const bool shouldLogPacket = (self->framePacketLogCount_ <= 5) || ((self->framePacketLogCount_ % 60) == 0);
-    if (shouldLogPacket)
-    {
-        auto sourceName = [](int s) -> const char *
-        {
-            switch (s)
-            {
-            case GCAP_SOURCE_DSHOW_RAWSINK:
-                return "DShowRawSink";
-            case GCAP_SOURCE_DSHOW_RENDERER:
-                return "DShowRenderer";
-            case GCAP_SOURCE_WINMF_GPU:
-                return "WinMFGPU";
-            case GCAP_SOURCE_WINMF_CPU:
-                return "WinMFCPU";
-            default:
-                return "Unknown";
-            }
-        };
-        QString line = QStringLiteral("[FramePacket] session=%1 #%2 backend=%3 source=%4 fmt=%5 %6x%7 planes=%8 gpu=%9 pts=%10")
-                           .arg(self->framePacketSessionId_)
-                           .arg(self->framePacketLogCount_)
-                           .arg(pkt->backend)
-                           .arg(QString::fromLatin1(sourceName(pkt->source_kind)))
-                           .arg(QString::fromLatin1(packetFmtName(pkt->format)))
-                           .arg(pkt->width)
-                           .arg(pkt->height)
-                           .arg(pkt->plane_count)
-                           .arg(pkt->gpu_backed)
-                           .arg(QString::number(pkt->pts_ns));
-        MainWindow::postLog(line);
-    }
+    self->updateFrameSourceState(pkt->pts_ns, pkt->width, pkt->height, self->lastPacketCallbackPtsNs_);
+    self->logFramePacketIfNeeded(*pkt);
 
     if (!self->usePacketCallback_)
         return;
@@ -532,7 +280,7 @@ void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
     if (img.isNull())
         return;
 
-    self->sigFrame(img.copy());
+    self->dispatchFrameImage(img);
 }
 
 void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)
@@ -717,6 +465,230 @@ void MainWindow::onShowEdid()
     QMessageBox::information(this, tr("EDID"),
                              tr("EDID viewer is only implemented on Windows."));
 #endif
+}
+
+void MainWindow::setupPreviewWindow()
+{
+    previewWindow_ = new previewwindow();
+    previewWindow_->setWindowTitle(QStringLiteral("Preview"));
+    previewWindow_->resize(1280, 720);
+    previewWindow_->show();
+}
+
+void MainWindow::setupRuntimeStatusTimer()
+{
+    runtimeStatusTimer_ = new QTimer(this);
+    runtimeStatusTimer_->setInterval(500);
+    connect(runtimeStatusTimer_, &QTimer::timeout, this, [this]()
+            { updateRuntimeStatusUi(); });
+    runtimeStatusTimer_->start();
+}
+
+void MainWindow::setupDebugDock()
+{
+    debugDock_ = new QDockWidget(tr("Debug Log"), this);
+    debugDock_->setObjectName("DebugLogDock");
+    debugDock_->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
+
+    debugText_ = new QTextEdit(debugDock_);
+    debugText_->setReadOnly(true);
+    debugDock_->setWidget(debugText_);
+
+    addDockWidget(Qt::BottomDockWidgetArea, debugDock_);
+    debugDock_->hide();
+
+    if (ui->actionDebugLog)
+    {
+        ui->actionDebugLog->setCheckable(true);
+        ui->actionDebugLog->setChecked(false);
+    }
+}
+
+void MainWindow::setupProcAmpAction()
+{
+    m_currentProcAmp = {128, 128, 128, 128, 128};
+    if (!ui->actionProcAmp)
+        return;
+
+    connect(ui->actionProcAmp, &QAction::triggered, this, [this]()
+            {
+                if (!procampDlg_)
+                {
+                    procampDlg_ = new ProcAmp(this);
+                    procampDlg_->setWindowTitle(tr("ProcAmp"));
+                    procampDlg_->setValues(m_currentProcAmp);
+                    connect(procampDlg_, &ProcAmp::valuesChanged,
+                            this,
+                            [this](const gcap_procamp_t &p)
+                            {
+                                m_currentProcAmp = p;
+                                if (h_)
+                                    gcap_set_procamp(h_, &p);
+                            });
+                }
+
+                const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
+                usePacketCallback_ = (backend == 2);
+                const bool supported = (backend == 0 || backend == 1 || backend == 3);
+                procampDlg_->setControlsEnabled(supported);
+                procampDlg_->setValues(m_currentProcAmp);
+                procampDlg_->show();
+                procampDlg_->raise();
+                procampDlg_->activateWindow(); });
+}
+
+void MainWindow::setupBackendControls()
+{
+    if (!ui->comboBackend)
+        return;
+
+    ui->comboBackend->addItem("WinMF GPU", 1);
+    ui->comboBackend->addItem("WinMF CPU", 0);
+    ui->comboBackend->addItem("DirectShow", 2);
+
+#ifdef _WIN32
+    ui->comboBackend->addItem("CaptureSDK", 100);
+    capSdk_ = new CaptureSdkSource(this);
+    connect(capSdk_, &CaptureSdkSource::frameReady, this, &MainWindow::onFrameArrived, Qt::QueuedConnection);
+    connect(capSdk_, &CaptureSdkSource::errorOccurred, this, [this](const QString &m)
+            { MainWindow::postLog(QStringLiteral("[CaptureSDK] %1").arg(m), true); });
+
+    if (ui->comboDevice)
+    {
+        connect(ui->comboBackend, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
+                {
+                    const int backend = ui->comboBackend->currentData().toInt();
+                    const bool isCapSdk = (backend == 100);
+                    ui->comboDevice->setEnabled(!isCapSdk); });
+    }
+#endif
+}
+
+void MainWindow::initializeDeviceList()
+{
+    if (!ui->comboDevice)
+        return;
+
+    gcap_device_info_t list[16];
+    int n = 0;
+    if (gcap_enumerate(list, 16, &n) == GCAP_OK)
+    {
+        for (int i = 0; i < n; ++i)
+            ui->comboDevice->addItem(QString::fromUtf8(list[i].name), i);
+    }
+
+    if (ui->comboDevice->count() > 0)
+    {
+        ui->comboDevice->setCurrentIndex(0);
+        deviceIndex_ = ui->comboDevice->itemData(0).toInt();
+    }
+}
+
+void MainWindow::initializeGpuList()
+{
+#ifdef _WIN32
+    if (!ui->comboGpu)
+        return;
+
+    ComPtr<IDXGIFactory1> fac;
+    if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void **>(fac.GetAddressOf()))) && fac)
+    {
+        UINT idx = 0;
+        while (true)
+        {
+            ComPtr<IDXGIAdapter1> ad;
+            HRESULT hr = fac->EnumAdapters1(idx, &ad);
+            if (hr == DXGI_ERROR_NOT_FOUND)
+                break;
+            if (FAILED(hr) || !ad)
+            {
+                ++idx;
+                continue;
+            }
+
+            DXGI_ADAPTER_DESC1 desc{};
+            if (SUCCEEDED(ad->GetDesc1(&desc)))
+            {
+                if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+                {
+                    ++idx;
+                    continue;
+                }
+                QString name = QString::fromWCharArray(desc.Description);
+                ui->comboGpu->addItem(name, static_cast<int>(idx));
+            }
+            ++idx;
+        }
+    }
+
+    if (ui->comboGpu->count() == 0)
+        ui->comboGpu->addItem(QStringLiteral("Default GPU (DXGI)"), -1);
+
+    ui->comboGpu->setCurrentIndex(0);
+    gpuIndex_ = ui->comboGpu->currentData().toInt();
+    gpuName_ = ui->comboGpu->currentText();
+    gcap_set_d3d_adapter(gpuIndex_);
+#else
+    Q_UNUSED(this);
+#endif
+}
+
+void MainWindow::setupConnections()
+{
+    if (ui->comboDevice)
+    {
+        connect(ui->comboDevice, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx)
+                { deviceIndex_ = ui->comboDevice->itemData(idx).toInt(); });
+    }
+
+#ifdef _WIN32
+    if (ui->comboGpu)
+    {
+        connect(ui->comboGpu,
+                QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this,
+                [this](int idx)
+                {
+                    gpuIndex_ = ui->comboGpu->itemData(idx).toInt();
+                    gpuName_ = ui->comboGpu->itemText(idx);
+                    gcap_set_d3d_adapter(gpuIndex_);
+                });
+    }
+#endif
+
+    connect(ui->btnStart, &QPushButton::clicked, this, &MainWindow::onStart);
+    connect(ui->btnStop, &QPushButton::clicked, this, &MainWindow::onStop);
+    connect(this, &MainWindow::sigFrame, this, &MainWindow::onFrameArrived, Qt::QueuedConnection);
+    if (ui->actionDebugLog)
+        connect(ui->actionDebugLog, &QAction::toggled, this, &MainWindow::onToggleDebugLog);
+    if (debugDock_ && ui->actionDebugLog)
+        connect(debugDock_, &QDockWidget::visibilityChanged, ui->actionDebugLog, &QAction::setChecked);
+    if (ui->btnShowEdid)
+        connect(ui->btnShowEdid, &QPushButton::clicked, this, &MainWindow::onShowEdid);
+    if (ui->btnRecord)
+        connect(ui->btnRecord, &QPushButton::clicked, this, &MainWindow::onRecord);
+    if (ui->actionOpenRecordFolder)
+        connect(ui->actionOpenRecordFolder, &QAction::triggered, this, &MainWindow::onOpenRecordFolder);
+    if (ui->actionOpenLogFolder)
+        connect(ui->actionOpenLogFolder, &QAction::triggered, this, &MainWindow::onOpenLogFolder);
+    if (ui->actionOpenSnapshot)
+        connect(ui->actionOpenSnapshot, &QAction::triggered, this, &MainWindow::onOpenSnapshot);
+    if (ui->actionInputInfo)
+        connect(ui->actionInputInfo, &QAction::triggered, this, &MainWindow::onShowInputInfo);
+    if (ui->actionDisplayInfo)
+        connect(ui->actionDisplayInfo, &QAction::triggered, this, &MainWindow::onShowDisplayInfo);
+    if (ui->btnSnapshot)
+        connect(ui->btnSnapshot, &QPushButton::clicked, this, &MainWindow::onSnapshot);
+    if (ui->actionOpenVendorPropertyPageTest)
+        connect(ui->actionOpenVendorPropertyPageTest, &QAction::triggered, this, &MainWindow::onOpenVendorPropertyPageTest);
+}
+
+void MainWindow::logStartupInfo()
+{
+    const QString logPath = qApp ? qApp->property("logPath").toString() : QString();
+    if (!logPath.isEmpty())
+        MainWindow::postLog(QStringLiteral("Log file: %1").arg(logPath));
 }
 
 void MainWindow::postLog(const QString &line, bool isError)
