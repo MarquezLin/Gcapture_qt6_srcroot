@@ -125,7 +125,9 @@ private:
     QString currentAudioInfoText() const;
     void refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps);
     void refreshDisplayInfoFromFrame(const QImage &img);
+    void refreshDisplayInfoFromCurrentState();
     void refreshSignalInfoDialog();
+    void refreshDisplayInfoDialog();
 
 signals:
     void sigFrame(const QImage &);

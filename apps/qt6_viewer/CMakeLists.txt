@@ -11,6 +11,9 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 set(VIEWER_SOURCES
   main.cpp
   mainwindow.cpp
+  mainwindow_capture.cpp
+  mainwindow_info.cpp
+  mainwindow_frame.cpp
   mainwindow.h
   mainwindow.ui
   inputinfodialog.h
