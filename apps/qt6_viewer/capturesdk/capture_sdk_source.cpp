@@ -88,7 +88,6 @@ bool CaptureSdkSource::start(int width, int height)
         h = 0;
 
     cap_result_t rc = cap_init(handle_, w, h);
-    qDebug() << "[cap] init ret=" << rc;
     if (rc != CAP_OK)
     {
         cap_set_log_callback(nullptr);
@@ -99,7 +98,6 @@ bool CaptureSdkSource::start(int width, int height)
 
     // Use continuous mode for live preview.
     rc = cap_start_capture(handle_, CAP_MODE_CONTINUOUS, &CaptureSdkSource::s_video_cb, this);
-    qDebug() << "[cap] start ret=" << rc;
     if (rc != CAP_OK)
     {
         cap_set_log_callback(nullptr);
@@ -211,7 +209,8 @@ void __stdcall CaptureSdkSource::s_video_cb(const uint8_t *buf,
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     const long long us = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
     const long long prev = lastLogUs.load(std::memory_order_relaxed);
-    if (n == 1 || (us - prev) > 1'000'000)
+    static const bool verboseVideoCb = qEnvironmentVariableIntValue("GCAPSDK_VERBOSE_VIDEO_CB") != 0;
+    if (verboseVideoCb && (n == 1 || (us - prev) > 1'000'000))
     {
         lastLogUs.store(us, std::memory_order_relaxed);
         qDebug() << "[cap] video_cb n=" << n

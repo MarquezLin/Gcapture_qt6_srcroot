@@ -187,9 +187,6 @@ void inputinfodialog::onAudioDeviceChanged(int index)
 
     emit audioDeviceSelected(id);
 
-    qDebug() << "[AudioSelect] emit id=" << QString::fromUtf8(d.id)
-             << " name=" << QString::fromUtf8(d.name);
-
     ui->labelAudioInfo->setText(text);
 
     initializing_ = false;

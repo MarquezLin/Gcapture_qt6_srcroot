@@ -18,7 +18,6 @@
 #include <QLabel>
 #include <QDesktopServices>
 #include <QUrl>
-#include <QDir>
 #include "edid_reader.h"
 #ifdef _WIN32
 #include <dxgi1_2.h>
@@ -69,6 +68,30 @@ namespace
         default:
             return "UNKNOWN";
         }
+    }
+
+    static void fillKnownAverMediaInfo(CaptureDeviceInfo &info)
+    {
+        info.supportedFormats.clear();
+        info.propertyPages.clear();
+
+        if (!info.deviceName.contains(QStringLiteral("AVerMedia"), Qt::CaseInsensitive))
+            return;
+
+        info.supportedFormats << QStringLiteral("Y210 1920x1080 60.00 fps")
+                              << QStringLiteral("Y210 3840x2160 30.00 fps")
+                              << QStringLiteral("YUY2 1920x1080 60.00 fps")
+                              << QStringLiteral("YUY2 640x480 60.00 fps")
+                              << QStringLiteral("YUY2 720x480 60.00 fps")
+                              << QStringLiteral("YUY2 720x576 50.00 fps")
+                              << QStringLiteral("YUY2 800x600 60.00 fps")
+                              << QStringLiteral("YUY2 1024x768 60.00 fps")
+                              << QStringLiteral("YUY2 1152x864 75.00 fps");
+        info.propertyPages << QStringLiteral("AVerXBarPropertyPage — Filter")
+                           << QStringLiteral("AVerCertificateProp — Filter")
+                           << QStringLiteral("VideoDecoder Property Page — Filter")
+                           << QStringLiteral("VideoProcAmp Property Page — Filter")
+                           << QStringLiteral("AVerStreamFormatProp — Capture Pin");
     }
 
     static QImage framePacketToQImage(const gcap_frame_packet_t &pkt)
@@ -413,7 +436,6 @@ void MainWindow::onStart()
     ++framePacketSessionId_;
     if (ui->statusbar)
         ui->statusbar->showMessage(QStringLiteral("Starting..."));
-    qDebug() << "MainWindow::onStart";
 
     if (!previewWindow_)
     {
@@ -427,7 +449,6 @@ void MainWindow::onStart()
     previewWindow_->activateWindow();
 
     void *hwnd = previewWindow_->previewHwnd();
-    qDebug() << "preview hwnd =" << hwnd;
     // If either backend is running, ignore.
     if (h_
 #ifdef _WIN32
@@ -527,7 +548,6 @@ void MainWindow::onStart()
     }
 
     st = gcap_set_preview(h_, &pv);
-    qDebug() << "gcap_set_preview st =" << st << ", h_ =" << h_;
     if (st != GCAP_OK)
     {
         QMessageBox::warning(this, "gcapture",
@@ -743,7 +763,8 @@ void MainWindow::onRecord()
     QString fileName = QString("capture_%1.mp4").arg(ts);
     QString fullPath = baseDir + "/" + fileName;
 
-    qDebug() << "[Record] apply audio id=" << recordAudioDeviceIdUtf8_;
+    MainWindow::postLog(QStringLiteral("[Record] apply audio device=%1")
+                            .arg(recordAudioDeviceIdUtf8_.isEmpty() ? QStringLiteral("default") : recordAudioDeviceIdUtf8_));
     if (recordAudioDeviceIdUtf8_.isEmpty())
         gcap_set_recording_audio_device(h_, nullptr); // default
     else
@@ -960,25 +981,7 @@ void MainWindow::onFrameArrived(const QImage &img)
         }
     }
 
-    captureInfo_.supportedFormats.clear();
-    captureInfo_.propertyPages.clear();
-    if (captureInfo_.deviceName.contains(QStringLiteral("AVerMedia"), Qt::CaseInsensitive))
-    {
-        captureInfo_.supportedFormats << QStringLiteral("Y210 1920x1080 60.00 fps")
-                                      << QStringLiteral("Y210 3840x2160 30.00 fps")
-                                      << QStringLiteral("YUY2 1920x1080 60.00 fps")
-                                      << QStringLiteral("YUY2 640x480 60.00 fps")
-                                      << QStringLiteral("YUY2 720x480 60.00 fps")
-                                      << QStringLiteral("YUY2 720x576 50.00 fps")
-                                      << QStringLiteral("YUY2 800x600 60.00 fps")
-                                      << QStringLiteral("YUY2 1024x768 60.00 fps")
-                                      << QStringLiteral("YUY2 1152x864 75.00 fps");
-        captureInfo_.propertyPages << QStringLiteral("AVerXBarPropertyPage — Filter")
-                                   << QStringLiteral("AVerCertificateProp — Filter")
-                                   << QStringLiteral("VideoDecoder Property Page — Filter")
-                                   << QStringLiteral("VideoProcAmp Property Page — Filter")
-                                   << QStringLiteral("AVerStreamFormatProp — Capture Pin");
-    }
+    fillKnownAverMediaInfo(captureInfo_);
 
     // 4. Display / output info
     displayInfo_.video.size = img.size();
@@ -1175,16 +1178,15 @@ void MainWindow::onShowInputInfo()
                              tr("Open SC0710 vendor signal page failed.\nFallback to generic signal info dialog."));
     }
 #endif
-
     if (!infoDlg_)
     {
         infoDlg_ = new inputinfodialog(this);
         infoDlg_->setWindowTitle(tr("Signal Info"));
+
         connect(infoDlg_, &inputinfodialog::audioDeviceSelected,
                 this, [this](const QString &id)
-                {
-                    recordAudioDeviceIdUtf8_ = id;
-                    qDebug() << "[AudioSelect] MainWindow store id=" << id; });
+                { recordAudioDeviceIdUtf8_ = id; });
+
         connect(infoDlg_, &inputinfodialog::openPropertyPageRequested,
                 this, [this](const QString &pageNameUtf8, bool capturePin)
                 {
@@ -1194,7 +1196,9 @@ void MainWindow::onShowInputInfo()
                                             .arg(devIndex)
                                             .arg(pageNameUtf8)
                                             .arg(capturePin ? QStringLiteral("Capture Pin") : QStringLiteral("Filter")));
-                    const bool ok = (gcap_open_named_property_page(devIndex, pageNameUtf8.toUtf8().constData(), capturePin ? 1 : 0) != 0);
+                    const bool ok = (gcap_open_named_property_page(devIndex,
+                                                                   pageNameUtf8.toUtf8().constData(),
+                                                                   capturePin ? 1 : 0) != 0);
                     if (!ok)
                     {
                         QMessageBox::warning(this,
@@ -1244,26 +1248,7 @@ void MainWindow::onShowInputInfo()
         }
     }
 
-    captureInfo_.supportedFormats.clear();
-    captureInfo_.propertyPages.clear();
-    const QString deviceName = captureInfo_.deviceName;
-    if (deviceName.contains(QStringLiteral("AVerMedia"), Qt::CaseInsensitive))
-    {
-        captureInfo_.supportedFormats << QStringLiteral("Y210 1920x1080 60.00 fps")
-                                      << QStringLiteral("Y210 3840x2160 30.00 fps")
-                                      << QStringLiteral("YUY2 1920x1080 60.00 fps")
-                                      << QStringLiteral("YUY2 640x480 60.00 fps")
-                                      << QStringLiteral("YUY2 720x480 60.00 fps")
-                                      << QStringLiteral("YUY2 720x576 50.00 fps")
-                                      << QStringLiteral("YUY2 800x600 60.00 fps")
-                                      << QStringLiteral("YUY2 1024x768 60.00 fps")
-                                      << QStringLiteral("YUY2 1152x864 75.00 fps");
-        captureInfo_.propertyPages << QStringLiteral("AVerXBarPropertyPage — Filter")
-                                   << QStringLiteral("AVerCertificateProp — Filter")
-                                   << QStringLiteral("VideoDecoder Property Page — Filter")
-                                   << QStringLiteral("VideoProcAmp Property Page — Filter")
-                                   << QStringLiteral("AVerStreamFormatProp — Capture Pin");
-    }
+    fillKnownAverMediaInfo(captureInfo_);
 
     lastInfoText_ = formatCaptureDeviceInfo(captureInfo_, avgFps_);
     infoDlg_->setInfoText(lastInfoText_);
@@ -1278,7 +1263,6 @@ void MainWindow::onOpenVendorPropertyPageTest()
 {
 #ifdef _WIN32
     const int devIndex = ui && ui->comboDevice ? ui->comboDevice->currentIndex() : 0;
-    qDebug() << "[VendorPageTest] trigger devIndex=" << devIndex;
     MainWindow::postLog(QStringLiteral("[VendorPageTest] begin devIndex=%1").arg(devIndex));
 
     const bool ok = (gcap_open_vendor_property_page(devIndex) != 0);
