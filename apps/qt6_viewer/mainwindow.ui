@@ -52,6 +52,9 @@
     </item>
     <item row="2" column="0" colspan="5">
      <widget class="QLabel" name="labelinfo1">
+      <property name="enabled">
+       <bool>false</bool>
+      </property>
       <property name="text">
        <string>info1</string>
       </property>
@@ -99,7 +102,7 @@
     <addaction name="actionInputInfo"/>
     <addaction name="actionDisplayInfo"/>
     <addaction name="actionProcAmp"/>
-    </widget>
+   </widget>
    <widget class="QMenu" name="menuDebug">
     <property name="title">
      <string>Debug</string>

@@ -9,7 +9,7 @@
 #include <QMessageBox>
 #include <QUrl>
 
-void MainWindow::onStart()
+void MainWindow::resetRuntimeTracking()
 {
     avgFps_ = 0.0;
     lastFramePtsNs_ = 0;
@@ -19,30 +19,160 @@ void MainWindow::onStart()
     lastPacketCallbackPtsNs_ = 0;
     framePacketLogCount_ = 0;
     ++framePacketSessionId_;
-    if (ui->statusbar)
-        ui->statusbar->showMessage(QStringLiteral("Starting..."));
+}
 
+void MainWindow::clearPreviewSurface()
+{
     if (!previewWindow_)
+        return;
+
+    previewWindow_->clearFrame();
+    previewWindow_->update();
+    previewWindow_->repaint();
+}
+
+void MainWindow::closeCaptureSession()
+{
+    if (!h_)
+        return;
+
+    gcap_close(h_);
+    h_ = nullptr;
+}
+
+bool MainWindow::showCaptureErrorAndClose(const QString &action, gcap_status_t st, const char *apiName)
+{
+    QString message = QStringLiteral("%1 fail: %2").arg(action, QString::fromUtf8(gcap_strerror(st)));
+    if (apiName && *apiName)
     {
-        previewWindow_ = new previewwindow();
-        previewWindow_->setWindowTitle(QStringLiteral("Preview"));
-        previewWindow_->resize(1280, 720);
+        MainWindow::postLog(QStringLiteral("[Capture] %1 failed at %2: %3")
+                                .arg(action, QString::fromUtf8(apiName), QString::fromUtf8(gcap_strerror(st))),
+                            true);
     }
+    QMessageBox::warning(this, QStringLiteral("gcapture"), message);
+    closeCaptureSession();
+    return false;
+}
 
-    previewWindow_->show();
-    previewWindow_->raise();
-    previewWindow_->activateWindow();
+void MainWindow::stopRecordingSession(bool showSummary)
+{
+    if (!recording_ || !h_)
+        return;
 
-    void *hwnd = previewWindow_->previewHwnd();
-    // If either backend is running, ignore.
+    gcap_stop_recording(h_);
+    recording_ = false;
+    ui->btnRecord->setText(QStringLiteral("Record"));
+
+    if (!showSummary)
+        return;
+
+    if (!recordPath_.isEmpty() && recordStartTime_.isValid())
+    {
+        QFileInfo fi(recordPath_);
+        const qint64 sizeBytes = fi.size();
+        const qint64 ms = recordStartTime_.msecsTo(QDateTime::currentDateTime());
+        const double seconds = ms / 1000.0;
+        double bitrateKbps = 0.0;
+        if (seconds > 0.0)
+            bitrateKbps = (sizeBytes * 8.0 / 1000.0) / seconds;
+
+        const double fps = (avgFps_ > 0.0)
+                               ? avgFps_
+                               : (currentProfile_.fps_den
+                                      ? static_cast<double>(currentProfile_.fps_num) / currentProfile_.fps_den
+                                      : static_cast<double>(currentProfile_.fps_num));
+
+        const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
+        const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
+
+        QString codecLabel;
+        if (currentProfile_.format == GCAP_FMT_P010)
+            codecLabel = QStringLiteral("HEVC / H.265 (input P010 10-bit)");
+        else
+            codecLabel = QStringLiteral("H.264 / AVC(input NV12 8-bit)");
+
+        if (!recordEncoderName_.isEmpty())
+            codecLabel = recordEncoderName_;
+
+        const QString info = QStringLiteral(
+                                 "Record done\n"
+                                 "file:%1\n"
+                                 "size:%2 MB\n"
+                                 "Actual resolution:%3 x %4\n"
+                                 "Actual FPS:%5\n"
+                                 "encoder:%6\n"
+                                 "bit rate : %7 kbps")
+                                 .arg(recordPath_)
+                                 .arg(QString::number(sizeBytes / (1024.0 * 1024.0), 'f', 2))
+                                 .arg(srcW)
+                                 .arg(srcH)
+                                 .arg(QString::number(fps, 'f', 2))
+                                 .arg(codecLabel)
+                                 .arg(QString::number(bitrateKbps, 'f', 1));
+
+        QMessageBox::information(this, QStringLiteral("Record"), info);
+
+        if (ui->statusbar)
+        {
+            const QString sb = QStringLiteral("Record mode:Media Foundation (Sink Writer) | file:%1 | %2 kbps")
+                                   .arg(fi.fileName())
+                                   .arg(QString::number(bitrateKbps, 'f', 1));
+            ui->statusbar->showMessage(sb);
+        }
+    }
+}
+
+QString MainWindow::buildRecordingPath(const QDateTime &now) const
+{
+    const QString baseDir = QCoreApplication::applicationDirPath() + QStringLiteral("/recordings");
+    QDir().mkpath(baseDir);
+    const QString ts = now.toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    return baseDir + QStringLiteral("/capture_") + ts + QStringLiteral(".mp4");
+}
+
+void MainWindow::applySelectedRecordingAudioDevice()
+{
+    const QString deviceId = recordAudioDeviceIdUtf8_.isEmpty() ? QStringLiteral("default") : recordAudioDeviceIdUtf8_;
+    MainWindow::postLog(QStringLiteral("[Record] apply audio device=%1").arg(deviceId));
+
+    if (recordAudioDeviceIdUtf8_.isEmpty())
+        gcap_set_recording_audio_device(h_, nullptr);
+    else
+        gcap_set_recording_audio_device(h_, recordAudioDeviceIdUtf8_.toUtf8().constData());
+}
+
+void MainWindow::onStart()
+{
     if (h_
 #ifdef _WIN32
         || usingCaptureSdk_
 #endif
     )
+    {
+        MainWindow::postLog(QStringLiteral("[Start] ignored: capture session is already running."));
+        if (ui->statusbar)
+            ui->statusbar->showMessage(QStringLiteral("Capture is already running."), 3000);
+        if (previewWindow_)
+        {
+            previewWindow_->show();
+            previewWindow_->raise();
+            previewWindow_->activateWindow();
+        }
         return;
+    }
 
-    int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
+    resetRuntimeTracking();
+    if (ui->statusbar)
+        ui->statusbar->showMessage(QStringLiteral("Starting..."));
+
+    setupPreviewWindow();
+    previewWindow_->show();
+    previewWindow_->raise();
+    previewWindow_->activateWindow();
+
+    void *hwnd = previewWindow_->previewHwnd();
+
+    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
     usePacketCallback_ = false;
     packetLogOnly_ = (backend == 2);
 
@@ -57,29 +187,25 @@ void MainWindow::onStart()
         usingCaptureSdk_ = capSdk_ && capSdk_->start(1920, 1080);
         if (!usingCaptureSdk_)
         {
-            QMessageBox::warning(this, "CaptureSDK",
-                                 QStringLiteral("Start failed: %1").arg(capSdk_ ? capSdk_->lastError() : QStringLiteral("capSdk_ is null")));
+            QMessageBox::warning(this, QStringLiteral("CaptureSDK"),
+                                 QStringLiteral("Start failed: %1")
+                                     .arg(capSdk_ ? capSdk_->lastError() : QStringLiteral("capSdk_ is null")));
         }
         return;
     }
 #endif
 
     gcap_set_backend(backend);
-
-    // 再把目前選到的 GPU index 丟進 DLL
     if (ui->comboGpu)
         gcap_set_d3d_adapter(ui->comboGpu->currentData().toInt());
 
-    gcap_status_t st = GCAP_OK;
-
-    // OBS-style: Device Default，不強制指定解析度
     currentProfile_ = {};
 
-    st = gcap_create(&h_);
+    gcap_status_t st = gcap_create(&h_);
     if (st != GCAP_OK || !h_)
     {
-        QMessageBox::warning(this, "gcapture",
-                             QString("create fail: %1").arg(gcap_strerror(st)));
+        QMessageBox::warning(this, QStringLiteral("gcapture"),
+                             QStringLiteral("create fail: %1").arg(QString::fromUtf8(gcap_strerror(st))));
         h_ = nullptr;
         return;
     }
@@ -87,10 +213,7 @@ void MainWindow::onStart()
     st = gcap_set_buffers(h_, 6, 0);
     if (st != GCAP_OK)
     {
-        QMessageBox::warning(this, "gcapture",
-                             QString("set buffers fail: %1").arg(gcap_strerror(st)));
-        gcap_close(h_);
-        h_ = nullptr;
+        showCaptureErrorAndClose(QStringLiteral("set buffers"), st, "gcap_set_buffers");
         return;
     }
 
@@ -99,30 +222,27 @@ void MainWindow::onStart()
     {
         st = gcap_set_frame_packet_callback(h_, &MainWindow::s_pcb, this);
         if (st == GCAP_OK)
+        {
             appendDebugLog(QStringLiteral("[MainWindow] packet callback registered backend=%1 h_=%2")
                                .arg(backend)
                                .arg(reinterpret_cast<quintptr>(h_), 0, 16));
+        }
     }
     if (st != GCAP_OK)
     {
-        QMessageBox::warning(this, "gcapture",
-                             QString("set callbacks fail: %1").arg(gcap_strerror(st)));
-        gcap_close(h_);
-        h_ = nullptr;
+        showCaptureErrorAndClose(QStringLiteral("set callbacks"), st,
+                                 (usePacketCallback_ || packetLogOnly_) ? "gcap_set_frame_packet_callback" : "gcap_set_callbacks");
         return;
     }
 
-    // Apply ProcAmp (WinMF GPU/CPU). Other backends may ignore it.
     if (backend == 0 || backend == 1 || backend == 3)
         gcap_set_procamp(h_, &m_currentProcAmp);
 
     gcap_preview_desc_t pv{};
     pv.hwnd = hwnd;
     pv.enable_preview = 1;
-
     if (backend == 2)
     {
-        // DirectShow: use shared native preview for Phase C-2
         pv.use_fp16_pipeline = 0;
         pv.swapchain_10bit = 0;
     }
@@ -135,30 +255,21 @@ void MainWindow::onStart()
     st = gcap_set_preview(h_, &pv);
     if (st != GCAP_OK)
     {
-        QMessageBox::warning(this, "gcapture",
-                             QString("set preview fail: %1").arg(gcap_strerror(st)));
-        gcap_close(h_);
-        h_ = nullptr;
+        showCaptureErrorAndClose(QStringLiteral("set preview"), st, "gcap_set_preview");
         return;
     }
 
     st = gcap_open2(h_, deviceIndex_);
     if (st != GCAP_OK)
     {
-        QMessageBox::warning(this, "gcapture",
-                             QString("open fail: %1").arg(gcap_strerror(st)));
-        gcap_close(h_);
-        h_ = nullptr;
+        showCaptureErrorAndClose(QStringLiteral("open"), st, "gcap_open2");
         return;
     }
 
     st = gcap_start(h_);
     if (st != GCAP_OK)
     {
-        QMessageBox::warning(this, "gcapture",
-                             QString("start fail: %1").arg(gcap_strerror(st)));
-        gcap_close(h_);
-        h_ = nullptr;
+        showCaptureErrorAndClose(QStringLiteral("start"), st, "gcap_start");
         return;
     }
 
@@ -173,12 +284,7 @@ void MainWindow::onStop()
         if (capSdk_)
             capSdk_->stop();
         usingCaptureSdk_ = false;
-        if (previewWindow_)
-        {
-            previewWindow_->clearFrame();
-            previewWindow_->update();
-            previewWindow_->repaint();
-        }
+        clearPreviewSurface();
         updateRuntimeStatusUi();
         return;
     }
@@ -187,22 +293,10 @@ void MainWindow::onStop()
     if (!h_)
         return;
 
-    if (recording_)
-    {
-        gcap_stop_recording(h_);
-        recording_ = false;
-        ui->btnRecord->setText("Record");
-    }
-
+    stopRecordingSession(false);
     gcap_stop(h_);
-    gcap_close(h_);
-    h_ = nullptr;
-    if (previewWindow_)
-    {
-        previewWindow_->clearFrame();
-        previewWindow_->update();
-        previewWindow_->repaint();
-    }
+    closeCaptureSession();
+    clearPreviewSurface();
     lastVideoCallbackPtsNs_ = 0;
     lastPacketCallbackPtsNs_ = 0;
     framePacketLogCount_ = 0;
@@ -222,24 +316,17 @@ void MainWindow::onOpenRecordFolder()
 
 void MainWindow::onOpenLogFolder()
 {
-    // main.cpp 在啟動時已把 logPath 存在 qApp property
-    const QString logFile = qApp ? qApp->property("logPath").toString()
-                                 : QString();
+    const QString logFile = qApp ? qApp->property("logPath").toString() : QString();
 
     if (!logFile.isEmpty())
     {
         const QFileInfo fi(logFile);
-        QDesktopServices::openUrl(
-            QUrl::fromLocalFile(fi.absolutePath()));
+        QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath()));
         return;
     }
 
-    // fallback：<exe>/logs
-    const QString fallback =
-        QCoreApplication::applicationDirPath() + "/logs";
-
-    QDesktopServices::openUrl(
-        QUrl::fromLocalFile(QDir(fallback).absolutePath()));
+    const QString fallback = QCoreApplication::applicationDirPath() + "/logs";
+    QDesktopServices::openUrl(QUrl::fromLocalFile(QDir(fallback).absolutePath()));
 }
 
 void MainWindow::onOpenSnapshot()
@@ -258,119 +345,42 @@ void MainWindow::onRecord()
 #ifdef _WIN32
     if (usingCaptureSdk_)
     {
-        QMessageBox::information(this, "Record",
-                                 "CaptureSDK backend is enabled. This demo currently supports recording only via gcapture backend.");
+        QMessageBox::information(this, QStringLiteral("Record"),
+                                 QStringLiteral("CaptureSDK backend is enabled. This demo currently supports recording only via gcapture backend."));
         return;
     }
 #endif
     if (!h_)
     {
-        QMessageBox::warning(this, "Record", "Please press Start to begin capturing the screen before recording.");
+        QMessageBox::warning(this, QStringLiteral("Record"),
+                             QStringLiteral("Please press Start to begin capturing the screen before recording."));
         return;
     }
 
-    // === 停止錄影 ===
     if (recording_)
     {
-        gcap_stop_recording(h_);
-        recording_ = false;
-        ui->btnRecord->setText("Record");
-        // ---- 停錄後，估算實際 bitrate 並顯示 ----
-        if (!recordPath_.isEmpty() && recordStartTime_.isValid())
-        {
-            QFileInfo fi(recordPath_);
-            qint64 sizeBytes = fi.size();
-            qint64 ms = recordStartTime_.msecsTo(QDateTime::currentDateTime());
-            double seconds = ms / 1000.0;
-            double bitrateKbps = 0.0;
-            if (seconds > 0.0)
-                bitrateKbps = (sizeBytes * 8.0 / 1000.0) / seconds; // kbps
-
-            // FPS：優先用實際測到的 avgFps_
-            double fps = (avgFps_ > 0.0)
-                             ? avgFps_
-                             : (currentProfile_.fps_den
-                                    ? (double)currentProfile_.fps_num / currentProfile_.fps_den
-                                    : (double)currentProfile_.fps_num);
-
-            // 解析度：優先用最後一幀的寬高
-            int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
-            int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
-
-            QString codecLabel;
-            if (currentProfile_.format == GCAP_FMT_P010)
-                codecLabel = QStringLiteral("HEVC / H.265 (input P010 10-bit)");
-            else
-                codecLabel = QStringLiteral("H.264 / AVC(input NV12 8-bit)");
-
-            if (!recordEncoderName_.isEmpty())
-                codecLabel = recordEncoderName_;
-
-            QString info = QStringLiteral(
-                               "Record done\n"
-                               "file:%1\n"
-                               "size:%2 MB\n"
-                               "Actual resolution:%3 x %4\n"
-                               "Actual FPS:%5\n"
-                               "encoder:%6\n"
-                               "bit rate : %7 kbps")
-                               .arg(recordPath_)
-                               .arg(QString::number(sizeBytes / (1024.0 * 1024.0), 'f', 2))
-                               .arg(srcW)
-                               .arg(srcH)
-                               .arg(QString::number(fps, 'f', 2))
-                               .arg(codecLabel)
-                               .arg(QString::number(bitrateKbps, 'f', 1));
-
-            QMessageBox::information(this, "Record", info);
-
-            if (ui->statusbar)
-            {
-                QString sb = QStringLiteral("Record mode:Media Foundation (Sink Writer) | file:%1 | %2 kbps")
-                                 .arg(fi.fileName())
-                                 .arg(QString::number(bitrateKbps, 'f', 1));
-                ui->statusbar->showMessage(sb);
-            }
-        }
-
+        stopRecordingSession(true);
         return;
     }
 
-    // === 開始錄影 ===
+    const QDateTime now = QDateTime::currentDateTime();
+    const QString fullPath = buildRecordingPath(now);
 
-    // 固定輸出資料夾：<exe>/recordings
-    QString baseDir = QCoreApplication::applicationDirPath() + "/recordings";
-    QDir().mkpath(baseDir);
+    applySelectedRecordingAudioDevice();
 
-    // 自動檔名：capture_YYYYMMDD_HHMMSS.mp4
-    QDateTime now = QDateTime::currentDateTime();
-    QString ts = now.toString("yyyyMMdd_HHmmss");
-    QString fileName = QString("capture_%1.mp4").arg(ts);
-    QString fullPath = baseDir + "/" + fileName;
-
-    MainWindow::postLog(QStringLiteral("[Record] apply audio device=%1")
-                            .arg(recordAudioDeviceIdUtf8_.isEmpty() ? QStringLiteral("default") : recordAudioDeviceIdUtf8_));
-    if (recordAudioDeviceIdUtf8_.isEmpty())
-        gcap_set_recording_audio_device(h_, nullptr); // default
-    else
-        gcap_set_recording_audio_device(h_, recordAudioDeviceIdUtf8_.toUtf8().constData());
-
-    gcap_status_t st = gcap_start_recording(h_, fullPath.toUtf8().constData());
+    const gcap_status_t st = gcap_start_recording(h_, fullPath.toUtf8().constData());
     if (st != GCAP_OK)
     {
-        QMessageBox::warning(this, "Record",
-                             QString("Start recording failed: %1").arg(gcap_strerror(st)));
+        QMessageBox::warning(this, QStringLiteral("Record"),
+                             QStringLiteral("Start recording failed: %1").arg(QString::fromUtf8(gcap_strerror(st))));
         return;
     }
 
-    // ---- 錄影啟動成功，記錄資訊給之後顯示 ----
     recording_ = true;
-    ui->btnRecord->setText("Stop Rec");
-
+    ui->btnRecord->setText(QStringLiteral("Stop Rec"));
     recordStartTime_ = now;
     recordPath_ = fullPath;
 
-    // 推測目前使用的 encoder 名稱（由 pixfmt 判斷）
     if (currentProfile_.format == GCAP_FMT_P010)
         recordEncoderName_ = QStringLiteral("Media Foundation HEVC / H.265 Encoder(Sink Writer, P010 10-bit)");
     else
@@ -378,19 +388,12 @@ void MainWindow::onRecord()
 
     if (ui->statusbar)
     {
-        double fps = currentProfile_.fps_den
-                         ? (double)currentProfile_.fps_num / currentProfile_.fps_den
-                         : (double)currentProfile_.fps_num;
-
-        // 解析度：優先用最後一幀的寬高
-        int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
-        int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
-
-        QString sb = QStringLiteral("Record mode : Media Foundation (Sink Writer) | Encord : %1 | %2 x %3")
-                         .arg(recordEncoderName_)
-                         .arg(srcW)
-                         .arg(srcH);
-
+        const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
+        const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
+        const QString sb = QStringLiteral("Record mode : Media Foundation (Sink Writer) | Encord : %1 | %2 x %3")
+                               .arg(recordEncoderName_)
+                               .arg(srcW)
+                               .arg(srcH);
         ui->statusbar->showMessage(sb);
     }
 }

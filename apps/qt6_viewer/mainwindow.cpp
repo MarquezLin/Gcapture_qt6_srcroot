@@ -219,7 +219,6 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
-    setupPreviewWindow();
     setupRuntimeStatusTimer();
     setupDebugDock();
     setupProcAmpAction();
@@ -469,10 +468,12 @@ void MainWindow::onShowEdid()
 
 void MainWindow::setupPreviewWindow()
 {
+    if (previewWindow_)
+        return;
+
     previewWindow_ = new previewwindow();
     previewWindow_->setWindowTitle(QStringLiteral("Preview"));
     previewWindow_->resize(1280, 720);
-    previewWindow_->show();
 }
 
 void MainWindow::setupRuntimeStatusTimer()

@@ -137,6 +137,13 @@ private:
     void initializeGpuList();
     void setupConnections();
     void logStartupInfo();
+    void resetRuntimeTracking();
+    void clearPreviewSurface();
+    void closeCaptureSession();
+    bool showCaptureErrorAndClose(const QString &action, gcap_status_t st, const char *apiName = nullptr);
+    void stopRecordingSession(bool showSummary);
+    QString buildRecordingPath(const QDateTime &now) const;
+    void applySelectedRecordingAudioDevice();
     void updateFrameSourceState(uint64_t ptsNs, int width, int height, uint64_t &lastPtsTracker);
     void dispatchFrameImage(const QImage &img);
     void refreshFrameDependentUi(const QImage &img);
