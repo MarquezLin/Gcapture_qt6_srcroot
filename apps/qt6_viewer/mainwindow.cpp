@@ -20,6 +20,10 @@
 #include <QUrl>
 #include <vector>
 #include "edid_reader.h"
+#include "tiffanalysisdialog.h"
+#include "tiff_analyzer.h"
+#include <QFileDialog>
+#include <QFileInfo>
 #ifdef _WIN32
 #include <dxgi1_2.h>
 #include <wrl.h>
@@ -235,6 +239,7 @@ MainWindow::~MainWindow()
 {
     if (g_mainWindow == this)
         g_mainWindow = nullptr;
+    delete tiffAnalysisDlg_;
     delete previewWindow_;
     delete ui;
 }
@@ -683,6 +688,10 @@ void MainWindow::setupConnections()
         connect(ui->btnSnapshot, &QPushButton::clicked, this, &MainWindow::onSnapshot);
     if (ui->actionOpenVendorPropertyPageTest)
         connect(ui->actionOpenVendorPropertyPageTest, &QAction::triggered, this, &MainWindow::onOpenVendorPropertyPageTest);
+    if (ui->btnOpenTiff)
+        connect(ui->btnOpenTiff, &QPushButton::clicked, this, &MainWindow::onOpenTiffAnalyze);
+    if (ui->actionOpenTiffAnalyzer)
+        connect(ui->actionOpenTiffAnalyzer, &QAction::triggered, this, &MainWindow::onOpenTiffAnalyze);
 }
 
 void MainWindow::logStartupInfo()
@@ -718,6 +727,65 @@ void MainWindow::appendDebugLog(const QString &line)
 
     const QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     debugText_->append(QStringLiteral("[%1] %2").arg(ts, line));
+}
+
+
+void MainWindow::onOpenTiffAnalyze()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        tr("Open TIFF"),
+        QString(),
+        tr("TIFF Files (*.tif *.tiff)"));
+    if (path.isEmpty())
+        return;
+
+    lastTiffReport_ = TiffAnalyzer::analyzeFile(path);
+
+    if (!tiffAnalysisDlg_)
+        tiffAnalysisDlg_ = new TiffAnalysisDialog(this);
+
+    tiffAnalysisDlg_->setReport(lastTiffReport_);
+    tiffAnalysisDlg_->show();
+    tiffAnalysisDlg_->raise();
+    tiffAnalysisDlg_->activateWindow();
+
+    if (ui && ui->labelinfo1)
+    {
+        if (lastTiffReport_.ok)
+        {
+            ui->labelinfo1->setEnabled(true);
+            ui->labelinfo1->setText(
+                tr("TIFF: %1 | stored=%2-bit | effective=%3-bit | 10-bit ramp=%4")
+                    .arg(QFileInfo(path).fileName())
+                    .arg(lastTiffReport_.storedBitDepth)
+                    .arg(lastTiffReport_.effectiveBitDepth)
+                    .arg(lastTiffReport_.likelyTenBitRamp ? tr("Yes") : tr("No")));
+        }
+        else
+        {
+            ui->labelinfo1->setEnabled(true);
+            ui->labelinfo1->setText(tr("TIFF analyze failed: %1").arg(lastTiffReport_.error));
+        }
+    }
+
+    if (lastTiffReport_.ok)
+    {
+        MainWindow::postLog(
+            QStringLiteral("[TIFF] %1 stored=%2 effective=%3 ramp=%4 fmt=%5 range=%6..%7 unique=%8")
+                .arg(path)
+                .arg(lastTiffReport_.storedBitDepth)
+                .arg(lastTiffReport_.effectiveBitDepth)
+                .arg(lastTiffReport_.likelyTenBitRamp ? QStringLiteral("Yes") : QStringLiteral("No"))
+                .arg(lastTiffReport_.pixelFormatName)
+                .arg(lastTiffReport_.minValue)
+                .arg(lastTiffReport_.maxValue)
+                .arg(lastTiffReport_.uniqueValueCount));
+    }
+    else
+    {
+        MainWindow::postLog(QStringLiteral("[TIFF] analyze failed: %1 (%2)").arg(path, lastTiffReport_.error), true);
+    }
 }
 
 void MainWindow::on_btnPreview_clicked()

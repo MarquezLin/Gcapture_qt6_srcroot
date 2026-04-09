@@ -29,6 +29,10 @@ set(VIEWER_SOURCES
   info/display_output_info.cpp
   info/capture_device_info.h
   info/capture_device_info.cpp
+  tiff_analyzer.h
+  tiff_analyzer.cpp
+  tiffanalysisdialog.h
+  tiffanalysisdialog.cpp
 )
 
 if (QT_VERSION_MAJOR GREATER_EQUAL 6)
@@ -80,7 +84,7 @@ target_link_libraries(qt6_viewer PRIVATE
   Qt${QT_VERSION_MAJOR}::Widgets
   gcapture
   gdisplay
-  dxgi d3d11
+  dxgi d3d11 windowscodecs
 )
 
 # ---- NVAPI: shared root variable from top-level ----

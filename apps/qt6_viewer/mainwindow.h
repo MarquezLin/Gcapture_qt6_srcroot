@@ -17,6 +17,7 @@
 #include "info/capture_device_info.h"
 #include "info/display_output_info.h"
 #include "previewwindow.h"
+#include "tiff_analyzer.h"
 
 #ifdef _WIN32
 #include "capturesdk/capture_sdk_source.h"
@@ -58,6 +59,7 @@ private slots:
     void onShowDisplayInfo();
     void onSnapshot();
     void onOpenVendorPropertyPageTest();
+    void onOpenTiffAnalyze();
 
     void on_btnPreview_clicked();
 
@@ -110,6 +112,8 @@ private:
     CaptureDeviceInfo captureInfo_;
     DisplayOutputInfo displayInfo_;
     previewwindow *previewWindow_ = nullptr;
+    class TiffAnalysisDialog *tiffAnalysisDlg_ = nullptr;
+    TiffBitDepthReport lastTiffReport_{};
 
     qint64 lastPropsQueryMs_ = 0;
     bool usePacketCallback_ = false;

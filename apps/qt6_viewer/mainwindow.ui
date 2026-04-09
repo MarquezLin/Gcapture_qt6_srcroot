@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>695</width>
-    <height>151</height>
+    <width>840</width>
+    <height>170</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -50,7 +50,7 @@
     <item row="1" column="0">
      <widget class="QComboBox" name="comboBackend"/>
     </item>
-    <item row="2" column="0" colspan="5">
+    <item row="2" column="0" colspan="6">
      <widget class="QLabel" name="labelinfo1">
       <property name="enabled">
        <bool>false</bool>
@@ -67,6 +67,13 @@
       </property>
       <property name="text">
        <string>Record</string>
+      </property>
+     </widget>
+    </item>
+    <item row="0" column="5">
+     <widget class="QPushButton" name="btnOpenTiff">
+      <property name="text">
+       <string>Open TIFF</string>
       </property>
      </widget>
     </item>
@@ -90,7 +97,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>695</width>
+     <width>840</width>
      <height>21</height>
     </rect>
    </property>
@@ -116,12 +123,18 @@
     <addaction name="actionOpenRecordFolder"/>
     <addaction name="actionOpenLogFolder"/>
     <addaction name="actionOpenSnapshot"/>
+    <addaction name="actionOpenTiffAnalyzer"/>
    </widget>
    <addaction name="menuView"/>
    <addaction name="menuOpen"/>
    <addaction name="menuDebug"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
+  <action name="actionOpenTiffAnalyzer">
+   <property name="text">
+    <string>Open TIFF Analyzer...</string>
+   </property>
+  </action>
   <action name="actionDebugLog">
    <property name="text">
     <string>Debug Log</string>
