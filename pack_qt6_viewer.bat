@@ -2,8 +2,8 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem === PLEASE MODIFY THESE TWO PATHS ===
-set "QT_BIN=C:\Qt\6.10.0\msvc2022_64\bin"
-set "BUILD_ROOT=D:\Synology_Backup\CaptureCode\Gcapture_qt6_srcroot\build\Desktop_Qt_6_10_0_MSVC2022_64bit-Release"
+set "QT_BIN=C:\Qt\6.10.2\msvc2022_64\bin"
+set "BUILD_ROOT=C:\Users\mark\Desktop\GcaptureSDK\qt6\srcroot\build\Desktop_Qt_6_10_2_MSVC2022_64bit-Release"
 rem ====================================
 
 set "BIN_DIR=%BUILD_ROOT%\bin"

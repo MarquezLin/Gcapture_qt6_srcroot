@@ -243,8 +243,8 @@ void MainWindow::onStart()
     pv.enable_preview = 1;
     if (backend == 2)
     {
-        pv.use_fp16_pipeline = 0;
-        pv.swapchain_10bit = 0;
+        pv.use_fp16_pipeline = 1;
+        pv.swapchain_10bit = 1;
     }
     else
     {
