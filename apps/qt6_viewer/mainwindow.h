@@ -122,7 +122,13 @@ private:
     QString lastRuntimeStatusText_;
     void updateRuntimeStatusUi();
     int currentDeviceIndex() const;
+    QString currentDeviceText() const;
     QString currentAudioInfoText() const;
+    void ensureSignalInfoDialog();
+    void ensureDisplayInfoDialog();
+    void showAndActivateDialog(QWidget *dialog);
+    void refreshCaptureRuntimeInfo();
+    void refreshCaptureDeviceProps(bool throttleDeviceProps);
     void refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps);
     void refreshDisplayInfoFromFrame(const QImage &img);
     void refreshDisplayInfoFromCurrentState();

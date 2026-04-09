@@ -722,13 +722,7 @@ void MainWindow::appendDebugLog(const QString &line)
 
 void MainWindow::on_btnPreview_clicked()
 {
-    if (!previewWindow_)
-    {
-        previewWindow_ = new previewwindow();
-        previewWindow_->setWindowTitle(QStringLiteral("Preview"));
-        previewWindow_->resize(1280, 720);
-    }
-
+    setupPreviewWindow();
     previewWindow_->show();
     previewWindow_->raise();
     previewWindow_->activateWindow();
