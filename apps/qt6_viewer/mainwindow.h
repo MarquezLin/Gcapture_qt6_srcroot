@@ -9,6 +9,7 @@
 #include <QDockWidget>
 #include <QTimer>
 #include <QTextEdit>
+#include <QByteArray>
 #include <gcapture.h>
 #include <cstdint>
 #include "inputinfodialog.h"

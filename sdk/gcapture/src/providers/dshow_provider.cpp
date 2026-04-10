@@ -501,13 +501,17 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     else if (out.frame_source[0] == 0 || strcmp(out.frame_source, "Unknown") == 0)
         strcpy_s(out.frame_source, rawOnlyActive_ ? "RawSink" : "RendererImage");
     strcpy_s(out.source_format, gcap_subtype_name(subtype_));
-    strcpy_s(out.render_format, (previewHwnd_ && rawOnlyActive_) ? "FP16 Scene PreviewOnly" : (rawOnlyActive_ ? "FP16 Scene" : "Renderer Native"));
+    if (rawOnlyActive_)
+        strcpy_s(out.render_format, pipeline_ ? (pipeline_->preview_swapchain_10bit() ? "FP16 Scene -> 10bit Swapchain" : "FP16 Scene -> 8bit Swapchain") : "FP16 Scene");
+    else
+        strcpy_s(out.render_format, "Renderer Native");
     fill_runtime_signal_text(out);
     return true;
 }
 
 bool DShowProvider::setPreview(const gcap_preview_desc_t &desc)
 {
+    previewDesc_ = desc;
     previewHwnd_ = reinterpret_cast<HWND>(desc.hwnd);
     char buf[128];
     sprintf_s(buf, "[DShow] setPreview hwnd=%p", previewHwnd_);
@@ -810,11 +814,19 @@ bool DShowProvider::createRenderPipeline()
     if (!pipeline_->initialize(d3d_.Get(), ctx_.Get(), d2d_ctx_.Get(), dwrite_.Get(), d2d_white_.Get(), d2d_black_.Get()))
         return false;
 
-    gcap_preview_desc_t desc{};
+    gcap_preview_desc_t desc = previewDesc_;
     desc.hwnd = previewHwnd_;
     desc.enable_preview = 1;
-    desc.use_fp16_pipeline = 0;
-    desc.swapchain_10bit = 0;
+    if (desc.use_fp16_pipeline == 0)
+        desc.use_fp16_pipeline = 1;
+    if (desc.swapchain_10bit == 0)
+        desc.swapchain_10bit = 1;
+
+    char previewBuf[256] = {};
+    sprintf_s(previewBuf, "[DShow] createRenderPipeline preview=%p use_fp16=%d swapchain_10bit=%d",
+              previewHwnd_, desc.use_fp16_pipeline, desc.swapchain_10bit);
+    OutputDebugStringA(previewBuf);
+
     pipeline_->configurePreview(desc);
 
     return pipeline_->ensure_rt_and_pipeline(width_, height_) &&

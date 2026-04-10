@@ -120,6 +120,7 @@ namespace
         }
     }
 
+
     static QImage framePacketToQImage(const gcap_frame_packet_t &pkt)
     {
         if (pkt.width <= 0 || pkt.height <= 0 || pkt.plane_count <= 0 || !pkt.data[0])
@@ -259,7 +260,7 @@ void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
     auto *self = static_cast<MainWindow *>(u);
     if (!self || !f || !f->data[0] || f->width <= 0 || f->height <= 0)
         return;
-    if (self->usePacketCallback_ || self->packetLogOnly_)
+    if (self->usePacketCallback_)
         return;
     self->updateFrameSourceState(f->pts_ns, f->width, f->height, self->lastVideoCallbackPtsNs_);
 
@@ -281,10 +282,8 @@ void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
         return;
 
     QImage img = framePacketToQImage(*pkt);
-    if (img.isNull())
-        return;
-
-    self->dispatchFrameImage(img);
+    if (!img.isNull())
+        self->dispatchFrameImage(img);
 }
 
 void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)
@@ -534,7 +533,7 @@ void MainWindow::setupProcAmpAction()
                 }
 
                 const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
-                usePacketCallback_ = (backend == 2);
+                usePacketCallback_ = false;
                 const bool supported = (backend == 0 || backend == 1 || backend == 3);
                 procampDlg_->setControlsEnabled(supported);
                 procampDlg_->setValues(m_currentProcAmp);

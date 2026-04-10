@@ -137,6 +137,8 @@ void MainWindow::onFrameArrived(const QImage &img)
     refreshFrameDependentUi(img);
 }
 
+
+
 void MainWindow::onSnapshot()
 {
     if (lastFrameImage_.isNull())

@@ -20,10 +20,10 @@ class previewwindow : public QWidget
 public:
     explicit previewwindow(QWidget *parent = nullptr);
     ~previewwindow();
-
-    void *previewHwnd() const;
     void setFrame(const QImage &img);
     void clearFrame();
+
+    void *previewHwnd() const;
 
 protected:
     void closeEvent(QCloseEvent *event) override;

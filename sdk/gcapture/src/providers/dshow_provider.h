@@ -121,6 +121,7 @@ private:
     std::thread framePumpThread_;
     std::atomic<bool> framePumpThreadRunning_{false};
     HWND previewHwnd_ = nullptr;
+    gcap_preview_desc_t previewDesc_{};
     DShowRawRenderer rawRenderer_{};
     DShowCustomSinkFilter *rawSinkFilter_ = nullptr;
 

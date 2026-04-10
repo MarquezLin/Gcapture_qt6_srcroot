@@ -170,7 +170,7 @@ void MainWindow::onStart()
     previewWindow_->raise();
     previewWindow_->activateWindow();
 
-    void *hwnd = previewWindow_->previewHwnd();
+    void *hwnd = previewWindow_ ? previewWindow_->previewHwnd() : nullptr;
 
     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
     usePacketCallback_ = false;
@@ -240,7 +240,7 @@ void MainWindow::onStart()
 
     gcap_preview_desc_t pv{};
     pv.hwnd = hwnd;
-    pv.enable_preview = 1;
+    pv.enable_preview = (hwnd != nullptr) ? 1 : 0;
     if (backend == 2)
     {
         pv.use_fp16_pipeline = 1;
@@ -285,7 +285,7 @@ void MainWindow::onStop()
             capSdk_->stop();
         usingCaptureSdk_ = false;
         clearPreviewSurface();
-        updateRuntimeStatusUi();
+            updateRuntimeStatusUi();
         return;
     }
 #endif

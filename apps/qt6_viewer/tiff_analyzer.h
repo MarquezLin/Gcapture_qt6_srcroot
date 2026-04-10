@@ -4,6 +4,7 @@
 #include <QString>
 #include <QImage>
 #include <QtGlobal>
+#include <QByteArray>
 
 struct TiffBitDepthReport
 {
@@ -36,6 +37,9 @@ struct TiffBitDepthReport
 
     bool valuesLookShifted10Bit = false;
     bool valuesLook8BitExpanded = false;
+
+    QByteArray previewRgba64;
+    int previewStrideBytes = 0;
 };
 
 class TiffAnalyzer

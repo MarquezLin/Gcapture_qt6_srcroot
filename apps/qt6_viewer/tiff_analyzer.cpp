@@ -294,8 +294,18 @@ static bool analyzeGray16Frame(IWICBitmapSource *src, UINT width, UINT height, T
     QVector<quint16> samples;
     samples.reserve(static_cast<int>(width * height));
     const quint16 *p = reinterpret_cast<const quint16 *>(buf.constData());
+    report.previewStrideBytes = int(width) * 8;
+    report.previewRgba64.resize(report.previewStrideBytes * int(height));
+    quint16 *rgba = reinterpret_cast<quint16 *>(report.previewRgba64.data());
     for (UINT i = 0; i < width * height; ++i)
-        samples.push_back(p[i]);
+    {
+        const quint16 v = p[i];
+        samples.push_back(v);
+        rgba[i * 4 + 0] = v;
+        rgba[i * 4 + 1] = v;
+        rgba[i * 4 + 2] = v;
+        rgba[i * 4 + 3] = 65535u;
+    }
 
     const SampleAnalysis sa = analyzeSamples16(samples, report.storedBitDepth > 0 ? report.storedBitDepth : 16);
     report.minValue = sa.minValue;
@@ -356,6 +366,8 @@ static bool analyzeRgba64Frame(IWICBitmapSource *src, UINT width, UINT height, T
 
     const quint16 *p = reinterpret_cast<const quint16 *>(buf.constData());
     bool rgbNearlyEqual = true;
+    report.previewStrideBytes = int(width) * 8;
+    report.previewRgba64 = QByteArray(reinterpret_cast<const char *>(buf.constData()), buf.size());
     for (UINT i = 0; i < width * height; ++i)
     {
         const quint16 r = p[i * 4 + 0];
@@ -580,6 +592,9 @@ QString TiffAnalyzer::formatReportText(const TiffBitDepthReport &r)
     lines << QStringLiteral("Unique values: %1").arg(r.uniqueValueCount);
     lines << QStringLiteral("Looks like shifted 10-bit in 16-bit container: %1").arg(r.valuesLookShifted10Bit ? QStringLiteral("Yes") : QStringLiteral("No"));
     lines << QStringLiteral("Looks like expanded 8-bit: %1").arg(r.valuesLook8BitExpanded ? QStringLiteral("Yes") : QStringLiteral("No"));
+    lines << QStringLiteral("Likely 10-bit content: %1").arg(r.likelyTenBitContent ? QStringLiteral("Yes") : QStringLiteral("No"));
+    lines << QStringLiteral("Strict 10-bit ramp: %1").arg(r.strictTenBitRamp ? QStringLiteral("Yes") : QStringLiteral("No"));
+    lines << QStringLiteral("Visual 10-bit ramp candidate: %1").arg(r.visualTenBitRampCandidate ? QStringLiteral("Yes") : QStringLiteral("No"));
     lines << QStringLiteral("10-bit ramp: %1").arg(r.likelyTenBitRamp ? QStringLiteral("Yes") : QStringLiteral("No"));
     lines << QStringLiteral("Ramp reason: %1").arg(r.rampReason);
     return lines.join('\n');

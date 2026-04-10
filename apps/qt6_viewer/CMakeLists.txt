@@ -84,7 +84,7 @@ target_link_libraries(qt6_viewer PRIVATE
   Qt${QT_VERSION_MAJOR}::Widgets
   gcapture
   gdisplay
-  dxgi d3d11 windowscodecs
+  dxgi d3d11 d3dcompiler windowscodecs
 )
 
 # ---- NVAPI: shared root variable from top-level ----
