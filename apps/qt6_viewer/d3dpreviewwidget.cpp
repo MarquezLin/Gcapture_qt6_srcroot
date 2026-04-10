@@ -69,7 +69,10 @@ void d3dpreviewwidget::setFrame(const QImage &img)
     {
         QMutexLocker lock(&frameMtx_);
         pendingKind_ = PendingKind::Bgra8;
-        frame8_ = img.convertToFormat(QImage::Format_ARGB32).copy();
+        const QImage converted = (img.format() == QImage::Format_ARGB32)
+                                     ? img
+                                     : img.convertToFormat(QImage::Format_ARGB32);
+        frame8_ = converted.copy();
         frameRgba64_.clear();
         frameWidth_ = frame8_.width();
         frameHeight_ = frame8_.height();

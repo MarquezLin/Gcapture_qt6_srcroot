@@ -14,7 +14,6 @@
 #include "display_info.h"
 #include <QDialog>
 #include <QPlainTextEdit>
-#include <QTextEdit>
 #include <QLabel>
 #include <QDesktopServices>
 #include <QUrl>
@@ -485,7 +484,21 @@ void MainWindow::setupRuntimeStatusTimer()
     runtimeStatusTimer_ = new QTimer(this);
     runtimeStatusTimer_->setInterval(500);
     connect(runtimeStatusTimer_, &QTimer::timeout, this, [this]()
-            { updateRuntimeStatusUi(); });
+            {
+                updateRuntimeStatusUi();
+                refreshCaptureInfoFromSdkAndRuntime(true);
+                refreshDisplayInfoFromCurrentState();
+
+                if (infoDlg_ && infoDlg_->isVisible())
+                {
+                    infoDlg_->setInfoText(lastInfoText_);
+                    infoDlg_->setPropertyPages(captureInfo_.propertyPages);
+                    infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
+                }
+
+                if (DpinfoDlg_ && DpinfoDlg_->isVisible())
+                    DpinfoDlg_->setInfoText(formatDisplayOutputInfo(displayInfo_));
+            });
     runtimeStatusTimer_->start();
 }
 
@@ -495,8 +508,9 @@ void MainWindow::setupDebugDock()
     debugDock_->setObjectName("DebugLogDock");
     debugDock_->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
 
-    debugText_ = new QTextEdit(debugDock_);
+    debugText_ = new QPlainTextEdit(debugDock_);
     debugText_->setReadOnly(true);
+    debugText_->document()->setMaximumBlockCount(2000);
     debugDock_->setWidget(debugText_);
 
     addDockWidget(Qt::BottomDockWidgetArea, debugDock_);
@@ -644,7 +658,16 @@ void MainWindow::setupConnections()
     {
         connect(ui->comboDevice, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this](int idx)
-                { deviceIndex_ = ui->comboDevice->itemData(idx).toInt(); });
+                {
+                    deviceIndex_ = ui->comboDevice->itemData(idx).toInt();
+                    invalidateDeviceCapabilityCache();
+                    refreshCaptureInfoFromSdkAndRuntime(false);
+                    if (infoDlg_ && infoDlg_->isVisible())
+                    {
+                        infoDlg_->setInfoText(lastInfoText_);
+                        infoDlg_->setPropertyPages(captureInfo_.propertyPages);
+                    }
+                });
     }
 
 #ifdef _WIN32
@@ -725,7 +748,7 @@ void MainWindow::appendDebugLog(const QString &line)
         return;
 
     const QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
-    debugText_->append(QStringLiteral("[%1] %2").arg(ts, line));
+    debugText_->appendPlainText(QStringLiteral("[%1] %2").arg(ts, line));
 }
 
 

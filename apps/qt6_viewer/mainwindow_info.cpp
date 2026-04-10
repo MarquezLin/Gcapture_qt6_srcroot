@@ -53,10 +53,24 @@ static QString formatPropertyPageDisplay(const gcap_property_page_t &page)
         .arg(page.capture_pin ? QStringLiteral("Capture Pin") : QStringLiteral("Filter"));
 }
 
-static void fillDeviceCapabilitiesFromSdk(int deviceIndex, CaptureDeviceInfo &info)
+} // namespace
+
+void MainWindow::ensureDeviceCapabilityCache(int deviceIndex)
 {
-    info.supportedFormats.clear();
-    info.propertyPages.clear();
+    if (deviceIndex < 0)
+    {
+        cachedDeviceCapsIndex_ = -1;
+        cachedSupportedFormats_.clear();
+        cachedPropertyPages_.clear();
+        return;
+    }
+
+    if (cachedDeviceCapsIndex_ == deviceIndex && (!cachedSupportedFormats_.isEmpty() || !cachedPropertyPages_.isEmpty()))
+        return;
+
+    cachedDeviceCapsIndex_ = deviceIndex;
+    cachedSupportedFormats_.clear();
+    cachedPropertyPages_.clear();
 
     const int capCount = gcap_enum_video_caps(deviceIndex, nullptr, 0);
     if (capCount > 0)
@@ -64,7 +78,7 @@ static void fillDeviceCapabilitiesFromSdk(int deviceIndex, CaptureDeviceInfo &in
         std::vector<gcap_video_cap_t> caps(static_cast<size_t>(capCount));
         const int written = gcap_enum_video_caps(deviceIndex, caps.data(), static_cast<int>(caps.size()));
         for (int i = 0; i < written; ++i)
-            info.supportedFormats << formatVideoCapDisplay(caps[static_cast<size_t>(i)]);
+            cachedSupportedFormats_ << formatVideoCapDisplay(caps[static_cast<size_t>(i)]);
     }
 
     const int pageCount = gcap_enum_property_pages(deviceIndex, nullptr, 0);
@@ -73,10 +87,17 @@ static void fillDeviceCapabilitiesFromSdk(int deviceIndex, CaptureDeviceInfo &in
         std::vector<gcap_property_page_t> pages(static_cast<size_t>(pageCount));
         const int written = gcap_enum_property_pages(deviceIndex, pages.data(), static_cast<int>(pages.size()));
         for (int i = 0; i < written; ++i)
-            info.propertyPages << formatPropertyPageDisplay(pages[static_cast<size_t>(i)]);
+            cachedPropertyPages_ << formatPropertyPageDisplay(pages[static_cast<size_t>(i)]);
     }
 }
-} // namespace
+
+void MainWindow::invalidateDeviceCapabilityCache()
+{
+    cachedDeviceCapsIndex_ = -1;
+    cachedSupportedFormats_.clear();
+    cachedPropertyPages_.clear();
+}
+
 
 int MainWindow::currentDeviceIndex() const
 {
@@ -205,7 +226,9 @@ void MainWindow::refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps)
     refreshCaptureRuntimeInfo();
     refreshCaptureDeviceProps(throttleDeviceProps);
 
-    fillDeviceCapabilitiesFromSdk(currentDeviceIndex(), captureInfo_);
+    ensureDeviceCapabilityCache(currentDeviceIndex());
+    captureInfo_.supportedFormats = cachedSupportedFormats_;
+    captureInfo_.propertyPages = cachedPropertyPages_;
     lastInfoText_ = formatCaptureDeviceInfo(captureInfo_, avgFps_);
 }
 

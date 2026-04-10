@@ -19,6 +19,7 @@ void MainWindow::resetRuntimeTracking()
     lastPacketCallbackPtsNs_ = 0;
     framePacketLogCount_ = 0;
     ++framePacketSessionId_;
+    lastPreviewPushMs_ = 0;
 }
 
 void MainWindow::clearPreviewSurface()
@@ -162,6 +163,7 @@ void MainWindow::onStart()
     }
 
     resetRuntimeTracking();
+    invalidateDeviceCapabilityCache();
     if (ui->statusbar)
         ui->statusbar->showMessage(QStringLiteral("Starting..."));
 
@@ -274,6 +276,8 @@ void MainWindow::onStart()
     }
 
     updateRuntimeStatusUi();
+    refreshCaptureInfoFromSdkAndRuntime(false);
+    refreshDisplayInfoFromCurrentState();
 }
 
 void MainWindow::onStop()
@@ -285,7 +289,10 @@ void MainWindow::onStop()
             capSdk_->stop();
         usingCaptureSdk_ = false;
         clearPreviewSurface();
-            updateRuntimeStatusUi();
+        invalidateDeviceCapabilityCache();
+        refreshCaptureInfoFromSdkAndRuntime(false);
+        refreshDisplayInfoFromCurrentState();
+        updateRuntimeStatusUi();
         return;
     }
 #endif
@@ -300,6 +307,9 @@ void MainWindow::onStop()
     lastVideoCallbackPtsNs_ = 0;
     lastPacketCallbackPtsNs_ = 0;
     framePacketLogCount_ = 0;
+    invalidateDeviceCapabilityCache();
+    refreshCaptureInfoFromSdkAndRuntime(false);
+    refreshDisplayInfoFromCurrentState();
     updateRuntimeStatusUi();
 }
 

@@ -52,18 +52,7 @@ void MainWindow::dispatchFrameImage(const QImage &img)
 
 void MainWindow::refreshFrameDependentUi(const QImage &img)
 {
-    if (previewWindow_)
-        previewWindow_->setFrame(img);
-
-    updateRuntimeStatusUi();
-    refreshCaptureInfoFromSdkAndRuntime(true);
-    refreshDisplayInfoFromFrame(img);
-
-    if (infoDlg_)
-        infoDlg_->setInfoText(lastInfoText_);
-
-    if (DpinfoDlg_)
-        refreshDisplayInfoDialog();
+    Q_UNUSED(img);
 }
 
 void MainWindow::logFramePacketIfNeeded(const gcap_frame_packet_t &pkt)
@@ -130,11 +119,12 @@ void MainWindow::onFrameArrived(const QImage &img)
 {
     lastFrameImage_ = img;
 
-    // 這條路徑是 callback/QImage 顯示入口：
-    // - CaptureSDK frameReady
-    // - MainWindow::sigFrame（例如 packet callback / CPU fallback）
-    // 真正的 native GPU preview 不一定會經過這裡。
-    refreshFrameDependentUi(img);
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (previewWindow_ && previewWindow_->isVisible() && (lastPreviewPushMs_ == 0 || (nowMs - lastPreviewPushMs_) >= 33))
+    {
+        previewWindow_->setFrame(img);
+        lastPreviewPushMs_ = nowMs;
+    }
 }
 
 

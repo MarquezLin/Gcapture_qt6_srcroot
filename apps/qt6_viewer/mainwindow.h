@@ -8,7 +8,7 @@
 #include <QString>
 #include <QDockWidget>
 #include <QTimer>
-#include <QTextEdit>
+#include <QPlainTextEdit>
 #include <QByteArray>
 #include <gcapture.h>
 #include <cstdint>
@@ -96,7 +96,7 @@ private:
 
     // ---- Debug Log 視窗 ----
     QDockWidget *debugDock_ = nullptr;
-    QTextEdit *debugText_ = nullptr;
+    QPlainTextEdit *debugText_ = nullptr;
 
     static void s_vcb(const gcap_frame_t *f, void *u);
     static void s_pcb(const gcap_frame_packet_t *pkt, void *u);
@@ -117,6 +117,10 @@ private:
     TiffBitDepthReport lastTiffReport_{};
 
     qint64 lastPropsQueryMs_ = 0;
+    qint64 lastPreviewPushMs_ = 0;
+    int cachedDeviceCapsIndex_ = -1;
+    QStringList cachedSupportedFormats_;
+    QStringList cachedPropertyPages_;
     bool usePacketCallback_ = false;
     bool packetLogOnly_ = false;
     uint64_t lastVideoCallbackPtsNs_ = 0;
@@ -134,6 +138,8 @@ private:
     void showAndActivateDialog(QWidget *dialog);
     void refreshCaptureRuntimeInfo();
     void refreshCaptureDeviceProps(bool throttleDeviceProps);
+    void ensureDeviceCapabilityCache(int deviceIndex);
+    void invalidateDeviceCapabilityCache();
     void refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps);
     void refreshDisplayInfoFromFrame(const QImage &img);
     void refreshDisplayInfoFromCurrentState();
