@@ -115,6 +115,9 @@ private:
     GUID signal_subtype_ = GUID_NULL;
     uint64_t last_signal_probe_ms_ = 0;
     bool signal_has_vendor_custom_page_ = false;
+    std::atomic<bool> pending_media_change_{false};
+    std::atomic<int> media_change_hits_{0};
+    uint64_t last_media_change_ms_ = 0;
     wchar_t signal_vendor_module_[260] = {};
     mutable std::mutex signal_probe_mtx_;
     std::atomic<bool> probe_running_{false};
@@ -208,6 +211,7 @@ private:
 
     bool create_reader_cpu_only(int devIndex);
     bool refresh_signal_probe(bool force);
+    bool sync_current_media_type(bool *changed = nullptr);
     void probe_loop();
     void start_probe_thread();
     void stop_probe_thread();
@@ -229,4 +233,5 @@ private:
 
     // 全域：目前偏好的 Adapter index（由 UI/C API 設定）
     static std::atomic<int> s_adapter_index_;
+
 };

@@ -539,7 +539,11 @@ void WinMFProvider::probe_loop()
 {
     while (probe_running_)
     {
-        refresh_signal_probe(true);
+        pending_media_change_ = false;
+    media_change_hits_ = 0;
+    last_media_change_ms_ = 0;
+
+    refresh_signal_probe(true);
         std::unique_lock<std::mutex> lk(signal_probe_mtx_);
         probe_cv_.wait_for(lk, std::chrono::milliseconds(1000), [this] { return !probe_running_.load(); });
     }
@@ -707,6 +711,86 @@ static int mf_default_stride_bytes(IMFMediaType *mt)
     // MF_MT_DEFAULT_STRIDE is effectively an INT32 stored in a UINT32 container.
     int s = (int)(int32_t)raw;
     return s < 0 ? -s : s;
+}
+
+
+bool WinMFProvider::sync_current_media_type(bool *changed)
+{
+    if (changed)
+        *changed = false;
+    if (!reader_)
+        return false;
+
+    ComPtr<IMFMediaType> cur;
+    HRESULT hr = reader_->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &cur);
+    if (FAILED(hr) || !cur)
+        return false;
+
+    UINT32 rw = 0, rh = 0, rfn = 0, rfd = 1;
+    GUID rsub = GUID_NULL;
+    MFGetAttributeSize(cur.Get(), MF_MT_FRAME_SIZE, &rw, &rh);
+    MFGetAttributeRatio(cur.Get(), MF_MT_FRAME_RATE, &rfn, &rfd);
+    cur->GetGUID(MF_MT_SUBTYPE, &rsub);
+
+    int stride = mf_default_stride_bytes(cur.Get());
+    if (stride <= 0)
+    {
+        if (rsub == MFVideoFormat_P010)
+            stride = (int)rw * 2;
+        else if (rsub == MFVideoFormat_Y210)
+            stride = (int)rw * 4;
+        else if (rsub == MFVideoFormat_YUY2)
+            stride = (int)rw * 2;
+        else if (rsub == MFVideoFormat_ARGB32)
+            stride = (int)rw * 4;
+        else
+            stride = (int)rw;
+    }
+
+    const bool mediaChanged =
+        ((int)rw != cur_w_) ||
+        ((int)rh != cur_h_) ||
+        ((int)rfn != cur_fps_num_) ||
+        ((int)rfd != cur_fps_den_) ||
+        (rsub != cur_subtype_) ||
+        (stride != cur_stride_);
+
+    if (!mediaChanged)
+        return true;
+
+    const int oldW = cur_w_;
+    const int oldH = cur_h_;
+    const int oldFn = cur_fps_num_;
+    const int oldFd = cur_fps_den_;
+    const int oldStride = cur_stride_;
+    const GUID oldSub = cur_subtype_;
+
+    cur_w_ = (int)rw;
+    cur_h_ = (int)rh;
+    cur_fps_num_ = (int)rfn;
+    cur_fps_den_ = (int)rfd;
+    cur_subtype_ = rsub;
+    cur_stride_ = stride;
+
+    if (use_dxgi_)
+        ensure_rt_and_pipeline(cur_w_, cur_h_);
+
+    std::ostringstream oss;
+    oss << "[WinMF] runtime media type updated: "
+        << mf_subtype_name(oldSub) << " " << oldW << "x" << oldH << " @ " << oldFn;
+    if (oldFd != 1)
+        oss << "/" << oldFd;
+    oss << " fps, stride=" << oldStride
+        << " -> "
+        << mf_subtype_name(cur_subtype_) << " " << cur_w_ << "x" << cur_h_ << " @ " << cur_fps_num_;
+    if (cur_fps_den_ != 1)
+        oss << "/" << cur_fps_den_;
+    oss << " fps, stride=" << cur_stride_;
+    emit_error(GCAP_OK, oss.str().c_str());
+
+    if (changed)
+        *changed = true;
+    return true;
 }
 
 // UTF-8 → UTF-16 (wstring) 工具，用來把檔名丟給 Media Foundation
@@ -1198,6 +1282,9 @@ void WinMFProvider::close()
         signal_subtype_ = GUID_NULL;
         last_signal_probe_ms_ = 0;
     }
+    pending_media_change_ = false;
+    media_change_hits_ = 0;
+    last_media_change_ms_ = 0;
 }
 
 void WinMFProvider::setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user)
@@ -2503,15 +2590,39 @@ void WinMFProvider::loop()
             emit_error(GCAP_EIO, "ReadSample failed");
             break;
         }
-        if (!sample)
-            continue;
+        const bool nativeChanged = (flags & MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED) != 0;
+        const bool currentChanged = (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) != 0;
 
-        if (flags & MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED)
+        if (nativeChanged)
             emit_error(GCAP_OK, "[WinMF] SourceReader flag: NATIVEMEDIATYPECHANGED");
-        if (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED)
+        if (currentChanged)
             emit_error(GCAP_OK, "[WinMF] SourceReader flag: CURRENTMEDIATYPECHANGED");
         if (flags & MF_SOURCE_READERF_STREAMTICK)
             emit_error(GCAP_OK, "[WinMF] SourceReader flag: STREAMTICK");
+
+        if (nativeChanged || currentChanged)
+        {
+            pending_media_change_ = true;
+            media_change_hits_ = media_change_hits_.load(std::memory_order_relaxed) + 1;
+            last_media_change_ms_ = GetTickCount64();
+        }
+
+        if (pending_media_change_)
+        {
+            const uint64_t now = GetTickCount64();
+            if ((now - last_media_change_ms_) >= 120)
+            {
+                bool changed = false;
+                if (sync_current_media_type(&changed))
+                {
+                    pending_media_change_ = false;
+                    media_change_hits_ = 0;
+                }
+            }
+        }
+
+        if (!sample)
+            continue;
 
         if (cpu_path_)
         {
