@@ -55,6 +55,9 @@ private:
     void startFramePumpThread();
     void stopFramePumpThread();
     void framePumpLoop();
+    void startSignalProbeThread();
+    void stopSignalProbeThread();
+    void signalProbeLoop();
     enum class CallbackSource
     {
         Unknown = 0,
@@ -120,6 +123,8 @@ private:
 
     std::thread framePumpThread_;
     std::atomic<bool> framePumpThreadRunning_{false};
+    std::thread signalProbeThread_;
+    std::atomic<bool> signalProbeThreadRunning_{false};
     HWND previewHwnd_ = nullptr;
     gcap_preview_desc_t previewDesc_{};
     DShowRawRenderer rawRenderer_{};

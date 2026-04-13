@@ -430,9 +430,13 @@ bool DShowProvider::refreshSignalProbe(bool force)
 
 bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
 {
-    std::lock_guard<std::mutex> lock(mtx_);
-    refreshSignalProbe(false);
+    if (!running_)
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        refreshSignalProbe(false);
+    }
 
+    std::lock_guard<std::mutex> lock(mtx_);
     memset(&out, 0, sizeof(out));
 
     // "Input Signal" shown to UI is a best-effort live status.
@@ -462,34 +466,64 @@ bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
 bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
 {
     memset(&out, 0, sizeof(out));
-    if (!getSignalStatus(out.signal))
-        return false;
 
-    refreshSignalProbe(false);
-    memset(&out.signal_probe, 0, sizeof(out.signal_probe));
-    if (signalValid_ && signalW_ > 0 && signalH_ > 0)
+    if (!running_)
     {
-        out.signal_probe.width = signalW_;
-        out.signal_probe.height = signalH_;
-        out.signal_probe.fps_num = signalFpsNum_;
-        out.signal_probe.fps_den = signalFpsDen_;
-        out.signal_probe.pixfmt = gcap_subtype_to_pixfmt(signalSubtype_);
-        out.signal_probe.bit_depth = gcap_pixfmt_bitdepth(out.signal_probe.pixfmt);
-        out.signal_probe.csp = (out.signal_probe.pixfmt == GCAP_FMT_Y210) ? GCAP_CSP_BT709 : GCAP_CSP_UNKNOWN;
-        out.signal_probe.range = GCAP_RANGE_UNKNOWN;
-        out.signal_probe.hdr = 0;
+        std::lock_guard<std::mutex> lock(mtx_);
+        refreshSignalProbe(false);
     }
 
-    memset(&out.negotiated, 0, sizeof(out.negotiated));
-    out.negotiated.width = width_;
-    out.negotiated.height = height_;
-    out.negotiated.fps_num = (negotiatedFpsNum_ > 0) ? negotiatedFpsNum_ : profile_.fps_num;
-    out.negotiated.fps_den = (negotiatedFpsDen_ > 0) ? negotiatedFpsDen_ : profile_.fps_den;
-    out.negotiated.pixfmt = gcap_subtype_to_pixfmt(subtype_);
-    out.negotiated.bit_depth = gcap_pixfmt_bitdepth(out.negotiated.pixfmt);
-    out.negotiated.csp = GCAP_CSP_UNKNOWN;
-    out.negotiated.range = GCAP_RANGE_UNKNOWN;
-    out.negotiated.hdr = 0;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+
+        memset(&out.signal, 0, sizeof(out.signal));
+
+        const bool haveActive = (width_ > 0 && height_ > 0);
+        const bool haveProbe = signalValid_ && signalW_ > 0 && signalH_ > 0;
+
+        out.signal.width = haveActive ? width_ : (haveProbe ? signalW_ : 0);
+        out.signal.height = haveActive ? height_ : (haveProbe ? signalH_ : 0);
+        out.signal.fps_num = haveActive ? (negotiatedFpsNum_ > 0 ? negotiatedFpsNum_ : profile_.fps_num)
+                                         : (haveProbe ? signalFpsNum_ : 0);
+        out.signal.fps_den = haveActive ? (negotiatedFpsDen_ > 0 ? negotiatedFpsDen_ : profile_.fps_den)
+                                         : (haveProbe ? signalFpsDen_ : 1);
+        out.signal.range = GCAP_RANGE_UNKNOWN;
+        out.signal.csp = GCAP_CSP_UNKNOWN;
+        out.signal.hdr = 0;
+        out.signal.pixfmt = gcap_subtype_to_pixfmt(haveActive ? subtype_ : (haveProbe ? signalSubtype_ : subtype_));
+        out.signal.bit_depth = gcap_pixfmt_bitdepth(out.signal.pixfmt);
+        if (out.signal.pixfmt == GCAP_FMT_Y210)
+            out.signal.csp = GCAP_CSP_BT709;
+        fill_vendor_rgb_inferred_input_signal(out.signal, signalHasVendorCustomPage_, haveActive ? subtype_ : signalSubtype_);
+
+        if (out.signal.width <= 0 || out.signal.height <= 0)
+            return false;
+
+        memset(&out.signal_probe, 0, sizeof(out.signal_probe));
+        if (signalValid_ && signalW_ > 0 && signalH_ > 0)
+        {
+            out.signal_probe.width = signalW_;
+            out.signal_probe.height = signalH_;
+            out.signal_probe.fps_num = signalFpsNum_;
+            out.signal_probe.fps_den = signalFpsDen_;
+            out.signal_probe.pixfmt = gcap_subtype_to_pixfmt(signalSubtype_);
+            out.signal_probe.bit_depth = gcap_pixfmt_bitdepth(out.signal_probe.pixfmt);
+            out.signal_probe.csp = (out.signal_probe.pixfmt == GCAP_FMT_Y210) ? GCAP_CSP_BT709 : GCAP_CSP_UNKNOWN;
+            out.signal_probe.range = GCAP_RANGE_UNKNOWN;
+            out.signal_probe.hdr = 0;
+        }
+
+        memset(&out.negotiated, 0, sizeof(out.negotiated));
+        out.negotiated.width = width_;
+        out.negotiated.height = height_;
+        out.negotiated.fps_num = (negotiatedFpsNum_ > 0) ? negotiatedFpsNum_ : profile_.fps_num;
+        out.negotiated.fps_den = (negotiatedFpsDen_ > 0) ? negotiatedFpsDen_ : profile_.fps_den;
+        out.negotiated.pixfmt = gcap_subtype_to_pixfmt(subtype_);
+        out.negotiated.bit_depth = gcap_pixfmt_bitdepth(out.negotiated.pixfmt);
+        out.negotiated.csp = GCAP_CSP_UNKNOWN;
+        out.negotiated.range = GCAP_RANGE_UNKNOWN;
+        out.negotiated.hdr = 0;
+    }
 
     out.runtime_fps = rawRenderer_.runtimeFpsAvg();
     out.active_backend = GCAP_BACKEND_DSHOW;
@@ -1933,6 +1967,68 @@ void DShowProvider::startFramePumpThread()
                                    { framePumpLoop(); });
 }
 
+void DShowProvider::startSignalProbeThread()
+{
+    stopSignalProbeThread();
+    signalProbeThreadRunning_ = true;
+    signalProbeThread_ = std::thread([this]
+                                     { signalProbeLoop(); });
+}
+
+void DShowProvider::stopSignalProbeThread()
+{
+    signalProbeThreadRunning_ = false;
+    if (signalProbeThread_.joinable())
+        signalProbeThread_.join();
+}
+
+void DShowProvider::signalProbeLoop()
+{
+    while (signalProbeThreadRunning_)
+    {
+        for (int i = 0; i < 30 && signalProbeThreadRunning_; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        if (!signalProbeThreadRunning_ || !running_)
+            continue;
+
+        int index = -1;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            index = currentIndex_;
+        }
+        if (index < 0)
+            continue;
+
+        DShowSignalProbeResult probe{};
+        const bool ok = dshow_probe_current_signal_by_index(index, probe) && probe.ok;
+        const auto nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                     std::chrono::steady_clock::now().time_since_epoch())
+                                                     .count());
+
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (ok)
+        {
+            signalValid_ = true;
+            signalW_ = probe.width;
+            signalH_ = probe.height;
+            signalFpsNum_ = probe.fps_num;
+            signalFpsDen_ = (probe.fps_den > 0) ? probe.fps_den : 1;
+            signalSubtype_ = probe.subtype;
+            signalHasVendorCustomPage_ = probe.has_vendor_custom_page;
+            if (probe.vendor_property_module[0])
+                wcsncpy_s(signalVendorModule_, probe.vendor_property_module, _TRUNCATE);
+            else
+                signalVendorModule_[0] = 0;
+        }
+        else
+        {
+            signalValid_ = false;
+        }
+        lastSignalProbeMs_ = nowMs;
+    }
+}
+
 void DShowProvider::stopFramePumpThread()
 {
     char msg[256] = {};
@@ -1978,6 +2074,7 @@ bool DShowProvider::start()
     }
     refreshSignalProbe(true);
     running_ = true;
+    startSignalProbeThread();
     if (vcb_ || pcb_ || previewHwnd_)
         startFramePumpThread();
     return true;
@@ -1985,6 +2082,7 @@ bool DShowProvider::start()
 
 void DShowProvider::stop()
 {
+    stopSignalProbeThread();
     stopFramePumpThread();
     std::lock_guard<std::mutex> lock(mtx_);
     if (mediaControl_ && running_)
