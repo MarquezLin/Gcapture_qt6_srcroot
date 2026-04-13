@@ -111,7 +111,7 @@ QString formatCaptureDeviceInfo(const CaptureDeviceInfo &info, double fallbackFp
     // lines << "";
     // lines << "Notes";
     // lines << "────────────";
-    // lines << "This device does not expose SC0710 vendor signal metadata.";
+    // lines << "This device does not expose vendor-specific signal metadata.";
     // lines << "Values shown here are capture/backend formats and DShow probe results.";
     // lines << "They are not guaranteed to be true HDMI input signal metadata.";
 

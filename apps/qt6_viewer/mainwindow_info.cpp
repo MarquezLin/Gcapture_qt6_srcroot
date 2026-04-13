@@ -334,23 +334,9 @@ void MainWindow::onShowInputInfo()
 #ifdef _WIN32
     const QString deviceText = currentDeviceText();
     const int devIndex = currentDeviceIndex();
-    const bool isSc0710 = deviceText.contains(QStringLiteral("SC0710"), Qt::CaseInsensitive);
-    if (isSc0710)
-    {
-        MainWindow::postLog(QStringLiteral("[SignalInfo] SC0710 detected, launching vendor property page. devIndex=%1 name=%2")
-                                .arg(devIndex)
-                                .arg(deviceText));
-        const bool ok = (gcap_open_vendor_property_page(devIndex) != 0);
-        if (ok)
-            return;
-
-        MainWindow::postLog(QStringLiteral("[SignalInfo] vendor property page launch failed, fallback to generic dialog. devIndex=%1")
-                                .arg(devIndex),
-                            true);
-        QMessageBox::warning(this,
-                             tr("Signal Info"),
-                             tr("Open SC0710 vendor signal page failed.\nFallback to generic signal info dialog."));
-    }
+    MainWindow::postLog(QStringLiteral("[SignalInfo] opening generic signal info dialog. devIndex=%1 name=%2")
+                            .arg(devIndex)
+                            .arg(deviceText));
 #endif
     ensureSignalInfoDialog();
     refreshSignalInfoDialog();

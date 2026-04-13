@@ -358,9 +358,13 @@ void MainWindow::updateRuntimeStatusUi()
             .arg(QString::number(fps, 'f', 2))
             .arg(fmt);
     };
-    const QString sb = QStringLiteral("Backend: %1 | Source: %2 | %3 | AppInternal %4 | Runtime %5fps")
+    QString probeFmt = QString::fromUtf8(packetFmtName(rt.signal_probe.pixfmt));
+    const double probeFps = (rt.signal_probe.fps_den > 0) ? (double(rt.signal_probe.fps_num) / double(rt.signal_probe.fps_den)) : 0.0;
+
+    const QString sb = QStringLiteral("Backend: %1 | Source: %2 | %3 | %4 | AppInternal %5 | Runtime %6fps")
                            .arg(backend)
                            .arg(source)
+                           .arg(statusBlock("InputProbe", rt.signal_probe, probeFps, probeFmt))
                            .arg(statusBlock("BackendFmt", rt.negotiated, negotiatedFps, negotiatedFmt))
                            .arg(renderFmt.isEmpty() ? QStringLiteral("--") : renderFmt)
                            .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"));

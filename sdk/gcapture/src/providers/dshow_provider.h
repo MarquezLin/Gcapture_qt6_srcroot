@@ -100,8 +100,8 @@ private:
     int signalFpsNum_ = 0;
     int signalFpsDen_ = 1;
     GUID signalSubtype_ = GUID_NULL;
-    bool signalHasSc0710CustomPage_ = false;
-    wchar_t signalSc0710Module_[260] = {};
+    bool signalHasVendorCustomPage_ = false;
+    wchar_t signalVendorModule_[260] = {};
     uint64_t lastSignalProbeMs_ = 0;
 
     std::atomic<bool> running_{false};

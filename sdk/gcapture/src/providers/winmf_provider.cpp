@@ -455,7 +455,7 @@ bool WinMFProvider::getDeviceProps(gcap_device_props_t &out)
 }
 
 
-static void fill_sc0710_inferred_input_signal_mf(gcap_signal_status_t &out, bool hasCustomPage, const GUID &activeSubtype)
+static void fill_vendor_rgb_inferred_input_signal_mf(gcap_signal_status_t &out, bool hasCustomPage, const GUID &activeSubtype)
 {
     if (!hasCustomPage)
         return;
@@ -521,11 +521,11 @@ bool WinMFProvider::refresh_signal_probe(bool force)
         signal_fps_num_ = probe.fps_num;
         signal_fps_den_ = (probe.fps_den > 0) ? probe.fps_den : 1;
         signal_subtype_ = probe.subtype;
-        signal_has_sc0710_custom_page_ = probe.has_sc0710_custom_page;
-        if (probe.sc0710_property_module[0])
-            wcsncpy_s(signal_sc0710_module_, probe.sc0710_property_module, _TRUNCATE);
+        signal_has_vendor_custom_page_ = probe.has_vendor_custom_page;
+        if (probe.vendor_property_module[0])
+            wcsncpy_s(signal_vendor_module_, probe.vendor_property_module, _TRUNCATE);
         else
-            signal_sc0710_module_[0] = 0;
+            signal_vendor_module_[0] = 0;
         last_signal_probe_ms_ = nowMs;
         return true;
     }
@@ -535,26 +535,65 @@ bool WinMFProvider::refresh_signal_probe(bool force)
     return false;
 }
 
+void WinMFProvider::probe_loop()
+{
+    while (probe_running_)
+    {
+        refresh_signal_probe(true);
+        std::unique_lock<std::mutex> lk(signal_probe_mtx_);
+        probe_cv_.wait_for(lk, std::chrono::milliseconds(1000), [this] { return !probe_running_.load(); });
+    }
+}
+
+void WinMFProvider::start_probe_thread()
+{
+    stop_probe_thread();
+    probe_running_ = true;
+    probe_th_ = std::thread(&WinMFProvider::probe_loop, this);
+}
+
+void WinMFProvider::stop_probe_thread()
+{
+    probe_running_ = false;
+    probe_cv_.notify_all();
+    if (probe_th_.joinable())
+        probe_th_.join();
+}
+
 bool WinMFProvider::getSignalStatus(gcap_signal_status_t &out)
 {
-    refresh_signal_probe(false);
-
     memset(&out, 0, sizeof(out));
 
-    // UI "Input Signal": prefer the currently active MF media type while running.
-    // Keep the DShow fallback probe separately in runtime_info.signal_probe.
+    bool signalValid = false;
+    int signalW = 0;
+    int signalH = 0;
+    int signalFpsNum = 0;
+    int signalFpsDen = 1;
+    GUID signalSubtype = GUID_NULL;
+    bool signalHasVendorCustomPage = false;
+    {
+        std::lock_guard<std::mutex> lk(signal_probe_mtx_);
+        signalValid = signal_valid_;
+        signalW = signal_w_;
+        signalH = signal_h_;
+        signalFpsNum = signal_fps_num_;
+        signalFpsDen = signal_fps_den_;
+        signalSubtype = signal_subtype_;
+        signalHasVendorCustomPage = signal_has_vendor_custom_page_;
+    }
+
     const bool haveActive = (cur_w_ > 0 && cur_h_ > 0);
-    const bool haveProbe = signal_valid_ && signal_w_ > 0 && signal_h_ > 0;
-    out.width = haveActive ? cur_w_ : (haveProbe ? signal_w_ : 0);
-    out.height = haveActive ? cur_h_ : (haveProbe ? signal_h_ : 0);
-    out.fps_num = haveActive ? ((cur_fps_num_ > 0) ? cur_fps_num_ : 0) : (haveProbe ? signal_fps_num_ : 0);
-    out.fps_den = haveActive ? ((cur_fps_den_ > 0) ? cur_fps_den_ : 1) : (haveProbe ? signal_fps_den_ : 1);
-    out.pixfmt = mfsub_to_gcap(haveActive ? cur_subtype_ : (haveProbe ? signal_subtype_ : cur_subtype_));
+    const bool haveProbe = signalValid && signalW > 0 && signalH > 0;
+    out.width = haveActive ? cur_w_ : (haveProbe ? signalW : 0);
+    out.height = haveActive ? cur_h_ : (haveProbe ? signalH : 0);
+    out.fps_num = haveActive ? ((cur_fps_num_ > 0) ? cur_fps_num_ : 0) : (haveProbe ? signalFpsNum : 0);
+    out.fps_den = haveActive ? ((cur_fps_den_ > 0) ? cur_fps_den_ : 1) : (haveProbe ? signalFpsDen : 1);
+    out.pixfmt = mfsub_to_gcap(haveActive ? cur_subtype_ : (haveProbe ? signalSubtype : cur_subtype_));
     out.bit_depth = pixfmt_bitdepth(out.pixfmt);
     out.csp = GCAP_CSP_UNKNOWN;
     out.range = GCAP_RANGE_UNKNOWN;
     out.hdr = -1;
-    fill_sc0710_inferred_input_signal_mf(out, signal_has_sc0710_custom_page_, haveActive ? cur_subtype_ : signal_subtype_);
+    fill_vendor_rgb_inferred_input_signal_mf(out, signalHasVendorCustomPage, haveActive ? cur_subtype_ : signalSubtype);
     return (out.width > 0 && out.height > 0);
 }
 
@@ -564,15 +603,30 @@ bool WinMFProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     if (!getSignalStatus(out.signal))
         return false;
 
-    refresh_signal_probe(false);
-    memset(&out.signal_probe, 0, sizeof(out.signal_probe));
-    if (signal_valid_ && signal_w_ > 0 && signal_h_ > 0)
+    bool signalValid = false;
+    int signalW = 0;
+    int signalH = 0;
+    int signalFpsNum = 0;
+    int signalFpsDen = 1;
+    GUID signalSubtype = GUID_NULL;
     {
-        out.signal_probe.width = signal_w_;
-        out.signal_probe.height = signal_h_;
-        out.signal_probe.fps_num = signal_fps_num_;
-        out.signal_probe.fps_den = signal_fps_den_;
-        out.signal_probe.pixfmt = mfsub_to_gcap(signal_subtype_);
+        std::lock_guard<std::mutex> lk(signal_probe_mtx_);
+        signalValid = signal_valid_;
+        signalW = signal_w_;
+        signalH = signal_h_;
+        signalFpsNum = signal_fps_num_;
+        signalFpsDen = signal_fps_den_;
+        signalSubtype = signal_subtype_;
+    }
+
+    memset(&out.signal_probe, 0, sizeof(out.signal_probe));
+    if (signalValid && signalW > 0 && signalH > 0)
+    {
+        out.signal_probe.width = signalW;
+        out.signal_probe.height = signalH;
+        out.signal_probe.fps_num = signalFpsNum;
+        out.signal_probe.fps_den = signalFpsDen;
+        out.signal_probe.pixfmt = mfsub_to_gcap(signalSubtype);
         out.signal_probe.bit_depth = pixfmt_bitdepth(out.signal_probe.pixfmt);
         out.signal_probe.csp = GCAP_CSP_UNKNOWN;
         out.signal_probe.range = GCAP_RANGE_UNKNOWN;
@@ -590,7 +644,7 @@ bool WinMFProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     out.negotiated.range = GCAP_RANGE_UNKNOWN;
     out.negotiated.hdr = -1;
 
-    const bool gpu = isUsingGpu();
+    const bool gpu = (use_dxgi_ && !cpu_path_);
     out.runtime_fps = fps_avg_;
     out.active_backend = gpu ? GCAP_BACKEND_WINMF_GPU : GCAP_BACKEND_WINMF_CPU;
     strcpy_s(out.backend_name, gpu ? "WinMF GPU" : "WinMF CPU");
@@ -938,12 +992,15 @@ bool WinMFProvider::open(int index)
 {
     ensure_mf();
     current_index_ = index;
-    signal_valid_ = false;
-    signal_w_ = signal_h_ = 0;
-    signal_fps_num_ = 0;
-    signal_fps_den_ = 1;
-    signal_subtype_ = GUID_NULL;
-    last_signal_probe_ms_ = 0;
+    {
+        std::lock_guard<std::mutex> lk(signal_probe_mtx_);
+        signal_valid_ = false;
+        signal_w_ = signal_h_ = 0;
+        signal_fps_num_ = 0;
+        signal_fps_den_ = 1;
+        signal_subtype_ = GUID_NULL;
+        last_signal_probe_ms_ = 0;
+    }
 
     refresh_signal_probe(true);
     const bool profileAuto = (profile_.width <= 0 && profile_.height <= 0 && profile_.fps_num <= 0 && profile_.fps_den <= 0 && profile_.format == GCAP_FMT_NV12);
@@ -1075,6 +1132,7 @@ bool WinMFProvider::start()
     if (running_)
         return true;
     running_ = true;
+    start_probe_thread();
     th_ = std::thread(&WinMFProvider::loop, this);
     return true;
 }
@@ -1082,8 +1140,12 @@ bool WinMFProvider::start()
 void WinMFProvider::stop()
 {
     if (!running_)
+    {
+        stop_probe_thread();
         return;
+    }
     running_ = false;
+    stop_probe_thread();
     if (th_.joinable())
         th_.join();
     if (pipeline_)
@@ -1092,6 +1154,7 @@ void WinMFProvider::stop()
 
 void WinMFProvider::close()
 {
+    stop();
     stopRecording();
     reader_.Reset();
     source_.Reset();
@@ -1126,12 +1189,15 @@ void WinMFProvider::close()
     d3d_.Reset();
 
     current_index_ = -1;
-    signal_valid_ = false;
-    signal_w_ = signal_h_ = 0;
-    signal_fps_num_ = 0;
-    signal_fps_den_ = 1;
-    signal_subtype_ = GUID_NULL;
-    last_signal_probe_ms_ = 0;
+    {
+        std::lock_guard<std::mutex> lk(signal_probe_mtx_);
+        signal_valid_ = false;
+        signal_w_ = signal_h_ = 0;
+        signal_fps_num_ = 0;
+        signal_fps_den_ = 1;
+        signal_subtype_ = GUID_NULL;
+        last_signal_probe_ms_ = 0;
+    }
 }
 
 void WinMFProvider::setCallbacks(gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user)
@@ -2945,22 +3011,46 @@ void WinMFProvider::loop()
 
         // refresh_signal_probe(false);
 
-        // OSD 跟 UI status bar 一致：顯示 backend negotiated subtype，而不是 true-input signal subtype
+        // OSD 同時顯示 InputProbe 與 BackendFmt，避免只看 negotiated 而看不出外部訊號已變。
+        bool probeValid = false;
+        int probeW = 0;
+        int probeH = 0;
+        int probeFpsNum = 0;
+        int probeFpsDen = 1;
+        GUID probeSubtype = GUID_NULL;
+        {
+            std::lock_guard<std::mutex> lk(signal_probe_mtx_);
+            probeValid = signal_valid_;
+            probeW = signal_w_;
+            probeH = signal_h_;
+            probeFpsNum = signal_fps_num_;
+            probeFpsDen = signal_fps_den_;
+            probeSubtype = signal_subtype_;
+        }
+
         const GUID osdSubtype = cur_subtype_;
         const int osdW = cur_w_;
         const int osdH = cur_h_;
 
-        const wchar_t *fmtName =
-            (osdSubtype == MFVideoFormat_P010)     ? L"P010"
-            : (osdSubtype == MFVideoFormat_NV12)   ? L"NV12"
-            : (osdSubtype == MFVideoFormat_YUY2)   ? L"YUY2"
-            : (osdSubtype == MFVideoFormat_Y210)   ? L"Y210"
-            : (osdSubtype == MFVideoFormat_ARGB32) ? L"ARGB32"
-                                                   : L"?";
+        auto subtypeNameW = [](const GUID &subtype) -> const wchar_t *
+        {
+            return (subtype == MFVideoFormat_P010)     ? L"P010"
+                 : (subtype == MFVideoFormat_NV12)     ? L"NV12"
+                 : (subtype == MFVideoFormat_YUY2)     ? L"YUY2"
+                 : (subtype == MFVideoFormat_Y210)     ? L"Y210"
+                 : (subtype == MFVideoFormat_ARGB32)   ? L"ARGB32"
+                                                       : L"?";
+        };
 
-        const wchar_t *bitDepth =
-            (osdSubtype == MFVideoFormat_P010 || osdSubtype == MFVideoFormat_Y210) ? L"10-bit"
-                                                                                   : L"8-bit";
+        auto subtypeBitDepthW = [](const GUID &subtype) -> const wchar_t *
+        {
+            return (subtype == MFVideoFormat_P010 || subtype == MFVideoFormat_Y210) ? L"10-bit"
+                                                                                     : L"8-bit";
+        };
+
+        const wchar_t *fmtName = subtypeNameW(osdSubtype);
+        const wchar_t *bitDepth = subtypeBitDepthW(osdSubtype);
+        const wchar_t *probeFmtName = subtypeNameW(probeSubtype);
 
         double fps_show = 0.0;
         if (cur_fps_num_ > 0 && cur_fps_den_ > 0)
@@ -2968,15 +3058,23 @@ void WinMFProvider::loop()
         else if (fps_avg_ > 0.0)
             fps_show = fps_avg_;
 
+        double probeFps = 0.0;
+        if (probeFpsNum > 0 && probeFpsDen > 0)
+            probeFps = (double)probeFpsNum / (double)probeFpsDen;
+
         const wchar_t *gpuName =
             (!gpu_name_w_.empty() ? gpu_name_w_.c_str() : L"(GPU: unknown)");
 
-        wchar_t line[512];
+        wchar_t line[768];
         swprintf(line,
-                 512,
-                 L"%s | GPU: %s | BackendFmt: %dx%d @ %.2f fps | %s %s | #%llu",
+                 768,
+                 L"%s | GPU: %s | InputProbe: %dx%d @ %.2f fps | %s | BackendFmt: %dx%d @ %.2f fps | %s %s | #%llu",
                  (wdev[0] ? wdev : L"Device"),
                  gpuName,
+                 probeValid ? probeW : 0,
+                 probeValid ? probeH : 0,
+                 probeValid ? probeFps : 0.0,
+                 probeValid ? probeFmtName : L"--",
                  osdW,
                  osdH,
                  fps_show,

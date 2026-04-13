@@ -275,7 +275,7 @@ extern "C"
     // Returns actual written count. Pass nullptr or max_pages<=0 to query supported count only.
     GCAP_API int gcap_enum_property_pages(int device_index, gcap_property_page_t *out_pages, int max_pages);
 
-    // Open vendor-specific DShow property page for a device index (test / debug helper).
+    // Open a device-specific vendor DShow property page for a device index (optional test / debug helper; not used by generic capture flow).
     GCAP_API int gcap_open_vendor_property_page(int device_index);
     GCAP_API int gcap_open_named_property_page(int device_index, const char *page_name_utf8, int capture_pin);
 

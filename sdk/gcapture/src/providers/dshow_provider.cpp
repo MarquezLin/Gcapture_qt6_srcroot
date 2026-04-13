@@ -302,7 +302,7 @@ namespace
 }
 
 
-static void fill_sc0710_inferred_input_signal(gcap_signal_status_t &out, bool hasCustomPage, const GUID &activeSubtype)
+static void fill_vendor_rgb_inferred_input_signal(gcap_signal_status_t &out, bool hasCustomPage, const GUID &activeSubtype)
 {
     if (!hasCustomPage)
         return;
@@ -414,11 +414,11 @@ bool DShowProvider::refreshSignalProbe(bool force)
         signalFpsNum_ = probe.fps_num;
         signalFpsDen_ = (probe.fps_den > 0) ? probe.fps_den : 1;
         signalSubtype_ = probe.subtype;
-        signalHasSc0710CustomPage_ = probe.has_sc0710_custom_page;
-        if (probe.sc0710_property_module[0])
-            wcsncpy_s(signalSc0710Module_, probe.sc0710_property_module, _TRUNCATE);
+        signalHasVendorCustomPage_ = probe.has_vendor_custom_page;
+        if (probe.vendor_property_module[0])
+            wcsncpy_s(signalVendorModule_, probe.vendor_property_module, _TRUNCATE);
         else
-            signalSc0710Module_[0] = 0;
+            signalVendorModule_[0] = 0;
         lastSignalProbeMs_ = nowMs;
         return true;
     }
@@ -455,7 +455,7 @@ bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
     out.bit_depth = gcap_pixfmt_bitdepth(out.pixfmt);
     if (out.pixfmt == GCAP_FMT_Y210)
         out.csp = GCAP_CSP_BT709;
-    fill_sc0710_inferred_input_signal(out, signalHasSc0710CustomPage_, haveActive ? subtype_ : signalSubtype_);
+    fill_vendor_rgb_inferred_input_signal(out, signalHasVendorCustomPage_, haveActive ? subtype_ : signalSubtype_);
     return (out.width > 0 && out.height > 0);
 }
 
@@ -2023,6 +2023,6 @@ void DShowProvider::close()
     signalFpsDen_ = 1;
     signalSubtype_ = GUID_NULL;
     lastSignalProbeMs_ = 0;
-    signalHasSc0710CustomPage_ = false;
-    signalSc0710Module_[0] = 0;
+    signalHasVendorCustomPage_ = false;
+    signalVendorModule_[0] = 0;
 }

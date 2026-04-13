@@ -584,9 +584,9 @@ namespace
         if (probeOut && clsid == DSHOW_SC0710_VENDOR_PAGE)
         {
             if (strcmp(label, "Filter") == 0)
-                probeOut->sc0710_page_activate_filter_ok = true;
+                probeOut->vendor_page_activate_filter_ok = true;
             else if (strcmp(label, "CapturePin") == 0)
-                probeOut->sc0710_page_activate_capture_pin_ok = true;
+                probeOut->vendor_page_activate_capture_pin_ok = true;
         }
 
         return true;
@@ -610,7 +610,7 @@ namespace
 
         dshow_probe_log(std::string(label) + " CoCreateInstance(IPropertyPage): OK");
         if (probeOut && clsid == DSHOW_SC0710_VENDOR_PAGE)
-            probeOut->sc0710_page_create_ok = true;
+            probeOut->vendor_page_create_ok = true;
 
         IUnknown *objs[1] = {target};
         hr = page->SetObjects(1, objs);
@@ -641,9 +641,9 @@ namespace
 
         if (probeOut && clsid == DSHOW_SC0710_VENDOR_PAGE)
         {
-            probeOut->has_sc0710_custom_page = true;
+            probeOut->has_vendor_custom_page = true;
             if (!dll.empty())
-                wcsncpy_s(probeOut->sc0710_property_module, dll.c_str(), _TRUNCATE);
+                wcsncpy_s(probeOut->vendor_property_module, dll.c_str(), _TRUNCATE);
         }
     }
 
@@ -753,9 +753,9 @@ namespace
             if (probeOut && pageClsid == DSHOW_SC0710_VENDOR_PAGE)
             {
                 if (strcmp(label, "Filter") == 0)
-                    probeOut->sc0710_page_setobjects_filter_ok = setObjectsOk;
+                    probeOut->vendor_page_setobjects_filter_ok = setObjectsOk;
                 else if (strcmp(label, "CapturePin") == 0)
-                    probeOut->sc0710_page_setobjects_capture_pin_ok = setObjectsOk;
+                    probeOut->vendor_page_setobjects_capture_pin_ok = setObjectsOk;
             }
 
             if (setObjectsOk)
@@ -784,7 +784,7 @@ namespace
             {"PROPSETID_VIDCAP_VIDEOCONTROL", DSHOW_PROPSETID_VIDCAP_VIDEOCONTROL},
             {"PROPSETID_VIDCAP_CAMERACONTROL", DSHOW_PROPSETID_VIDCAP_CAMERACONTROL},
             {"PROPSETID_VIDCAP_DROPPEDFRAMES", DSHOW_PROPSETID_VIDCAP_DROPPEDFRAMES},
-            {"SC0710_VENDOR_PAGE", DSHOW_SC0710_VENDOR_PAGE},
+            {"VENDOR_CUSTOM_PAGE", DSHOW_SC0710_VENDOR_PAGE},
         };
 
         const size_t setCount = sizeof(sets) / sizeof(sets[0]);
@@ -1359,7 +1359,10 @@ static int copy_property_page_out(const std::wstring &name, bool capturePin, gca
 
 bool dshow_open_vendor_property_page_by_index(int devIndex)
 {
-    return open_property_page_worker(devIndex, L"SC0710 PCI, Custom Property Page", false, L"SC0710 Vendor Property Page");
+    // Optional vendor-specific debug helper. The current known page name happens to
+    // be SC0710-specific, but this helper is intentionally kept out of the generic
+    // capture flow.
+    return open_property_page_worker(devIndex, L"SC0710 PCI, Custom Property Page", false, L"Vendor Property Page");
 }
 
 bool dshow_open_named_property_page_by_index(int devIndex, const wchar_t *pageName, bool capturePin)

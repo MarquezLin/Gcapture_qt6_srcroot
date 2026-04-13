@@ -15,6 +15,8 @@ struct DShowSignalProbeResult
 
     // Diagnostics: this probe currently reads DShow capture-pin media type,
     // not guaranteed true front-end HDMI/SDI signal metadata.
+    // Vendor-page fields below are optional diagnostics only and are not part
+    // of the generic capture flow.
     bool from_get_format = false;
     bool from_stream_caps = false;
     bool filter_has_property_pages = false;
@@ -23,13 +25,13 @@ struct DShowSignalProbeResult
     bool capture_pin_has_ks_property_set = false;
     bool filter_has_ks_control = false;
     bool capture_pin_has_ks_control = false;
-    bool has_sc0710_custom_page = false;
-    bool sc0710_page_create_ok = false;
-    bool sc0710_page_setobjects_filter_ok = false;
-    bool sc0710_page_setobjects_capture_pin_ok = false;
-    bool sc0710_page_activate_filter_ok = false;
-    bool sc0710_page_activate_capture_pin_ok = false;
-    wchar_t sc0710_property_module[260] = {};
+    bool has_vendor_custom_page = false;
+    bool vendor_page_create_ok = false;
+    bool vendor_page_setobjects_filter_ok = false;
+    bool vendor_page_setobjects_capture_pin_ok = false;
+    bool vendor_page_activate_filter_ok = false;
+    bool vendor_page_activate_capture_pin_ok = false;
+    wchar_t vendor_property_module[260] = {};
     wchar_t friendly_name[128] = {};
     wchar_t device_path[512] = {};
 };
@@ -41,6 +43,7 @@ int gcap_pixfmt_bitdepth(gcap_pixfmt_t f);
 const char *gcap_pixfmt_name(gcap_pixfmt_t f);
 const char *gcap_subtype_name(const GUID &sub);
 
+// Optional debug helper for device/vendor-specific property pages.
 bool dshow_open_vendor_property_page_by_index(int devIndex);
 bool dshow_open_named_property_page_by_index(int devIndex, const wchar_t *pageName, bool capturePin);
 

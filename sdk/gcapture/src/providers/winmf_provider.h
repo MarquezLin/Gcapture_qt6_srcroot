@@ -5,6 +5,9 @@
 #include <string>
 #include <mutex>
 #include <deque>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
 
 #include "gcapture.h"
 #include "../core/capture_manager.h"
@@ -93,6 +96,7 @@ private:
     // ---- State ----
     std::atomic<bool> running_{false};
     std::thread th_;
+    std::thread probe_th_;
     uint64_t frame_id_ = 0;
     std::string dev_name_;        // 目前選用的裝置名稱（UTF-8）
     std::wstring dev_sym_link_w_; // MF device symbolic link（給 SetupAPI 查 Driver/FW/Serial 用）
@@ -102,7 +106,7 @@ private:
     bool cpu_path_ = true;
     int current_index_ = -1;
 
-    // ---- True input signal probe (prefer DirectShow metadata over MF negotiated subtype) ----
+    // ---- Input signal probe cache (generic path; vendor-page diagnostics are optional) ----
     bool signal_valid_ = false;
     int signal_w_ = 0;
     int signal_h_ = 0;
@@ -110,8 +114,11 @@ private:
     int signal_fps_den_ = 1;
     GUID signal_subtype_ = GUID_NULL;
     uint64_t last_signal_probe_ms_ = 0;
-    bool signal_has_sc0710_custom_page_ = false;
-    wchar_t signal_sc0710_module_[260] = {};
+    bool signal_has_vendor_custom_page_ = false;
+    wchar_t signal_vendor_module_[260] = {};
+    mutable std::mutex signal_probe_mtx_;
+    std::atomic<bool> probe_running_{false};
+    std::condition_variable probe_cv_;
 
     // ---- ProcAmp (CPU conversion path) ----
     // Default is neutral (128).
@@ -201,6 +208,9 @@ private:
 
     bool create_reader_cpu_only(int devIndex);
     bool refresh_signal_probe(bool force);
+    void probe_loop();
+    void start_probe_thread();
+    void stop_probe_thread();
 
     // ---- Recording (Media Foundation Sink Writer) ----
     struct MfRecorder;
@@ -219,5 +229,4 @@ private:
 
     // 全域：目前偏好的 Adapter index（由 UI/C API 設定）
     static std::atomic<int> s_adapter_index_;
-
 };
