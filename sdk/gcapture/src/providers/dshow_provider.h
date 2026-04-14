@@ -130,6 +130,7 @@ private:
     std::atomic<bool> signalProbeThreadRunning_{false};
     std::thread mediaEventThread_;
     std::atomic<bool> mediaEventThreadRunning_{false};
+    HANDLE mediaEventStopEvent_ = nullptr;
     HWND previewHwnd_ = nullptr;
     gcap_preview_desc_t previewDesc_{};
     DShowRawRenderer rawRenderer_{};
