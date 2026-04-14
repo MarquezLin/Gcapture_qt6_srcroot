@@ -7,6 +7,8 @@
 #include <QByteArray>
 #include <QString>
 
+class QHideEvent;
+
 #ifdef _WIN32
 #include <dxgi1_2.h>
 #include <d3d11.h>
@@ -39,6 +41,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private:
     enum class PendingKind
@@ -87,6 +90,7 @@ private:
     DXGI_FORMAT internalTextureFormat_ = DXGI_FORMAT_UNKNOWN;
     DXGI_FORMAT outputSurfaceFormat_ = DXGI_FORMAT_UNKNOWN;
     D3D_FEATURE_LEVEL featureLevel_ = D3D_FEATURE_LEVEL_11_0;
+    WId swapChainWid_ = 0;
 #endif
 };
 

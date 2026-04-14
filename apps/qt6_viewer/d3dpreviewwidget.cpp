@@ -3,6 +3,7 @@
 #include <QMutexLocker>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QHideEvent>
 #include <QPaintEvent>
 #include <QByteArray>
 #include <cstring>
@@ -147,7 +148,20 @@ void d3dpreviewwidget::resizeEvent(QResizeEvent *event)
 void d3dpreviewwidget::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+#ifdef _WIN32
+    releaseSwapChainResources();
+    swapChainWid_ = 0;
+#endif
     renderNow();
+}
+
+void d3dpreviewwidget::hideEvent(QHideEvent *event)
+{
+#ifdef _WIN32
+    releaseSwapChainResources();
+    swapChainWid_ = 0;
+#endif
+    QWidget::hideEvent(event);
 }
 
 void d3dpreviewwidget::ensureDevice()
@@ -215,14 +229,18 @@ void d3dpreviewwidget::ensureSwapChain()
 
     const int w = qMax(1, width());
     const int h = qMax(1, height());
+    const WId currentWid = winId();
     if (swapChain_)
     {
         DXGI_SWAP_CHAIN_DESC1 desc = {};
-        if (SUCCEEDED(swapChain_->GetDesc1(&desc)) && int(desc.Width) == w && int(desc.Height) == h)
+        if (swapChainWid_ == currentWid &&
+            SUCCEEDED(swapChain_->GetDesc1(&desc)) &&
+            int(desc.Width) == w && int(desc.Height) == h)
             return;
     }
 
     releaseSwapChainResources();
+    swapChainWid_ = 0;
 
     ComPtr<IDXGIDevice> dxgiDevice;
     ComPtr<IDXGIAdapter> adapter;
@@ -243,15 +261,16 @@ void d3dpreviewwidget::ensureSwapChain()
     desc.Scaling = DXGI_SCALING_STRETCH;
     desc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
 
-    HRESULT hr = factory->CreateSwapChainForHwnd(device_.Get(), HWND(winId()), &desc, nullptr, nullptr, &swapChain_);
+    HRESULT hr = factory->CreateSwapChainForHwnd(device_.Get(), HWND(currentWid), &desc, nullptr, nullptr, &swapChain_);
     if (FAILED(hr))
     {
         desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        hr = factory->CreateSwapChainForHwnd(device_.Get(), HWND(winId()), &desc, nullptr, nullptr, &swapChain_);
+        hr = factory->CreateSwapChainForHwnd(device_.Get(), HWND(currentWid), &desc, nullptr, nullptr, &swapChain_);
     }
     if (FAILED(hr) || !swapChain_)
         return;
 
+    swapChainWid_ = currentWid;
     outputSurfaceFormat_ = desc.Format;
     outputSurfaceFormatName_ = dxgiFormatName(desc.Format);
     outputSurface10Bit_ = (desc.Format == DXGI_FORMAT_R10G10B10A2_UNORM);
@@ -444,6 +463,7 @@ void d3dpreviewwidget::releaseSwapChainResources()
     outputSurfaceFormat_ = DXGI_FORMAT_UNKNOWN;
     outputSurfaceFormatName_ = QStringLiteral("None");
     outputSurface10Bit_ = false;
+    swapChainWid_ = 0;
 #endif
 }
 

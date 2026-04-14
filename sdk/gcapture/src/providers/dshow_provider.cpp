@@ -1536,7 +1536,6 @@ void DShowProvider::framePumpLoop()
         const uint64_t curSampleCount = rawRenderer_.sampleCount();
         if (rawOnlyActive_ && curSampleCount != 0 && curSampleCount == lastProcessedSampleCount)
             continue;
-
         std::vector<uint8_t> raw;
         int rw = 0, rh = 0, rstride = 0;
         GUID rawSubtype = MEDIASUBTYPE_NULL;
