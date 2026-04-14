@@ -3,6 +3,7 @@
 #include <dshow.h>
 #include <d3d9.h>
 #include <vmr9.h>
+#include <evcode.h>
 
 #include "dshow_provider.h"
 #include "dshow_custom_sink.h"
@@ -302,6 +303,28 @@ namespace
 }
 
 
+static const char *dshow_event_code_name(long evCode)
+{
+    switch (evCode)
+    {
+    case EC_COMPLETE:
+        return "EC_COMPLETE";
+    case EC_USERABORT:
+        return "EC_USERABORT";
+    case EC_ERRORABORT:
+        return "EC_ERRORABORT";
+    case EC_STREAM_ERROR_STOPPED:
+        return "EC_STREAM_ERROR_STOPPED";
+    case EC_DEVICE_LOST:
+        return "EC_DEVICE_LOST";
+    case EC_VIDEO_SIZE_CHANGED:
+        return "EC_VIDEO_SIZE_CHANGED";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+
 static void fill_vendor_rgb_inferred_input_signal(gcap_signal_status_t &out, bool hasCustomPage, const GUID &activeSubtype)
 {
     if (!hasCustomPage)
@@ -443,7 +466,7 @@ bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
     // While DShow is actively running, prefer the currently negotiated/active format
     // so UI reflects what the graph is truly delivering now.
     // Keep the separate DShow GetFormat/GetStreamCaps result in runtime_info.signal_probe.
-    const bool haveActive = (width_ > 0 && height_ > 0);
+    const bool haveActive = (!deviceLost_ && width_ > 0 && height_ > 0);
     const bool haveProbe = signalValid_ && signalW_ > 0 && signalH_ > 0;
 
     out.width = haveActive ? width_ : (haveProbe ? signalW_ : 0);
@@ -478,7 +501,7 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
 
         memset(&out.signal, 0, sizeof(out.signal));
 
-        const bool haveActive = (width_ > 0 && height_ > 0);
+        const bool haveActive = (!deviceLost_ && width_ > 0 && height_ > 0);
         const bool haveProbe = signalValid_ && signalW_ > 0 && signalH_ > 0;
 
         out.signal.width = haveActive ? width_ : (haveProbe ? signalW_ : 0);
@@ -1007,6 +1030,7 @@ bool DShowProvider::buildGraphForDevice(int index)
     }
     vmrWindowless_.Reset();
     rawOnlyActive_ = false;
+    deviceLost_ = false;
     width_ = 0;
     height_ = 0;
     subtype_ = MEDIASUBTYPE_NULL;
@@ -1974,6 +1998,159 @@ void DShowProvider::startSignalProbeThread()
                                      { signalProbeLoop(); });
 }
 
+void DShowProvider::startMediaEventThread()
+{
+    stopMediaEventThread();
+    mediaEventThreadRunning_ = true;
+    mediaEventThread_ = std::thread([this]
+                                    { mediaEventLoop(); });
+}
+
+void DShowProvider::stopMediaEventThread()
+{
+    mediaEventThreadRunning_ = false;
+    if (mediaEventThread_.joinable())
+        mediaEventThread_.join();
+}
+
+void DShowProvider::mediaEventLoop()
+{
+    const HRESULT initHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool needUninit = SUCCEEDED(initHr);
+    if (FAILED(initHr) && initHr != RPC_E_CHANGED_MODE)
+    {
+        dshow_log_hr("CoInitializeEx(COINIT_MULTITHREADED) for mediaEventLoop", initHr);
+        return;
+    }
+
+    dshow_log("[DShow] mediaEventLoop begin");
+    while (mediaEventThreadRunning_)
+    {
+        IMediaEvent *mediaEvent = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            mediaEvent = mediaEvent_.Get();
+            if (mediaEvent)
+                mediaEvent->AddRef();
+        }
+
+        if (!mediaEvent)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        long evCode = 0;
+        LONG_PTR param1 = 0;
+        LONG_PTR param2 = 0;
+        HRESULT hr = mediaEvent->GetEvent(&evCode, &param1, &param2, 0);
+        mediaEvent->Release();
+
+        if (hr == E_ABORT)
+        {
+            if (!mediaEventThreadRunning_)
+                break;
+            dshow_log("[DShow] IMediaEvent::GetEvent returned E_ABORT; keep watching");
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+        if (hr == E_INVALIDARG || hr == VFW_E_WRONG_STATE || hr == VFW_E_NOT_FOUND)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+        if (FAILED(hr))
+        {
+            char err[192] = {};
+            sprintf_s(err, "[DShow] IMediaEvent::GetEvent failed hr=0x%08lx",
+                      static_cast<unsigned long>(hr));
+            dshow_log(err);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        char msg[320] = {};
+        sprintf_s(msg, "[DShow] IMediaEvent::GetEvent ev=0x%lx (%s) p1=%p p2=%p",
+                  static_cast<unsigned long>(evCode),
+                  dshow_event_code_name(evCode),
+                  reinterpret_cast<void *>(param1),
+                  reinterpret_cast<void *>(param2));
+        dshow_log(msg);
+
+        bool doRefreshSignalProbe = false;
+        gcap_on_error_cb ecb = nullptr;
+        void *user = nullptr;
+        gcap_status_t code = GCAP_OK;
+        const char *errMsg = nullptr;
+
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            switch (evCode)
+            {
+            case EC_DEVICE_LOST:
+                dshow_log("[DShow] EC_DEVICE_LOST detected");
+                deviceLost_ = true;
+                signalValid_ = false;
+                width_ = 0;
+                height_ = 0;
+                negotiatedFpsNum_ = 0;
+                negotiatedFpsDen_ = 0;
+                subtype_ = MEDIASUBTYPE_NULL;
+                ecb = ecb_;
+                user = user_;
+                code = GCAP_ENODEV;
+                errMsg = "DShow: device lost (EC_DEVICE_LOST)";
+                break;
+            case EC_VIDEO_SIZE_CHANGED:
+                dshow_log("[DShow] EC_VIDEO_SIZE_CHANGED detected");
+                signalValid_ = false;
+                doRefreshSignalProbe = true;
+                break;
+            case EC_STREAM_ERROR_STOPPED:
+                dshow_log("[DShow] EC_STREAM_ERROR_STOPPED detected");
+                signalValid_ = false;
+                ecb = ecb_;
+                user = user_;
+                code = GCAP_EIO;
+                errMsg = "DShow: stream error stopped (EC_STREAM_ERROR_STOPPED)";
+                break;
+            case EC_ERRORABORT:
+                dshow_log("[DShow] EC_ERRORABORT detected");
+                signalValid_ = false;
+                ecb = ecb_;
+                user = user_;
+                code = GCAP_EIO;
+                errMsg = "DShow: graph error abort (EC_ERRORABORT)";
+                break;
+            default:
+                break;
+            }
+        }
+
+        mediaEvent = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            mediaEvent = mediaEvent_.Get();
+            if (mediaEvent)
+                mediaEvent->AddRef();
+        }
+        if (mediaEvent)
+        {
+            mediaEvent->FreeEventParams(evCode, param1, param2);
+            mediaEvent->Release();
+        }
+
+        if (doRefreshSignalProbe)
+            refreshSignalProbe(true);
+
+        if (ecb && errMsg)
+            ecb(code, errMsg, user);
+    }
+    dshow_log("[DShow] mediaEventLoop end");
+    if (needUninit)
+        CoUninitialize();
+}
+
 void DShowProvider::stopSignalProbeThread()
 {
     signalProbeThreadRunning_ = false;
@@ -2073,7 +2250,9 @@ bool DShowProvider::start()
     }
     refreshSignalProbe(true);
     running_ = true;
+    deviceLost_ = false;
     startSignalProbeThread();
+    startMediaEventThread();
     if (vcb_ || pcb_ || previewHwnd_)
         startFramePumpThread();
     return true;
@@ -2081,6 +2260,7 @@ bool DShowProvider::start()
 
 void DShowProvider::stop()
 {
+    stopMediaEventThread();
     stopSignalProbeThread();
     stopFramePumpThread();
     std::lock_guard<std::mutex> lock(mtx_);
@@ -2122,4 +2302,5 @@ void DShowProvider::close()
     lastSignalProbeMs_ = 0;
     signalHasVendorCustomPage_ = false;
     signalVendorModule_[0] = 0;
+    deviceLost_ = false;
 }

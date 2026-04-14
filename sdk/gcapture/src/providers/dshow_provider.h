@@ -58,6 +58,9 @@ private:
     void startSignalProbeThread();
     void stopSignalProbeThread();
     void signalProbeLoop();
+    void startMediaEventThread();
+    void stopMediaEventThread();
+    void mediaEventLoop();
     enum class CallbackSource
     {
         Unknown = 0,
@@ -125,6 +128,8 @@ private:
     std::atomic<bool> framePumpThreadRunning_{false};
     std::thread signalProbeThread_;
     std::atomic<bool> signalProbeThreadRunning_{false};
+    std::thread mediaEventThread_;
+    std::atomic<bool> mediaEventThreadRunning_{false};
     HWND previewHwnd_ = nullptr;
     gcap_preview_desc_t previewDesc_{};
     DShowRawRenderer rawRenderer_{};
@@ -157,6 +162,7 @@ private:
     } previewProbeStats_;
 
     bool rawOnlyActive_ = false;
+    bool deviceLost_ = false;
     // Preview active: use low-frequency ARGB callback to coexist with smooth preview.
     // No preview active: callback path may still run per-frame.
     int callbackTargetFps_ = 10;
