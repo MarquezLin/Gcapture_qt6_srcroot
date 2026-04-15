@@ -43,6 +43,7 @@ private:
     QString currentAudioDeviceId_;
     bool initializing_ = false;
     QString currentAudioDeviceIdUtf8_;
+    QString lastInfoText_;
     void refreshAudioDevices(bool keepSelection);
     static QString propertyPageNameFromDisplay(const QString &display);
     static bool propertyPageIsCapturePin(const QString &display);

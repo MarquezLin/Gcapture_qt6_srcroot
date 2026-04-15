@@ -11,6 +11,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QDebug>
+#include <QScrollBar>
 
 
 
@@ -122,15 +123,38 @@ void inputinfodialog::setPropertyPages(const QStringList &pages)
     QListWidget *list = ensurePropertyPageList(ui);
     if (!list)
         return;
-    list->clear();
-    for (const QString &display : pages)
+
+    QStringList existing;
+    existing.reserve(list->count());
+    for (int i = 0; i < list->count(); ++i)
+        existing << list->item(i)->text();
+
+    if (existing == pages)
     {
-        auto *item = new QListWidgetItem(display, list);
-        item->setData(Qt::UserRole, propertyPageNameFromDisplay(display));
-        item->setData(Qt::UserRole + 1, propertyPageIsCapturePin(display));
+        if (QPushButton *btn = list->parentWidget()->findChild<QPushButton*>(QStringLiteral("btnOpenPropertyPage")))
+            btn->setEnabled(list->count() > 0);
+        return;
     }
-    if (list->count() > 0)
+
+    const QString currentName = list->currentItem() ? list->currentItem()->data(Qt::UserRole).toString() : QString();
+    list->clear();
+
+    int selectRow = -1;
+    for (int i = 0; i < pages.size(); ++i)
+    {
+        const QString &display = pages.at(i);
+        auto *item = new QListWidgetItem(display, list);
+        const QString pageName = propertyPageNameFromDisplay(display);
+        item->setData(Qt::UserRole, pageName);
+        item->setData(Qt::UserRole + 1, propertyPageIsCapturePin(display));
+        if (!currentName.isEmpty() && pageName == currentName)
+            selectRow = i;
+    }
+    if (selectRow >= 0)
+        list->setCurrentRow(selectRow);
+    else if (list->count() > 0)
         list->setCurrentRow(0);
+
     if (QPushButton *btn = list->parentWidget()->findChild<QPushButton*>(QStringLiteral("btnOpenPropertyPage")))
         btn->setEnabled(list->count() > 0);
 }
@@ -149,11 +173,26 @@ void inputinfodialog::onOpenSelectedPropertyPage()
 
 void inputinfodialog::setInfoText(const QString &text)
 {
-    // 如果你用的是 QPlainTextEdit
-    ui->plainTextInfo->setPlainText(text);
+    if (!ui || !ui->plainTextInfo)
+        return;
 
-    // 若改用 QLabel，就改成：
-    // ui->labelInfo->setText(text);
+    if (lastInfoText_ == text)
+        return;
+
+    QPlainTextEdit *edit = ui->plainTextInfo;
+    QScrollBar *vbar = edit->verticalScrollBar();
+    QScrollBar *hbar = edit->horizontalScrollBar();
+    const int v = vbar ? vbar->value() : 0;
+    const int h = hbar ? hbar->value() : 0;
+
+    edit->setPlainText(text);
+
+    if (vbar)
+        vbar->setValue(v);
+    if (hbar)
+        hbar->setValue(h);
+
+    lastInfoText_ = text;
 }
 
 void inputinfodialog::onAudioDeviceChanged(int index)

@@ -56,10 +56,22 @@ namespace
         return std::string(buf);
     }
 
+    static std::wstring utf8_to_wide(const char *s)
+    {
+        if (!s || !*s)
+            return std::wstring();
+        const int needed = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
+        if (needed <= 1)
+            return std::wstring();
+        std::wstring out(static_cast<size_t>(needed - 1), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s, -1, &out[0], needed);
+        return out;
+    }
+
     static void dshow_probe_log(const std::string &s)
     {
-        std::string line = "[DShowSignalProbe] " + s;
-        OutputDebugStringA(line.c_str());
+        const std::wstring line = utf8_to_wide(("[DShowSignalProbe] " + s).c_str()) + L"\n";
+        OutputDebugStringW(line.c_str());
     }
 
     static std::string wide_to_utf8(const wchar_t *ws)
