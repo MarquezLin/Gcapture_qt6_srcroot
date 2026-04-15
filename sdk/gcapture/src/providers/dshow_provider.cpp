@@ -852,7 +852,11 @@ bool DShowProvider::createRenderPipeline()
             return false;
         }
 
-        if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2d_factory_.ReleaseAndGetAddressOf())) || !d2d_factory_)
+        ComPtr<ID3D11Multithread> d3dMultithread;
+        if (SUCCEEDED(d3d_.As(&d3dMultithread)) && d3dMultithread)
+            d3dMultithread->SetMultithreadProtected(TRUE);
+
+        if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, d2d_factory_.ReleaseAndGetAddressOf())) || !d2d_factory_)
             return false;
 
         ComPtr<IDXGIDevice> dxgiDev;
@@ -905,6 +909,38 @@ void DShowProvider::releaseRenderPipeline()
     d2d_factory_.Reset();
     ctx_.Reset();
     d3d_.Reset();
+}
+
+bool DShowProvider::canUseDirectY210Preview(int rawWidth, int rawHeight, int rawStride, size_t rawBytes) const
+{
+    if (disableDirectY210Preview_.load())
+        return false;
+    if (rawWidth <= 0 || rawHeight <= 0)
+        return false;
+    const int expectedStride = rawWidth * 4;
+    if (rawStride < expectedStride)
+        return false;
+    const size_t minBytes = static_cast<size_t>(rawStride) * static_cast<size_t>(rawHeight);
+    if (rawBytes < minBytes)
+        return false;
+    return true;
+}
+
+void DShowProvider::noteDirectY210PreviewFailure(const char *reason, int rawWidth, int rawHeight, int rawStride, size_t rawBytes)
+{
+    bool expected = false;
+    if (!disableDirectY210Preview_.compare_exchange_strong(expected, true))
+        return;
+
+    char msg[320] = {};
+    sprintf_s(msg,
+              "[DShow] direct Y210 preview disabled: %s size=%dx%d stride=%d bytes=%llu -> fallback to ARGB bridge",
+              reason ? reason : "unknown",
+              rawWidth,
+              rawHeight,
+              rawStride,
+              static_cast<unsigned long long>(rawBytes));
+    dshow_log(msg);
 }
 
 void DShowProvider::updatePreviewRect()
@@ -1491,6 +1527,7 @@ void DShowProvider::logPreviewProbeStats(uint64_t frameId, int frameW, int frame
 void DShowProvider::framePumpLoop()
 {
     dshow_log("[DShow] framePumpLoop begin");
+    disableDirectY210Preview_ = false;
     resetPreviewProbeStats();
     uint64_t lastProcessedSampleCount = 0;
     uint64_t lastReadbackPtsNs = 0;
@@ -1570,8 +1607,10 @@ void DShowProvider::framePumpLoop()
         std::vector<uint8_t> buf;
         int w = 0, h = 0, stride = 0;
         const bool previewOnlyActive = (previewHwnd_ != nullptr);
+        const bool directY210Allowed = (rawSubtype != MEDIASUBTYPE_Y210) || canUseDirectY210Preview(rw, rh, rstride, raw.size());
         const bool canUseSharedRaw = pipeline_ && haveRaw && rawOnlyActive_ &&
-                                     (rawSubtype == MEDIASUBTYPE_NV12 || rawSubtype == MEDIASUBTYPE_YUY2 || rawSubtype == MEDIASUBTYPE_Y210);
+                                     (rawSubtype == MEDIASUBTYPE_NV12 || rawSubtype == MEDIASUBTYPE_YUY2 || rawSubtype == MEDIASUBTYPE_Y210) &&
+                                     directY210Allowed;
         // DS preview + low-frequency ARGB callback coexist mode:
         //   - preview path still owns render/present timing when a preview window is active
         //   - frame-packet callback can still run from raw data
@@ -1746,6 +1785,10 @@ void DShowProvider::framePumpLoop()
                             const auto t1 = std::chrono::steady_clock::now();
                             probeUploadNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
                         }
+                        if (!uploaded)
+                        {
+                            noteDirectY210PreviewFailure("upload_y210_frame failed", rw, rh, rstride, raw.size());
+                        }
                         if (uploaded)
                         {
                             const auto t0 = std::chrono::steady_clock::now();
@@ -1753,12 +1796,20 @@ void DShowProvider::framePumpLoop()
                             const auto t1 = std::chrono::steady_clock::now();
                             probeRenderYuvNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
                         }
+                        if (!uploaded && !disableDirectY210Preview_.load())
+                        {
+                            noteDirectY210PreviewFailure("render_uploaded_yuv_to_fp16(Y210) failed", rw, rh, rstride, raw.size());
+                        }
                         if (uploaded)
                         {
                             const auto t0 = std::chrono::steady_clock::now();
                             uploaded = pipeline_->copy_fp16_to_scene();
                             const auto t1 = std::chrono::steady_clock::now();
                             probeCopySceneNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (!uploaded && !disableDirectY210Preview_.load())
+                        {
+                            noteDirectY210PreviewFailure("copy_fp16_to_scene after Y210 failed", rw, rh, rstride, raw.size());
                         }
                     }
                     if (uploaded)
@@ -1881,7 +1932,7 @@ void DShowProvider::framePumpLoop()
                                           callbackSourceName(lastCallbackSource_.load()),
                                           isRawCandidate() ? "YES" : "NO",
                                           rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO",
-                                          canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : (rawSubtype == MEDIASUBTYPE_Y210 ? "Y210-direct" : "YUY2-direct")) : ((rawSubtype == MEDIASUBTYPE_RGB24 || rawSubtype == MEDIASUBTYPE_RGB32 || rawSubtype == MEDIASUBTYPE_ARGB32) ? "RGB-bridge" : "ARGB-bridge"));
+                                          canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : (rawSubtype == MEDIASUBTYPE_Y210 ? "Y210-direct" : "YUY2-direct")) : ((rawSubtype == MEDIASUBTYPE_Y210) ? "Y210-argb-fallback" : ((rawSubtype == MEDIASUBTYPE_RGB24 || rawSubtype == MEDIASUBTYPE_RGB32 || rawSubtype == MEDIASUBTYPE_ARGB32) ? "RGB-bridge" : "ARGB-bridge")));
                                 OutputDebugStringA(msg);
                             }
                             vcb(&f, user);
@@ -2336,4 +2387,5 @@ void DShowProvider::close()
     signalHasVendorCustomPage_ = false;
     signalVendorModule_[0] = 0;
     deviceLost_ = false;
+    disableDirectY210Preview_ = false;
 }

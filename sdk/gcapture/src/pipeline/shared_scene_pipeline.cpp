@@ -21,6 +21,15 @@ static void SSP_DBG(const char *stage, HRESULT hr)
 
 using Microsoft::WRL::ComPtr;
 
+static inline uint16_t normalize_y210_word_for_upload(uint16_t v)
+{
+    const uint16_t low10 = static_cast<uint16_t>(v & 0x03FFu);
+    const uint16_t high10 = static_cast<uint16_t>((v >> 6) & 0x03FFu);
+    if (low10 != 0)
+        return low10;
+    return high10;
+}
+
 static const char *ss_dxgi_format_name(DXGI_FORMAT fmt)
 {
     switch (fmt)
@@ -1213,6 +1222,11 @@ bool SharedScenePipeline::upload_y210_frame(const uint8_t *data, int src_stride,
     if (!ctx_ || !d3d_ || !data || frame_w <= 0 || frame_h <= 0)
         return false;
 
+    const int effectiveStride = (src_stride > 0) ? src_stride : (frame_w * 4);
+    const int minStride = frame_w * 4;
+    if (effectiveStride < minStride)
+        return false;
+
     const int w2 = (frame_w + 1) / 2;
     if (upload_y210_packed_)
     {
@@ -1242,7 +1256,6 @@ bool SharedScenePipeline::upload_y210_frame(const uint8_t *data, int src_stride,
     if (FAILED(ctx_->Map(upload_y210_packed_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
         return false;
 
-    const int effectiveStride = (src_stride > 0) ? src_stride : (frame_w * 4);
     const size_t rowBytes = (size_t)frame_w * 4u;
     for (int row = 0; row < frame_h; ++row)
     {
@@ -1255,10 +1268,10 @@ bool SharedScenePipeline::upload_y210_frame(const uint8_t *data, int src_stride,
         for (int x = 0; x < w2; ++x)
         {
             const int srcX = x * 4;
-            const uint16_t Y0 = src16[srcX + 0];
-            const uint16_t U  = src16[srcX + 1];
-            const uint16_t Y1 = (srcX + 2 < rowWords) ? src16[srcX + 2] : Y0;
-            const uint16_t V  = (srcX + 3 < rowWords) ? src16[srcX + 3] : U;
+            const uint16_t Y0 = normalize_y210_word_for_upload(src16[srcX + 0]);
+            const uint16_t U  = normalize_y210_word_for_upload(src16[srcX + 1]);
+            const uint16_t Y1 = (srcX + 2 < rowWords) ? normalize_y210_word_for_upload(src16[srcX + 2]) : Y0;
+            const uint16_t V  = (srcX + 3 < rowWords) ? normalize_y210_word_for_upload(src16[srcX + 3]) : U;
 
             uint16_t *d4 = dst16 + x * 4;
             d4[0] = Y0;

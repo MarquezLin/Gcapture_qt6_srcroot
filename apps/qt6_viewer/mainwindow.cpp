@@ -42,6 +42,15 @@ namespace
         return static_cast<uint8_t>(v);
     }
 
+    static inline uint16_t normalizeY210WordLocal(uint16_t v)
+    {
+        const uint16_t low10 = static_cast<uint16_t>(v & 0x03FFu);
+        const uint16_t high10 = static_cast<uint16_t>((v >> 6) & 0x03FFu);
+        if (low10 != 0)
+            return low10;
+        return high10;
+    }
+
     static inline void yuvToRgbLocal(int y, int u, int v, uint8_t &b, uint8_t &g, uint8_t &r)
     {
         const int c = y - 16;
@@ -197,10 +206,10 @@ namespace
                 for (int x = 0; x < pkt.width; x += 2)
                 {
                     const int base = x * 2;
-                    const int Y0 = ((int)(srcRow[base + 0] & 1023u) * 255 + 511) / 1023;
-                    const int U = ((int)(srcRow[base + 1] & 1023u) * 255 + 511) / 1023;
-                    const int Y1 = (x + 1 < pkt.width) ? (((int)(srcRow[base + 2] & 1023u) * 255 + 511) / 1023) : Y0;
-                    const int V = (x + 1 < pkt.width) ? (((int)(srcRow[base + 3] & 1023u) * 255 + 511) / 1023) : U;
+                    const int Y0 = (int(normalizeY210WordLocal(srcRow[base + 0])) * 255 + 511) / 1023;
+                    const int U = (int(normalizeY210WordLocal(srcRow[base + 1])) * 255 + 511) / 1023;
+                    const int Y1 = (x + 1 < pkt.width) ? ((int(normalizeY210WordLocal(srcRow[base + 2])) * 255 + 511) / 1023) : Y0;
+                    const int V = (x + 1 < pkt.width) ? ((int(normalizeY210WordLocal(srcRow[base + 3])) * 255 + 511) / 1023) : U;
                     uint8_t b = 0, g = 0, r = 0;
                     yuvToRgbLocal(Y0, U, V, b, g, r);
                     dst[x] = qRgba(r, g, b, 255);
@@ -261,11 +270,23 @@ void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
         return;
     if (self->usePacketCallback_)
         return;
-    self->updateFrameSourceState(f->pts_ns, f->width, f->height, self->lastVideoCallbackPtsNs_);
 
-    // 這裡 f 是 BGRA 一張圖，直接包成 QImage
+    // 背景 callback thread 不要直接碰 MainWindow 狀態；
+    // 先把 frame 拷成安全的 QImage，再排回 UI thread。
     QImage img((const uchar *)f->data[0], f->width, f->height, f->stride[0], QImage::Format_ARGB32);
-    self->dispatchFrameImage(img);
+    const QImage safeImg = img.copy();
+    const uint64_t ptsNs = f->pts_ns;
+    const int width = f->width;
+    const int height = f->height;
+
+    QMetaObject::invokeMethod(
+        self,
+        [self, ptsNs, width, height, safeImg]()
+        {
+            self->updateFrameSourceState(ptsNs, width, height, self->lastVideoCallbackPtsNs_);
+            self->dispatchFrameImage(safeImg);
+        },
+        Qt::QueuedConnection);
 }
 
 void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
@@ -274,15 +295,21 @@ void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
     if (!self || !pkt)
         return;
 
-    self->updateFrameSourceState(pkt->pts_ns, pkt->width, pkt->height, self->lastPacketCallbackPtsNs_);
-    self->logFramePacketIfNeeded(*pkt);
+    const gcap_frame_packet_t pktCopy = *pkt;
+    QImage img;
+    if (self->usePacketCallback_)
+        img = framePacketToQImage(pktCopy);
 
-    if (!self->usePacketCallback_)
-        return;
-
-    QImage img = framePacketToQImage(*pkt);
-    if (!img.isNull())
-        self->dispatchFrameImage(img);
+    QMetaObject::invokeMethod(
+        self,
+        [self, pktCopy, img]()
+        {
+            self->updateFrameSourceState(pktCopy.pts_ns, pktCopy.width, pktCopy.height, self->lastPacketCallbackPtsNs_);
+            self->logFramePacketIfNeeded(pktCopy);
+            if (self->usePacketCallback_ && !img.isNull())
+                self->dispatchFrameImage(img);
+        },
+        Qt::QueuedConnection);
 }
 
 void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)

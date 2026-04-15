@@ -13,6 +13,7 @@
 #include <d3d9.h>
 #include <vmr9.h>
 #include <d3d11_1.h>
+#include <d3d11_4.h>
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <memory>
@@ -81,6 +82,8 @@ private:
     bool rawSinkPlanned() const;
     bool createRenderPipeline();
     void releaseRenderPipeline();
+    bool canUseDirectY210Preview(int rawWidth, int rawHeight, int rawStride, size_t rawBytes) const;
+    void noteDirectY210PreviewFailure(const char *reason, int rawWidth, int rawHeight, int rawStride, size_t rawBytes);
     void resetPreviewProbeStats();
     void logPreviewProbeStats(uint64_t frameId, int frameW, int frameH, bool directRaw, const char *presentTag);
     bool refreshSignalProbe(bool force);
@@ -164,6 +167,7 @@ private:
 
     bool rawOnlyActive_ = false;
     bool deviceLost_ = false;
+    std::atomic<bool> disableDirectY210Preview_{false};
     // Preview active: use low-frequency ARGB callback to coexist with smooth preview.
     // No preview active: callback path may still run per-frame.
     int callbackTargetFps_ = 10;

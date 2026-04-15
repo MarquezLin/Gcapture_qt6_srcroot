@@ -6,6 +6,15 @@
 #include <vector>
 
 static constexpr float kPi = 3.14159265358979323846f;
+static inline uint16_t normalize_y210_word(uint16_t v)
+{
+    const uint16_t low10 = static_cast<uint16_t>(v & 0x03FFu);
+    const uint16_t high10 = static_cast<uint16_t>((v >> 6) & 0x03FFu);
+    if (low10 != 0)
+        return low10;
+    return high10;
+}
+
 
 static inline void yuv_to_rgb(int Y, int U, int V, uint8_t &R, uint8_t &G, uint8_t &B)
 {
@@ -269,12 +278,12 @@ void gcap::y210_to_argb(const uint8_t *y210,
 
             // Many drivers place valid 10-bit values in the low 10 bits for Y210.
             // This matches the rest of this project’s current Y210 handling.
-            const int Y0 = (int)((src[base + 0] & 1023u) * 255u + 511u) / 1023;
-            uint8_t U = (uint8_t)(((src[base + 1] & 1023u) * 255u + 511u) / 1023);
+            const int Y0 = (int)(normalize_y210_word(src[base + 0]) * 255u + 511u) / 1023;
+            uint8_t U = (uint8_t)((normalize_y210_word(src[base + 1]) * 255u + 511u) / 1023);
             const int Y1 = (x + 1 < width)
-                               ? (int)(((src[base + 2] & 1023u) * 255u + 511u) / 1023)
+                               ? (int)((normalize_y210_word(src[base + 2]) * 255u + 511u) / 1023)
                                : Y0;
-            uint8_t V = (uint8_t)(((src[base + 3] & 1023u) * 255u + 511u) / 1023);
+            uint8_t V = (uint8_t)((normalize_y210_word(src[base + 3]) * 255u + 511u) / 1023);
 
             if (p.hue != 128)
                 apply_hue_to_uv(U, V, p);
