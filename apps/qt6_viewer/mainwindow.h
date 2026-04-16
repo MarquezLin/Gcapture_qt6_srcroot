@@ -129,6 +129,8 @@ private:
     uint64_t framePacketSessionId_ = 0;
     QTimer *runtimeStatusTimer_ = nullptr;
     QString lastRuntimeStatusText_;
+    bool suppressAuxDialogRefresh_ = false;
+    bool openingTiffDialog_ = false;
     void updateRuntimeStatusUi();
     int currentDeviceIndex() const;
     QString currentDeviceText() const;

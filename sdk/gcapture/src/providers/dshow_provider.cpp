@@ -120,11 +120,11 @@ namespace
 
     static GUID subtypeFromProfileFmt(gcap_pixfmt_t fmt)
     {
-        return (fmt == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
-             : (fmt == GCAP_FMT_NV12) ? MEDIASUBTYPE_NV12
-             : (fmt == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
-             : (fmt == GCAP_FMT_ARGB) ? MEDIASUBTYPE_RGB24
-                                       : GUID{};
+        return (fmt == GCAP_FMT_Y210)   ? MEDIASUBTYPE_Y210
+               : (fmt == GCAP_FMT_NV12) ? MEDIASUBTYPE_NV12
+               : (fmt == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
+               : (fmt == GCAP_FMT_ARGB) ? MEDIASUBTYPE_RGB24
+                                        : GUID{};
     }
 
     static int dshowQualityRank(const GUID &g)
@@ -302,7 +302,6 @@ namespace
     } while (0)
 }
 
-
 static const char *dshow_event_code_name(long evCode)
 {
     switch (evCode)
@@ -323,7 +322,6 @@ static const char *dshow_event_code_name(long evCode)
         return "UNKNOWN";
     }
 }
-
 
 static void fill_vendor_rgb_inferred_input_signal(gcap_signal_status_t &out, bool hasCustomPage, const GUID &activeSubtype)
 {
@@ -472,9 +470,9 @@ bool DShowProvider::getSignalStatus(gcap_signal_status_t &out)
     out.width = haveActive ? width_ : (haveProbe ? signalW_ : 0);
     out.height = haveActive ? height_ : (haveProbe ? signalH_ : 0);
     out.fps_num = haveActive ? (negotiatedFpsNum_ > 0 ? negotiatedFpsNum_ : profile_.fps_num)
-                          : (haveProbe ? signalFpsNum_ : 0);
+                             : (haveProbe ? signalFpsNum_ : 0);
     out.fps_den = haveActive ? (negotiatedFpsDen_ > 0 ? negotiatedFpsDen_ : profile_.fps_den)
-                          : (haveProbe ? signalFpsDen_ : 1);
+                             : (haveProbe ? signalFpsDen_ : 1);
     out.range = GCAP_RANGE_UNKNOWN;
     out.csp = GCAP_CSP_UNKNOWN;
     out.hdr = 0;
@@ -507,9 +505,9 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
         out.signal.width = haveActive ? width_ : (haveProbe ? signalW_ : 0);
         out.signal.height = haveActive ? height_ : (haveProbe ? signalH_ : 0);
         out.signal.fps_num = haveActive ? (negotiatedFpsNum_ > 0 ? negotiatedFpsNum_ : profile_.fps_num)
-                                         : (haveProbe ? signalFpsNum_ : 0);
+                                        : (haveProbe ? signalFpsNum_ : 0);
         out.signal.fps_den = haveActive ? (negotiatedFpsDen_ > 0 ? negotiatedFpsDen_ : profile_.fps_den)
-                                         : (haveProbe ? signalFpsDen_ : 1);
+                                        : (haveProbe ? signalFpsDen_ : 1);
         out.signal.range = GCAP_RANGE_UNKNOWN;
         out.signal.csp = GCAP_CSP_UNKNOWN;
         out.signal.hdr = 0;
@@ -1136,6 +1134,7 @@ bool DShowProvider::buildGraphForDevice(int index)
                                    sourceFilter_.Get(), IID_PPV_ARGS(&streamConfig));
     if (SUCCEEDED(hr) && streamConfig)
     {
+        streamConfig_ = streamConfig;
         logCaptureCapabilities(streamConfig.Get());
         configureCaptureFormat(streamConfig.Get());
     }
@@ -1164,39 +1163,66 @@ bool DShowProvider::buildGraphForDevice(int index)
                                    sourceFilter_.Get(), IID_PPV_ARGS(&streamConfig));
     if (SUCCEEDED(hr) && streamConfig)
     {
-        AM_MEDIA_TYPE *pmt = nullptr;
-        hr = streamConfig->GetFormat(&pmt);
-        if (SUCCEEDED(hr) && pmt)
-        {
-            dshow_log("[DShow] OK: IAMStreamConfig::GetFormat()");
-            if ((pmt->formattype == FORMAT_VideoInfo || pmt->formattype == FORMAT_VideoInfo2) &&
-                pmt->cbFormat >= sizeof(VIDEOINFOHEADER) && pmt->pbFormat)
-            {
-                VIDEOINFOHEADER *vih = reinterpret_cast<VIDEOINFOHEADER *>(pmt->pbFormat);
-                width_ = vih->bmiHeader.biWidth;
-                height_ = abs(vih->bmiHeader.biHeight);
-                subtype_ = pmt->subtype;
-                negotiatedFpsNum_ = 0;
-                negotiatedFpsDen_ = 0;
-                mediaTypeToVideoInfo(pmt, width_, height_, negotiatedFpsNum_, negotiatedFpsDen_);
-
-                double fps = (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0;
-                rawRenderer_.setNegotiated(subtype_, width_, height_, negotiatedFpsNum_, negotiatedFpsDen_);
-                char buf[256] = {};
-                sprintf_s(buf, "[DShow] stream format: %s %dx%d %.2ffps",
-                          subtypeName(subtype_), width_, height_, fps);
-                OutputDebugStringA(buf);
-            }
-            if (pmt->cbFormat && pmt->pbFormat)
-                CoTaskMemFree(pmt->pbFormat);
-            if (pmt->pUnk)
-                pmt->pUnk->Release();
-            CoTaskMemFree(pmt);
-        }
+        streamConfig_ = streamConfig;
+        logCurrentStreamConfigFormat("buildGraphForDevice");
     }
 
     dshow_log(rawOnly ? "[DShow] === buildGraphForDevice success (raw-only path) ===" : "[DShow] === buildGraphForDevice success (VMR9 preview path) ===");
     return true;
+}
+
+void DShowProvider::logCurrentStreamConfigFormat(const char *tag)
+{
+    if (!streamConfig_)
+        return;
+
+    AM_MEDIA_TYPE *pmt = nullptr;
+    const HRESULT hr = streamConfig_->GetFormat(&pmt);
+    if (FAILED(hr) || !pmt)
+    {
+        char msg[256] = {};
+        std::snprintf(msg, sizeof(msg),
+                      "[DShow][Verify] ProviderGetFormat(%s) failed hr=0x%08lx",
+                      tag ? tag : "(null)",
+                      static_cast<unsigned long>(hr));
+        dshow_log(msg);
+        return;
+    }
+
+    int w = 0;
+    int h = 0;
+    int fpsNum = 0;
+    int fpsDen = 0;
+    mediaTypeToVideoInfo(pmt, w, h, fpsNum, fpsDen);
+
+    if ((pmt->formattype == FORMAT_VideoInfo || pmt->formattype == FORMAT_VideoInfo2) &&
+        pmt->cbFormat >= sizeof(VIDEOINFOHEADER) && pmt->pbFormat)
+    {
+        VIDEOINFOHEADER *vih = reinterpret_cast<VIDEOINFOHEADER *>(pmt->pbFormat);
+        width_ = vih->bmiHeader.biWidth;
+        height_ = std::abs(vih->bmiHeader.biHeight);
+        subtype_ = pmt->subtype;
+        negotiatedFpsNum_ = fpsNum;
+        negotiatedFpsDen_ = fpsDen;
+        rawRenderer_.setNegotiated(subtype_, width_, height_, negotiatedFpsNum_, negotiatedFpsDen_);
+    }
+
+    char msg[320] = {};
+    std::snprintf(msg, sizeof(msg),
+                  "[DShow][Verify] ProviderGetFormat(%s) -> %dx%d %s %d/%d fps",
+                  tag ? tag : "(null)",
+                  width_,
+                  height_,
+                  subtypeName(subtype_),
+                  negotiatedFpsNum_,
+                  negotiatedFpsDen_ > 0 ? negotiatedFpsDen_ : 1);
+    dshow_log(msg);
+
+    if (pmt->cbFormat && pmt->pbFormat)
+        CoTaskMemFree(pmt->pbFormat);
+    if (pmt->pUnk)
+        pmt->pUnk->Release();
+    CoTaskMemFree(pmt);
 }
 
 bool DShowProvider::buildRawOnlyGraph(ICaptureGraphBuilder2 *capBuilder)
@@ -1603,6 +1629,27 @@ void DShowProvider::framePumpLoop()
         const auto tCopyRaw0 = std::chrono::steady_clock::now();
         const bool haveRaw = rawRenderer_.copyLatestRaw(raw, rw, rh, rstride, rawSubtype) && !raw.empty();
         const auto tCopyRaw1 = std::chrono::steady_clock::now();
+        static uint64_t s_lastActualSampleLogNs = 0;
+        if (haveRaw)
+        {
+            const uint64_t nowNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                             std::chrono::steady_clock::now().time_since_epoch())
+                                                             .count());
+            if (nowNs - s_lastActualSampleLogNs >= 10000000000ull)
+            {
+                s_lastActualSampleLogNs = nowNs;
+                char msg[320] = {};
+                std::snprintf(msg, sizeof(msg),
+                              "[DShow][Verify] ActualSample -> %dx%d %s stride=%d bytes=%llu samples=%llu",
+                              rw,
+                              rh,
+                              subtypeName(rawSubtype),
+                              rstride,
+                              static_cast<unsigned long long>(raw.size()),
+                              static_cast<unsigned long long>(curSampleCount));
+                dshow_log(msg);
+            }
+        }
 
         std::vector<uint8_t> buf;
         int w = 0, h = 0, stride = 0;
@@ -2198,6 +2245,7 @@ void DShowProvider::mediaEventLoop()
                     dshow_log("[DShow] EC_VIDEO_SIZE_CHANGED detected");
                     signalValid_ = false;
                     doRefreshSignalProbe = true;
+                    logCurrentStreamConfigFormat("EC_VIDEO_SIZE_CHANGED");
                     break;
                 case EC_STREAM_ERROR_STOPPED:
                     dshow_log("[DShow] EC_STREAM_ERROR_STOPPED detected");
@@ -2373,6 +2421,7 @@ void DShowProvider::close()
     sourceFilter_.Reset();
     mediaEvent_.Reset();
     mediaControl_.Reset();
+    streamConfig_.Reset();
     graph_.Reset();
     width_ = 0;
     height_ = 0;

@@ -37,7 +37,6 @@ void MainWindow::closeCaptureSession()
     if (!h_)
         return;
 
-    // 先解除 callback，再 stop/close，避免背景 thread 在 MainWindow 解構期間回呼。
     gcap_set_frame_packet_callback(h_, nullptr, nullptr);
     gcap_set_callbacks(h_, nullptr, nullptr, nullptr);
     gcap_close(h_);

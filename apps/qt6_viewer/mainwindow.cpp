@@ -520,15 +520,18 @@ void MainWindow::setupRuntimeStatusTimer()
                 refreshCaptureInfoFromSdkAndRuntime(true);
                 refreshDisplayInfoFromCurrentState();
 
-                if (infoDlg_ && infoDlg_->isVisible())
+                if (!suppressAuxDialogRefresh_)
                 {
-                    infoDlg_->setInfoText(lastInfoText_);
-                    infoDlg_->setPropertyPages(captureInfo_.propertyPages);
-                    infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
-                }
+                    if (infoDlg_ && infoDlg_->isVisible())
+                    {
+                        infoDlg_->setInfoText(lastInfoText_);
+                        infoDlg_->setPropertyPages(captureInfo_.propertyPages);
+                        infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
+                    }
 
-                if (DpinfoDlg_ && DpinfoDlg_->isVisible())
-                    DpinfoDlg_->setInfoText(formatDisplayOutputInfo(displayInfo_));
+                    if (DpinfoDlg_ && DpinfoDlg_->isVisible())
+                        DpinfoDlg_->setInfoText(formatDisplayOutputInfo(displayInfo_));
+                }
             });
     runtimeStatusTimer_->start();
 }
@@ -785,11 +788,35 @@ void MainWindow::appendDebugLog(const QString &line)
 
 void MainWindow::onOpenTiffAnalyze()
 {
-    const QString path = QFileDialog::getOpenFileName(
-        this,
-        tr("Open TIFF"),
-        QString(),
-        tr("TIFF Files (*.tif *.tiff)"));
+    if (openingTiffDialog_)
+        return;
+
+    openingTiffDialog_ = true;
+    suppressAuxDialogRefresh_ = true;
+
+    const bool wasTimerActive = runtimeStatusTimer_ && runtimeStatusTimer_->isActive();
+    if (wasTimerActive)
+        runtimeStatusTimer_->stop();
+
+    QString path;
+    {
+        QFileDialog dlg(this,
+                        tr("Open TIFF"),
+                        QString(),
+                        tr("TIFF Files (*.tif *.tiff)"));
+#ifdef _WIN32
+        dlg.setOption(QFileDialog::DontUseNativeDialog, true);
+#endif
+        dlg.setFileMode(QFileDialog::ExistingFile);
+        if (dlg.exec() == QDialog::Accepted)
+            path = dlg.selectedFiles().value(0);
+    }
+
+    if (wasTimerActive && runtimeStatusTimer_)
+        runtimeStatusTimer_->start();
+    suppressAuxDialogRefresh_ = false;
+    openingTiffDialog_ = false;
+
     if (path.isEmpty())
         return;
 

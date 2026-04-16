@@ -87,11 +87,13 @@ private:
     void resetPreviewProbeStats();
     void logPreviewProbeStats(uint64_t frameId, int frameW, int frameH, bool directRaw, const char *presentTag);
     bool refreshSignalProbe(bool force);
+    void logCurrentStreamConfigFormat(const char *tag);
 
 private:
     Microsoft::WRL::ComPtr<IGraphBuilder> graph_;
     Microsoft::WRL::ComPtr<IMediaControl> mediaControl_;
     Microsoft::WRL::ComPtr<IMediaEvent> mediaEvent_;
+    Microsoft::WRL::ComPtr<IAMStreamConfig> streamConfig_;
 
     Microsoft::WRL::ComPtr<IBaseFilter> sourceFilter_;
     Microsoft::WRL::ComPtr<IBaseFilter> previewRenderer_;
