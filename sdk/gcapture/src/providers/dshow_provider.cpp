@@ -10,6 +10,7 @@
 #include "dshow_signal_probe.h"
 #include <objbase.h>
 #include <dvdmedia.h>
+#include <mfapi.h>
 #include <stdio.h>
 #include <chrono>
 #include <cstring>
@@ -1702,6 +1703,15 @@ void DShowProvider::framePumpLoop()
                     pkt.data[0] = raw.data();
                     pkt.stride[0] = rstride;
                 }
+                else if (rawSubtype == MFVideoFormat_P010)
+                {
+                    pkt.format = GCAP_FMT_P010;
+                    pkt.plane_count = 2;
+                    pkt.data[0] = raw.data();
+                    pkt.data[1] = raw.data() + (size_t)rstride * (size_t)rh;
+                    pkt.stride[0] = rstride;
+                    pkt.stride[1] = rstride;
+                }
                 else if (rawSubtype == MEDIASUBTYPE_Y210)
                 {
                     pkt.format = GCAP_FMT_Y210;
@@ -1790,6 +1800,31 @@ void DShowProvider::framePumpLoop()
                         {
                             const auto t0 = std::chrono::steady_clock::now();
                             uploaded = pipeline_->render_uploaded_yuv_to_fp16(GCAP_FMT_NV12, rw, rh);
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeRenderYuvNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (uploaded)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->copy_fp16_to_scene();
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeCopySceneNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                    }
+                    else if (rawSubtype == MFVideoFormat_P010)
+                    {
+                        const uint8_t *y = raw.data();
+                        const uint8_t *uv = raw.data() + (size_t)rstride * (size_t)rh;
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->upload_p010_frame(y, rstride, uv, rstride, rw, rh);
+                            const auto t1 = std::chrono::steady_clock::now();
+                            probeUploadNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        }
+                        if (uploaded)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            uploaded = pipeline_->render_uploaded_yuv_to_fp16(GCAP_FMT_P010, rw, rh);
                             const auto t1 = std::chrono::steady_clock::now();
                             probeRenderYuvNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
                         }
@@ -1923,10 +1958,31 @@ void DShowProvider::framePumpLoop()
                 if (uploaded)
                 {
                     const auto t0 = std::chrono::steady_clock::now();
+                    uploaded = pipeline_->render_uploaded_argb_to_fp16(w, h);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    probeRenderYuvNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                }
+                if (uploaded)
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    uploaded = pipeline_->copy_fp16_to_scene();
+                    const auto t1 = std::chrono::steady_clock::now();
+                    probeCopySceneNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                }
+                if (uploaded && !pipeline_->preview_swapchain_10bit())
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    uploaded = pipeline_->blit_fp16_to_rgba8(w, h);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    probeBlitNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                }
+                if (uploaded)
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
                     pipeline_->present_preview(w, h);
                     const auto t1 = std::chrono::steady_clock::now();
                     probePresentNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-                    probePresentTag = "preview-argb";
+                    probePresentTag = pipeline_->preview_swapchain_10bit() ? "preview-argb-fp16-10bit" : "preview-argb-fp16-rgba8";
                     sharedReady = true;
                 }
             }
@@ -1979,7 +2035,7 @@ void DShowProvider::framePumpLoop()
                                           callbackSourceName(lastCallbackSource_.load()),
                                           isRawCandidate() ? "YES" : "NO",
                                           rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO",
-                                          canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : (rawSubtype == MEDIASUBTYPE_Y210 ? "Y210-direct" : "YUY2-direct")) : ((rawSubtype == MEDIASUBTYPE_Y210) ? "Y210-argb-fallback" : ((rawSubtype == MEDIASUBTYPE_RGB24 || rawSubtype == MEDIASUBTYPE_RGB32 || rawSubtype == MEDIASUBTYPE_ARGB32) ? "RGB-bridge" : "ARGB-bridge")));
+                                          canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : (rawSubtype == MFVideoFormat_P010 ? "P010-direct" : (rawSubtype == MEDIASUBTYPE_Y210 ? "Y210-direct" : "YUY2-direct"))) : ((rawSubtype == MEDIASUBTYPE_Y210) ? "Y210-argb-fallback" : ((rawSubtype == MEDIASUBTYPE_RGB24 || rawSubtype == MEDIASUBTYPE_RGB32 || rawSubtype == MEDIASUBTYPE_ARGB32) ? "RGB-bridge" : "ARGB-bridge")));
                                 OutputDebugStringA(msg);
                             }
                             vcb(&f, user);

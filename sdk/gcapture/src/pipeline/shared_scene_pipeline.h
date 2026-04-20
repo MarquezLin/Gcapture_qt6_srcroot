@@ -42,7 +42,9 @@ public:
     bool composite_overlay_to_scene_fp16(int frame_w, int frame_h);
     bool blit_fp16_to_rgba8(int frame_w, int frame_h);
     bool upload_argb_frame(const void *data, int frame_w, int frame_h, int src_stride);
+    bool render_uploaded_argb_to_fp16(int frame_w, int frame_h);
     bool upload_nv12_frame(const uint8_t *y, int stride_y, const uint8_t *uv, int stride_uv, int frame_w, int frame_h);
+    bool upload_p010_frame(const uint8_t *y, int stride_y, const uint8_t *uv, int stride_uv, int frame_w, int frame_h);
     bool upload_yuy2_frame(const uint8_t *data, int src_stride, int frame_w, int frame_h);
     bool upload_y210_frame(const uint8_t *data, int src_stride, int frame_w, int frame_h);
     bool render_uploaded_yuv_to_fp16(gcap_pixfmt_t fmt, int frame_w, int frame_h);

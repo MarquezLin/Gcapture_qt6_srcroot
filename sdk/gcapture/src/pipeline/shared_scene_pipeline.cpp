@@ -67,6 +67,22 @@ static ComPtr<ID3D11ShaderResourceView> createSRV_NV12(ID3D11Device *dev, ID3D11
     return s;
 }
 
+static ComPtr<ID3D11ShaderResourceView> createSRV_P010(ID3D11Device *dev, ID3D11Texture2D *tex, bool uv)
+{
+    if (!dev || !tex)
+        return {};
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC d{};
+    d.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    d.Texture2D.MipLevels = 1;
+    d.Format = uv ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R16_UNORM;
+
+    ComPtr<ID3D11ShaderResourceView> s;
+    if (FAILED(dev->CreateShaderResourceView(tex, &d, &s)))
+        return {};
+    return s;
+}
+
 static const char *g_vs_src = R"(
 struct VSIn  { float2 pos:POSITION; float2 uv:TEXCOORD0; };
 struct VSOut { float4 pos:SV_Position; float2 uv:TEXCOORD0; };
@@ -1120,6 +1136,45 @@ bool SharedScenePipeline::upload_argb_frame(const void *data, int frame_w, int f
     return true;
 }
 
+bool SharedScenePipeline::render_uploaded_argb_to_fp16(int frame_w, int frame_h)
+{
+    if (!ctx_ || !vs_ || !il_ || !vb_ || !rtv_fp16_ || !srv_rgba_ || !ps_rgba8_to_preview_ || frame_w <= 0 || frame_h <= 0)
+        return false;
+
+    UINT stride = sizeof(float) * 4, offset = 0;
+    ID3D11Buffer *pVB = vb_.Get();
+    ctx_->IASetVertexBuffers(0, 1, &pVB, &stride, &offset);
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx_->IASetInputLayout(il_.Get());
+
+    ctx_->VSSetShader(vs_.Get(), nullptr, 0);
+    ctx_->PSSetShader(ps_rgba8_to_preview_.Get(), nullptr, 0);
+
+    D3D11_VIEWPORT vp{};
+    vp.TopLeftX = 0.0f;
+    vp.TopLeftY = 0.0f;
+    vp.Width = static_cast<FLOAT>(frame_w);
+    vp.Height = static_cast<FLOAT>(frame_h);
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    ctx_->RSSetViewports(1, &vp);
+
+    ID3D11RenderTargetView *rtv = rtv_fp16_.Get();
+    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+    const float clear[4] = {0, 0, 0, 1};
+    ctx_->ClearRenderTargetView(rtv_fp16_.Get(), clear);
+
+    ID3D11ShaderResourceView *srv = srv_rgba_.Get();
+    ctx_->PSSetShaderResources(0, 1, &srv);
+    ID3D11SamplerState *ss = samp_.Get();
+    ctx_->PSSetSamplers(0, 1, &ss);
+    ctx_->Draw(6, 0);
+
+    ID3D11ShaderResourceView *nullSrv = nullptr;
+    ctx_->PSSetShaderResources(0, 1, &nullSrv);
+    return true;
+}
+
 bool SharedScenePipeline::upload_nv12_frame(const uint8_t *y, int stride_y, const uint8_t *uv, int stride_uv, int frame_w, int frame_h)
 {
     if (!d3d_ || !ctx_ || !y || !uv || frame_w <= 0 || frame_h <= 0 || stride_y <= 0 || stride_uv <= 0)
@@ -1163,6 +1218,54 @@ bool SharedScenePipeline::upload_nv12_frame(const uint8_t *y, int stride_y, cons
     uint8_t *dst_uv = dst + (size_t)m.RowPitch * (size_t)frame_h;
     for (int row = 0; row < frame_h / 2; ++row)
         std::memcpy(dst_uv + (size_t)row * m.RowPitch, uv + (size_t)row * stride_uv, (size_t)frame_w);
+
+    ctx_->Unmap(upload_nv12_.Get(), 0);
+    return true;
+}
+
+bool SharedScenePipeline::upload_p010_frame(const uint8_t *y, int stride_y, const uint8_t *uv, int stride_uv, int frame_w, int frame_h)
+{
+    if (!ctx_ || !d3d_ || !y || !uv || frame_w <= 0 || frame_h <= 0)
+        return false;
+
+    if (!upload_nv12_)
+    {
+        D3D11_TEXTURE2D_DESC td{};
+        td.Width = (UINT)frame_w;
+        td.Height = (UINT)frame_h;
+        td.MipLevels = 1;
+        td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_P010;
+        td.SampleDesc = {1, 0};
+        td.Usage = D3D11_USAGE_DYNAMIC;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        td.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &upload_nv12_)))
+            return false;
+    }
+    else
+    {
+        D3D11_TEXTURE2D_DESC td{};
+        upload_nv12_->GetDesc(&td);
+        if ((int)td.Width != frame_w || (int)td.Height != frame_h || td.Format != DXGI_FORMAT_P010)
+        {
+            upload_nv12_.Reset();
+            return upload_p010_frame(y, stride_y, uv, stride_uv, frame_w, frame_h);
+        }
+    }
+
+    D3D11_MAPPED_SUBRESOURCE m{};
+    HRESULT hr = ctx_->Map(upload_nv12_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m);
+    if (FAILED(hr))
+        return false;
+
+    uint8_t *dstY = reinterpret_cast<uint8_t *>(m.pData);
+    for (int r = 0; r < frame_h; ++r)
+        std::memcpy(dstY + (size_t)r * m.RowPitch, y + (size_t)r * stride_y, (size_t)frame_w * 2u);
+
+    uint8_t *dstUV = dstY + (size_t)m.RowPitch * (size_t)frame_h;
+    for (int r = 0; r < frame_h / 2; ++r)
+        std::memcpy(dstUV + (size_t)r * m.RowPitch, uv + (size_t)r * stride_uv, (size_t)frame_w * 2u);
 
     ctx_->Unmap(upload_nv12_.Get(), 0);
     return true;
@@ -1302,6 +1405,16 @@ bool SharedScenePipeline::render_uploaded_yuv_to_fp16(gcap_pixfmt_t fmt, int fra
         if (!srv0 || !srv1 || !ps)
             return false;
     }
+    else if (fmt == GCAP_FMT_P010)
+    {
+        if (!upload_nv12_)
+            return false;
+        srv0 = createSRV_P010(d3d_, upload_nv12_.Get(), false);
+        srv1 = createSRV_P010(d3d_, upload_nv12_.Get(), true);
+        ps = ps_p010_.Get();
+        if (!srv0 || !srv1 || !ps)
+            return false;
+    }
     else if (fmt == GCAP_FMT_YUY2)
     {
         if (!upload_yuy2_packed_)
@@ -1395,7 +1508,7 @@ bool SharedScenePipeline::render_uploaded_yuv_to_fp16(gcap_pixfmt_t fmt, int fra
     const float clear[4] = {0, 0, 0, 1};
     ctx_->ClearRenderTargetView(rtv_fp16_.Get(), clear);
 
-    if (fmt == GCAP_FMT_NV12)
+    if (fmt == GCAP_FMT_NV12 || fmt == GCAP_FMT_P010)
     {
         ID3D11ShaderResourceView *srvs[2] = {srv0.Get(), srv1.Get()};
         ctx_->PSSetShaderResources(0, 2, srvs);
@@ -1412,7 +1525,7 @@ bool SharedScenePipeline::render_uploaded_yuv_to_fp16(gcap_pixfmt_t fmt, int fra
     ctx_->PSSetSamplers(0, 1, &ss);
     ctx_->Draw(6, 0);
 
-    if (fmt == GCAP_FMT_NV12)
+    if (fmt == GCAP_FMT_NV12 || fmt == GCAP_FMT_P010)
     {
         ID3D11ShaderResourceView *nulls[2] = {nullptr, nullptr};
         ctx_->PSSetShaderResources(0, 2, nulls);
