@@ -29,6 +29,8 @@
 #include <string>
 using Microsoft::WRL::ComPtr;
 
+int winmf_enum_supported_pixel_formats_by_index(int devIndex, gcap_pixfmt_t *outFormats, int maxFormats);
+
 class WinMFProvider : public ICaptureProvider
 {
 public:

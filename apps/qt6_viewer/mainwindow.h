@@ -152,6 +152,7 @@ private:
     void setupDebugDock();
     void setupProcAmpAction();
     void setupBackendControls();
+    void refreshPixelFormatOptions();
     void initializeDeviceList();
     void initializeGpuList();
     void setupConnections();

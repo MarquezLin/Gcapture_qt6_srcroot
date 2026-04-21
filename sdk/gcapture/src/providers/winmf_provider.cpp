@@ -81,16 +81,22 @@ static const char *dxgi_format_name_local(DXGI_FORMAT fmt)
 {
     switch (fmt)
     {
-    case DXGI_FORMAT_UNKNOWN: return "UNKNOWN";
-    case DXGI_FORMAT_B8G8R8A8_UNORM: return "B8G8R8A8_UNORM";
-    case DXGI_FORMAT_R10G10B10A2_UNORM: return "R10G10B10A2_UNORM";
-    case DXGI_FORMAT_R16G16B16A16_FLOAT: return "R16G16B16A16_FLOAT";
-    case DXGI_FORMAT_NV12: return "NV12";
-    case DXGI_FORMAT_P010: return "P010";
-    default: return "OTHER";
+    case DXGI_FORMAT_UNKNOWN:
+        return "UNKNOWN";
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+        return "B8G8R8A8_UNORM";
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+        return "R10G10B10A2_UNORM";
+    case DXGI_FORMAT_R16G16B16A16_FLOAT:
+        return "R16G16B16A16_FLOAT";
+    case DXGI_FORMAT_NV12:
+        return "NV12";
+    case DXGI_FORMAT_P010:
+        return "P010";
+    default:
+        return "OTHER";
     }
 }
-
 
 struct P010EvidenceStats
 {
@@ -199,7 +205,8 @@ static std::vector<std::string> p010_evidence_log_lines(const char *tag, const P
             << " values=[";
         for (int i = 0; i < st.linescan_count; ++i)
         {
-            if (i) oss << ",";
+            if (i)
+                oss << ",";
             oss << st.linescan_values[(size_t)i];
         }
         oss << "]";
@@ -290,12 +297,12 @@ static gcap_pixfmt_t mfsub_to_gcap(const GUID &sub)
 
 static GUID mf_subtype_from_profile_fmt(gcap_pixfmt_t fmt)
 {
-    return (fmt == GCAP_FMT_P010) ? MFVideoFormat_P010
-         : (fmt == GCAP_FMT_Y210) ? MFVideoFormat_Y210
-         : (fmt == GCAP_FMT_NV12) ? MFVideoFormat_NV12
-         : (fmt == GCAP_FMT_YUY2) ? MFVideoFormat_YUY2
-         : (fmt == GCAP_FMT_ARGB) ? MFVideoFormat_ARGB32
-                                  : GUID_NULL;
+    return (fmt == GCAP_FMT_P010)   ? MFVideoFormat_P010
+           : (fmt == GCAP_FMT_Y210) ? MFVideoFormat_Y210
+           : (fmt == GCAP_FMT_NV12) ? MFVideoFormat_NV12
+           : (fmt == GCAP_FMT_YUY2) ? MFVideoFormat_YUY2
+           : (fmt == GCAP_FMT_ARGB) ? MFVideoFormat_ARGB32
+                                    : GUID_NULL;
 }
 
 static const char *mf_explicit_name(const GUID &g)
@@ -305,12 +312,12 @@ static const char *mf_explicit_name(const GUID &g)
 
 static int mf_quality_rank(const GUID &s)
 {
-    return (s == MFVideoFormat_P010) ? 5
-         : (s == MFVideoFormat_Y210) ? 4
-         : (s == MFVideoFormat_YUY2) ? 3
-         : (s == MFVideoFormat_NV12) ? 2
-         : (s == MFVideoFormat_ARGB32) ? 1
-                                       : 0;
+    return (s == MFVideoFormat_Y210)     ? 5
+           : (s == MFVideoFormat_YUY2)   ? 4
+           : (s == MFVideoFormat_NV12)   ? 3
+           : (s == MFVideoFormat_ARGB32) ? 2
+           : (s == MFVideoFormat_P010)   ? 1
+                                         : 0;
 }
 
 static int pixfmt_bitdepth(gcap_pixfmt_t f)
@@ -454,7 +461,6 @@ bool WinMFProvider::getDeviceProps(gcap_device_props_t &out)
     return true;
 }
 
-
 static void fill_vendor_rgb_inferred_input_signal_mf(gcap_signal_status_t &out, bool hasCustomPage, const GUID &activeSubtype)
 {
     if (!hasCustomPage)
@@ -540,12 +546,13 @@ void WinMFProvider::probe_loop()
     while (probe_running_)
     {
         pending_media_change_ = false;
-    media_change_hits_ = 0;
-    last_media_change_ms_ = 0;
+        media_change_hits_ = 0;
+        last_media_change_ms_ = 0;
 
-    refresh_signal_probe(true);
+        refresh_signal_probe(true);
         std::unique_lock<std::mutex> lk(signal_probe_mtx_);
-        probe_cv_.wait_for(lk, std::chrono::milliseconds(1000), [this] { return !probe_running_.load(); });
+        probe_cv_.wait_for(lk, std::chrono::milliseconds(1000), [this]
+                           { return !probe_running_.load(); });
     }
 }
 
@@ -712,7 +719,6 @@ static int mf_default_stride_bytes(IMFMediaType *mt)
     int s = (int)(int32_t)raw;
     return s < 0 ? -s : s;
 }
-
 
 bool WinMFProvider::sync_current_media_type(bool *changed)
 {
@@ -1011,6 +1017,91 @@ bool WinMFProvider::enumerate(std::vector<gcap_device_info_t> &list)
     return true;
 }
 
+
+int winmf_enum_supported_pixel_formats_by_index(int devIndex, gcap_pixfmt_t *outFormats, int maxFormats)
+{
+    ensure_mf();
+
+    ComPtr<IMFAttributes> attr;
+    if (FAILED(MFCreateAttributes(&attr, 1)))
+        return 0;
+    attr->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+
+    IMFActivate **pp = nullptr;
+    UINT32 count = 0;
+    HRESULT hr = MFEnumDeviceSources(attr.Get(), &pp, &count);
+    if (FAILED(hr) || devIndex < 0 || static_cast<UINT32>(devIndex) >= count)
+    {
+        if (pp)
+        {
+            for (UINT32 i = 0; i < count; ++i)
+                pp[i]->Release();
+            CoTaskMemFree(pp);
+        }
+        return 0;
+    }
+
+    ComPtr<IMFMediaSource> source;
+    hr = pp[devIndex]->ActivateObject(__uuidof(IMFMediaSource), reinterpret_cast<void **>(source.GetAddressOf()));
+    for (UINT32 i = 0; i < count; ++i)
+        pp[i]->Release();
+    CoTaskMemFree(pp);
+    if (FAILED(hr) || !source)
+        return 0;
+
+    ComPtr<IMFSourceReader> reader;
+    hr = MFCreateSourceReaderFromMediaSource(source.Get(), nullptr, reader.GetAddressOf());
+    if (FAILED(hr) || !reader)
+    {
+        source->Shutdown();
+        return 0;
+    }
+
+    std::vector<gcap_pixfmt_t> uniq;
+    auto push_unique = [&](gcap_pixfmt_t fmt)
+    {
+        if (fmt != GCAP_FMT_NV12 && fmt != GCAP_FMT_YUY2 && fmt != GCAP_FMT_Y210 && fmt != GCAP_FMT_P010 && fmt != GCAP_FMT_ARGB)
+            return;
+        for (auto e : uniq)
+            if (e == fmt)
+                return;
+        uniq.push_back(fmt);
+    };
+
+    for (DWORD i = 0;; ++i)
+    {
+        ComPtr<IMFMediaType> t;
+        hr = reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, i, &t);
+        if (hr == MF_E_NO_MORE_TYPES)
+            break;
+        if (FAILED(hr) || !t)
+            continue;
+        GUID major = GUID_NULL, sub = GUID_NULL;
+        if (FAILED(t->GetGUID(MF_MT_MAJOR_TYPE, &major)) || major != MFMediaType_Video)
+            continue;
+        if (FAILED(t->GetGUID(MF_MT_SUBTYPE, &sub)))
+            continue;
+
+        if (sub == MFVideoFormat_NV12 || sub == MFVideoFormat_YUY2 || sub == MFVideoFormat_Y210 || sub == MFVideoFormat_P010 ||
+            sub == MFVideoFormat_ARGB32 || sub == MFVideoFormat_RGB32 || sub == MFVideoFormat_RGB24)
+        {
+            push_unique((sub == MFVideoFormat_ARGB32 || sub == MFVideoFormat_RGB32 || sub == MFVideoFormat_RGB24) ? GCAP_FMT_ARGB : mfsub_to_gcap(sub));
+        }
+    }
+
+    reader.Reset();
+    if (source)
+        source->Shutdown();
+    source.Reset();
+
+    if (!outFormats || maxFormats <= 0)
+        return static_cast<int>(uniq.size());
+    const int n = (std::min)(maxFormats, static_cast<int>(uniq.size()));
+    for (int i = 0; i < n; ++i)
+        outFormats[i] = uniq[static_cast<size_t>(i)];
+    return n;
+}
+
 bool WinMFProvider::create_reader_cpu_only(int devIndex)
 {
     // enumerate & activate
@@ -1087,8 +1178,7 @@ bool WinMFProvider::open(int index)
     }
 
     refresh_signal_probe(true);
-    const bool profileAuto = (profile_.mode == GCAP_PROFILE_DEVICE_DEFAULT) ||
-                             (profile_.width <= 0 && profile_.height <= 0 && profile_.fps_num <= 0 && profile_.fps_den <= 0 && profile_.format == GCAP_FMT_NV12);
+    const bool profileAuto = (profile_.width <= 0 && profile_.height <= 0 && profile_.fps_num <= 0 && profile_.fps_den <= 0 && profile_.format == GCAP_FMT_NV12);
     const GUID preferredSub = profileAuto ? GUID_NULL : mf_subtype_from_profile_fmt(profile_.format);
 
     if (prefer_gpu_)
@@ -1177,32 +1267,23 @@ bool WinMFProvider::setProfile(const gcap_profile_t &p)
 {
     profile_ = p;
 
-    // Device default / auto negotiation: keep the profile cached, but do not force a media type.
+    // OBS-style: Device Default 不強制設定解析度
     if (p.mode == GCAP_PROFILE_DEVICE_DEFAULT)
         return true;
 
     if (!reader_)
         return true;
 
-    // Format-only preference (width/height/fps all unset) is handled during open()/pick_best_native().
-    // Do not re-apply a synthetic custom IMFMediaType here, or MF GPU path can reject it post-open.
-    if (p.width <= 0 && p.height <= 0 && p.fps_num <= 0 && p.fps_den <= 0)
-    {
-        emit_error(GCAP_OK, "[WinMF] format-only profile cached; skip post-open SetCurrentMediaType");
-        return true;
-    }
-
     ComPtr<IMFMediaType> mt;
     if (FAILED(MFCreateMediaType(&mt)))
         return false;
 
     mt->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-    const GUID reqSub = mf_subtype_from_profile_fmt(p.format);
-    mt->SetGUID(MF_MT_SUBTYPE, reqSub == GUID_NULL ? MFVideoFormat_NV12 : reqSub);
-    MFSetAttributeSize(mt.Get(), MF_MT_FRAME_SIZE, p.width > 0 ? (UINT32)p.width : (UINT32)cur_w_, p.height > 0 ? (UINT32)p.height : (UINT32)cur_h_);
+    mt->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+    MFSetAttributeSize(mt.Get(), MF_MT_FRAME_SIZE, p.width, p.height);
     MFSetAttributeRatio(mt.Get(), MF_MT_FRAME_RATE,
-                        p.fps_num > 0 ? (UINT32)p.fps_num : (UINT32)(cur_fps_num_ > 0 ? cur_fps_num_ : 60),
-                        p.fps_den > 0 ? (UINT32)p.fps_den : (UINT32)(cur_fps_den_ > 0 ? cur_fps_den_ : 1));
+                        p.fps_num ? p.fps_num : 60,
+                        p.fps_den ? p.fps_den : 1);
     MFSetAttributeRatio(mt.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
 
     HRESULT hr = reader_->SetCurrentMediaType(
@@ -2911,7 +2992,7 @@ void WinMFProvider::loop()
 
             const int assumeStride =
                 (locked2d && srcPitchLong > 0) ? (int)srcPitchLong : (cur_stride_ > 0) ? cur_stride_
-                                                                                         : mf_row_bytes(cur_subtype_, cur_w_);
+                                                                                       : mf_row_bytes(cur_subtype_, cur_w_);
 
             int w = cur_w_;
             int h = cur_h_;
@@ -3101,7 +3182,6 @@ void WinMFProvider::loop()
 
                 yuvTex = upload_y210_packed_.Get();
             }
-
         }
 
         if (!yuvTex)
@@ -3156,17 +3236,17 @@ void WinMFProvider::loop()
         auto subtypeNameW = [](const GUID &subtype) -> const wchar_t *
         {
             return (subtype == MFVideoFormat_P010)     ? L"P010"
-                 : (subtype == MFVideoFormat_NV12)     ? L"NV12"
-                 : (subtype == MFVideoFormat_YUY2)     ? L"YUY2"
-                 : (subtype == MFVideoFormat_Y210)     ? L"Y210"
-                 : (subtype == MFVideoFormat_ARGB32)   ? L"ARGB32"
+                   : (subtype == MFVideoFormat_NV12)   ? L"NV12"
+                   : (subtype == MFVideoFormat_YUY2)   ? L"YUY2"
+                   : (subtype == MFVideoFormat_Y210)   ? L"Y210"
+                   : (subtype == MFVideoFormat_ARGB32) ? L"ARGB32"
                                                        : L"?";
         };
 
         auto subtypeBitDepthW = [](const GUID &subtype) -> const wchar_t *
         {
             return (subtype == MFVideoFormat_P010 || subtype == MFVideoFormat_Y210) ? L"10-bit"
-                                                                                     : L"8-bit";
+                                                                                    : L"8-bit";
         };
 
         const wchar_t *fmtName = subtypeNameW(osdSubtype);

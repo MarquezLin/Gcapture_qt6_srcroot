@@ -9,6 +9,7 @@
 #include "../audio/audio_manager.h"
 #include "gcap_audio.h"
 #include "../providers/dshow_signal_probe.h"
+#include "../providers/winmf_provider.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -144,6 +145,47 @@ extern "C"
         (void)device_index;
         (void)out_caps;
         (void)max_caps;
+        return 0;
+#endif
+    }
+
+    int gcap_enum_supported_pixel_formats(int backend, int device_index, gcap_pixfmt_t *out_formats, int max_formats)
+    {
+#ifdef _WIN32
+        if (backend == GCAP_BACKEND_DSHOW)
+        {
+            const int capCount = dshow_enum_video_caps_by_index(device_index, nullptr, 0);
+            if (capCount <= 0)
+                return 0;
+            std::vector<gcap_video_cap_t> caps(static_cast<size_t>(capCount));
+            const int written = dshow_enum_video_caps_by_index(device_index, caps.data(), static_cast<int>(caps.size()));
+            std::vector<gcap_pixfmt_t> uniq;
+            auto push_unique = [&](gcap_pixfmt_t fmt)
+            {
+                if (fmt != GCAP_FMT_NV12 && fmt != GCAP_FMT_YUY2 && fmt != GCAP_FMT_Y210 && fmt != GCAP_FMT_P010 && fmt != GCAP_FMT_ARGB)
+                    return;
+                for (auto e : uniq)
+                    if (e == fmt)
+                        return;
+                uniq.push_back(fmt);
+            };
+            for (int i = 0; i < written; ++i)
+                push_unique(caps[static_cast<size_t>(i)].pixfmt);
+            if (!out_formats || max_formats <= 0)
+                return static_cast<int>(uniq.size());
+            const int n = (std::min)(max_formats, static_cast<int>(uniq.size()));
+            for (int i = 0; i < n; ++i)
+                out_formats[i] = uniq[static_cast<size_t>(i)];
+            return n;
+        }
+        if (backend == GCAP_BACKEND_WINMF_CPU || backend == GCAP_BACKEND_WINMF_GPU || backend == GCAP_BACKEND_AUTO)
+            return winmf_enum_supported_pixel_formats_by_index(device_index, out_formats, max_formats);
+        return 0;
+#else
+        (void)backend;
+        (void)device_index;
+        (void)out_formats;
+        (void)max_formats;
         return 0;
 #endif
     }

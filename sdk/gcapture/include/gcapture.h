@@ -271,6 +271,10 @@ extern "C"
     // Enumerate DirectShow video format capabilities for a device index.
     // Returns actual written count. Pass nullptr or max_caps<=0 to query supported count only.
     GCAP_API int gcap_enum_video_caps(int device_index, gcap_video_cap_t *out_caps, int max_caps);
+    // Enumerate unique pixel formats supported by a device for the requested backend.
+    // backend: GCAP_BACKEND_WINMF_CPU / GCAP_BACKEND_WINMF_GPU / GCAP_BACKEND_DSHOW
+    // Returns actual written count. Pass nullptr or max_formats<=0 to query supported count only.
+    GCAP_API int gcap_enum_supported_pixel_formats(int backend, int device_index, gcap_pixfmt_t *out_formats, int max_formats);
     // Enumerate available DirectShow property pages (filter + capture pin) for a device index.
     // Returns actual written count. Pass nullptr or max_pages<=0 to query supported count only.
     GCAP_API int gcap_enum_property_pages(int device_index, gcap_property_page_t *out_pages, int max_pages);

@@ -18,6 +18,8 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <vector>
+#include <set>
+#include <QSignalBlocker>
 #include "edid_reader.h"
 #include "tiffanalysisdialog.h"
 #include "tiff_analyzer.h"
@@ -95,6 +97,49 @@ namespace
         if (cap.bit_depth > 0)
             text += QStringLiteral(" (%1-bit)").arg(cap.bit_depth);
         return text;
+    }
+
+    static QString pixelFormatComboLabel(gcap_pixfmt_t fmt)
+    {
+        switch (fmt)
+        {
+        case GCAP_FMT_NV12: return QStringLiteral("Format: NV12");
+        case GCAP_FMT_YUY2: return QStringLiteral("Format: YUY2");
+        case GCAP_FMT_Y210: return QStringLiteral("Format: Y210");
+        case GCAP_FMT_P010: return QStringLiteral("Format: P010");
+        case GCAP_FMT_ARGB: return QStringLiteral("Format: ARGB32");
+        default: return QString();
+        }
+    }
+
+    static std::vector<gcap_pixfmt_t> enumerateSupportedPixelFormats(int backend, int deviceIndex)
+    {
+        std::vector<gcap_pixfmt_t> result;
+        const int fmtCount = gcap_enum_supported_pixel_formats(backend, deviceIndex, nullptr, 0);
+        if (fmtCount <= 0)
+            return result;
+
+        std::vector<gcap_pixfmt_t> formats(static_cast<size_t>(fmtCount));
+        const int written = gcap_enum_supported_pixel_formats(backend, deviceIndex, formats.data(), static_cast<int>(formats.size()));
+        std::set<int> seen;
+        for (int i = 0; i < written; ++i)
+        {
+            const auto fmt = formats[static_cast<size_t>(i)];
+            switch (fmt)
+            {
+            case GCAP_FMT_NV12:
+            case GCAP_FMT_YUY2:
+            case GCAP_FMT_Y210:
+            case GCAP_FMT_P010:
+            case GCAP_FMT_ARGB:
+                if (seen.insert(static_cast<int>(fmt)).second)
+                    result.push_back(fmt);
+                break;
+            default:
+                break;
+            }
+        }
+        return result;
     }
 
     static QString formatPropertyPageDisplay(const gcap_property_page_t &page)
@@ -595,17 +640,7 @@ void MainWindow::setupProcAmpAction()
 
 void MainWindow::setupBackendControls()
 {
-    if (ui->comboPixelFormat)
-    {
-        ui->comboPixelFormat->clear();
-        ui->comboPixelFormat->addItem(QStringLiteral("Format: Auto"), -1);
-        ui->comboPixelFormat->addItem(QStringLiteral("Format: NV12"), static_cast<int>(GCAP_FMT_NV12));
-        ui->comboPixelFormat->addItem(QStringLiteral("Format: YUY2"), static_cast<int>(GCAP_FMT_YUY2));
-        ui->comboPixelFormat->addItem(QStringLiteral("Format: Y210"), static_cast<int>(GCAP_FMT_Y210));
-        ui->comboPixelFormat->addItem(QStringLiteral("Format: P010"), static_cast<int>(GCAP_FMT_P010));
-        ui->comboPixelFormat->addItem(QStringLiteral("Format: ARGB32"), static_cast<int>(GCAP_FMT_ARGB));
-        ui->comboPixelFormat->setCurrentIndex(0);
-    }
+    refreshPixelFormatOptions();
 
     if (!ui->comboBackend)
         return;
@@ -632,6 +667,33 @@ void MainWindow::setupBackendControls()
 #endif
 }
 
+
+void MainWindow::refreshPixelFormatOptions()
+{
+    if (!ui->comboPixelFormat)
+        return;
+
+    const QSignalBlocker blocker(ui->comboPixelFormat);
+    const int previousData = ui->comboPixelFormat->currentData().toInt();
+
+    ui->comboPixelFormat->clear();
+    ui->comboPixelFormat->addItem(QStringLiteral("Format: Auto"), -1);
+
+    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
+    const auto supported = enumerateSupportedPixelFormats(backend, deviceIndex_);
+    for (const auto fmt : supported)
+    {
+        const QString label = pixelFormatComboLabel(fmt);
+        if (!label.isEmpty())
+            ui->comboPixelFormat->addItem(label, static_cast<int>(fmt));
+    }
+
+    int restoreIndex = ui->comboPixelFormat->findData(previousData);
+    if (restoreIndex < 0)
+        restoreIndex = 0;
+    ui->comboPixelFormat->setCurrentIndex(restoreIndex);
+}
+
 void MainWindow::initializeDeviceList()
 {
     if (!ui->comboDevice)
@@ -650,6 +712,8 @@ void MainWindow::initializeDeviceList()
         ui->comboDevice->setCurrentIndex(0);
         deviceIndex_ = ui->comboDevice->itemData(0).toInt();
     }
+
+    refreshPixelFormatOptions();
 }
 
 void MainWindow::initializeGpuList()
@@ -710,6 +774,7 @@ void MainWindow::setupConnections()
                 {
                     deviceIndex_ = ui->comboDevice->itemData(idx).toInt();
                     invalidateDeviceCapabilityCache();
+                    refreshPixelFormatOptions();
                     refreshCaptureInfoFromSdkAndRuntime(false);
                     if (infoDlg_ && infoDlg_->isVisible())
                     {

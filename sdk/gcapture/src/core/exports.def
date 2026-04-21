@@ -24,6 +24,7 @@ EXPORTS
     gcap_enum_audio_devices
     gcap_get_active_backend
     gcap_enum_video_caps
+    gcap_enum_supported_pixel_formats
     gcap_enum_property_pages
     gcap_open_vendor_property_page
     gcap_open_named_property_page
