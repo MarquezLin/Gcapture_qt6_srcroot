@@ -100,45 +100,76 @@ namespace
         CoTaskMemFree(pmt);
     }
 
+    static std::string guidToString(const GUID &g)
+    {
+        wchar_t wbuf[64] = {};
+        StringFromGUID2(g, wbuf, static_cast<int>(sizeof(wbuf) / sizeof(wbuf[0])));
+        char buf[128] = {};
+        WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, buf, static_cast<int>(sizeof(buf)), nullptr, nullptr);
+        return std::string(buf);
+    }
+
     static const char *subtypeName(const GUID &g)
     {
-        if (g == MEDIASUBTYPE_NV12)
+        if (g == GUID{})
+            return "(none)";
+        if (g == MEDIASUBTYPE_NV12 || g == MFVideoFormat_NV12)
             return "NV12";
-        if (g == MEDIASUBTYPE_YUY2)
+        if (g == MEDIASUBTYPE_YUY2 || g == MFVideoFormat_YUY2)
             return "YUY2";
-        if (g == MEDIASUBTYPE_Y210)
+        if (g == MEDIASUBTYPE_Y210 || g == MFVideoFormat_Y210)
             return "Y210";
+        if (g == MFVideoFormat_P010)
+            return "P010";
         if (g == MEDIASUBTYPE_MJPG)
             return "MJPG";
         if (g == MEDIASUBTYPE_RGB24)
             return "RGB24";
         if (g == MEDIASUBTYPE_RGB32)
             return "RGB32";
-        if (g == MEDIASUBTYPE_ARGB32)
+        if (g == MEDIASUBTYPE_ARGB32 || g == MFVideoFormat_ARGB32)
             return "ARGB32";
         return "UNKNOWN";
     }
 
-    static GUID subtypeFromProfileFmt(gcap_pixfmt_t fmt)
+    static const char *profileFormatName(int fmt)
     {
-        return (fmt == GCAP_FMT_Y210)   ? MEDIASUBTYPE_Y210
+        switch (fmt)
+        {
+        case GCAP_FMT_NV12: return "NV12";
+        case GCAP_FMT_YUY2: return "YUY2";
+        case GCAP_FMT_ARGB: return "ARGB32";
+        case GCAP_FMT_P010: return "P010";
+        case GCAP_FMT_Y210: return "Y210";
+        case GCAP_FMT_V210: return "V210";
+        case GCAP_FMT_R210: return "R210";
+        default: return "AUTO/UNKNOWN";
+        }
+    }
+
+    static GUID subtypeFromProfileFmt(int fmt)
+    {
+        return (fmt == GCAP_FMT_P010)   ? MFVideoFormat_P010
+               : (fmt == GCAP_FMT_Y210) ? MEDIASUBTYPE_Y210
                : (fmt == GCAP_FMT_NV12) ? MEDIASUBTYPE_NV12
                : (fmt == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
-               : (fmt == GCAP_FMT_ARGB) ? MEDIASUBTYPE_RGB24
+               : (fmt == GCAP_FMT_ARGB) ? MEDIASUBTYPE_ARGB32
                                         : GUID{};
     }
 
     static int dshowQualityRank(const GUID &g)
     {
-        if (g == MEDIASUBTYPE_Y210)
+        if (g == MFVideoFormat_P010)
+            return 6;
+        if (g == MEDIASUBTYPE_Y210 || g == MFVideoFormat_Y210)
             return 5;
-        if (g == MEDIASUBTYPE_YUY2)
+        if (g == MEDIASUBTYPE_YUY2 || g == MFVideoFormat_YUY2)
             return 4;
-        if (g == MEDIASUBTYPE_NV12)
+        if (g == MEDIASUBTYPE_NV12 || g == MFVideoFormat_NV12)
             return 3;
-        if (g == MEDIASUBTYPE_RGB24)
+        if (g == MEDIASUBTYPE_ARGB32 || g == MFVideoFormat_ARGB32 || g == MEDIASUBTYPE_RGB32)
             return 2;
-        if (g == MEDIASUBTYPE_RGB32 || g == MEDIASUBTYPE_ARGB32)
+        if (g == MEDIASUBTYPE_RGB24)
             return 1;
         return 0;
     }
@@ -655,8 +686,9 @@ void DShowProvider::logCaptureCapabilities(IAMStreamConfig *streamConfig)
         mediaTypeToVideoInfo(pmt, w, h, fpsNum, fpsDen);
         double fps = (fpsNum > 0 && fpsDen > 0) ? ((double)fpsNum / (double)fpsDen) : 0.0;
 
-        char buf[256] = {};
-        sprintf_s(buf, "[DShow] cap[%d] -> %s %dx%d %.2ffps", i, subtypeName(pmt->subtype), w, h, fps);
+        const std::string guid = guidToString(pmt->subtype);
+        char buf[384] = {};
+        sprintf_s(buf, "[DShow] cap[%d] -> %s guid=%s %dx%d %.2ffps", i, subtypeName(pmt->subtype), guid.c_str(), w, h, fps);
         OutputDebugStringA(buf);
 
         freeMediaType(pmt);
@@ -675,9 +707,17 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
     int wantFpsNum = signalValid_ && signalFpsNum_ > 0 ? signalFpsNum_ : profile_.fps_num;
     int wantFpsDen = signalValid_ && signalFpsDen_ > 0 ? signalFpsDen_ : (profile_.fps_den > 0 ? profile_.fps_den : 1);
 
-    const bool profileAuto = (profile_.width <= 0 && profile_.height <= 0 && profile_.fps_num <= 0 && profile_.fps_den <= 0 && profile_.format == GCAP_FMT_NV12);
-    const GUID explicitSubtype = profileAuto ? GUID{} : subtypeFromProfileFmt(profile_.format);
+    const bool profileAuto = (profile_.mode == GCAP_PROFILE_DEVICE_DEFAULT) ||
+                             (profile_.width <= 0 && profile_.height <= 0 && profile_.fps_num <= 0 && profile_.fps_den <= 0 && static_cast<int>(profile_.format) < 0);
+    const GUID explicitSubtype = profileAuto ? GUID{} : subtypeFromProfileFmt(static_cast<int>(profile_.format));
     GUID preferredSubtype = GUID{};
+
+    char reqMsg[320] = {};
+    const std::string reqGuid = guidToString(explicitSubtype);
+    sprintf_s(reqMsg, "[DShow] requested profile format=%d(%s) auto=%d explicit=%s guid=%s",
+              static_cast<int>(profile_.format), profileFormatName(static_cast<int>(profile_.format)), profileAuto ? 1 : 0,
+              subtypeName(explicitSubtype), reqGuid.c_str());
+    OutputDebugStringA(reqMsg);
 
     int capCount = 0, capSize = 0;
     if (FAILED(streamConfig->GetNumberOfCapabilities(&capCount, &capSize)) || capCount <= 0 || capSize <= 0)
@@ -685,9 +725,12 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 
     std::vector<unsigned char> caps(static_cast<size_t>(capSize));
     bool explicitSubtypeAvailable = false;
+    bool p010Available = false;
     bool y210Available = false;
-    bool nv12Available = false;
     bool yuy2Available = false;
+    bool nv12Available = false;
+    bool argb32Available = false;
+    bool rgb32Available = false;
     bool rgb24Available = false;
     for (int i = 0; i < capCount; ++i)
     {
@@ -696,12 +739,18 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
             continue;
         if (explicitSubtype != GUID{} && scan->subtype == explicitSubtype)
             explicitSubtypeAvailable = true;
-        if (scan->subtype == MEDIASUBTYPE_Y210)
+        if (scan->subtype == MFVideoFormat_P010)
+            p010Available = true;
+        else if (scan->subtype == MEDIASUBTYPE_Y210 || scan->subtype == MFVideoFormat_Y210)
             y210Available = true;
-        else if (scan->subtype == MEDIASUBTYPE_NV12)
-            nv12Available = true;
-        else if (scan->subtype == MEDIASUBTYPE_YUY2)
+        else if (scan->subtype == MEDIASUBTYPE_YUY2 || scan->subtype == MFVideoFormat_YUY2)
             yuy2Available = true;
+        else if (scan->subtype == MEDIASUBTYPE_NV12 || scan->subtype == MFVideoFormat_NV12)
+            nv12Available = true;
+        else if (scan->subtype == MEDIASUBTYPE_ARGB32 || scan->subtype == MFVideoFormat_ARGB32)
+            argb32Available = true;
+        else if (scan->subtype == MEDIASUBTYPE_RGB32)
+            rgb32Available = true;
         else if (scan->subtype == MEDIASUBTYPE_RGB24)
             rgb24Available = true;
         freeMediaType(scan);
@@ -712,6 +761,80 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
         preferredSubtype = explicitSubtype;
         dshow_log("[DShow] capture format policy: explicit profile format is available; use it as first preference");
     }
+    else if (explicitSubtype == MEDIASUBTYPE_ARGB32 || explicitSubtype == MFVideoFormat_ARGB32)
+    {
+        if (argb32Available)
+            preferredSubtype = MEDIASUBTYPE_ARGB32;
+        else if (rgb32Available)
+            preferredSubtype = MEDIASUBTYPE_RGB32;
+        else if (rgb24Available)
+            preferredSubtype = MEDIASUBTYPE_RGB24;
+        else if (yuy2Available)
+            preferredSubtype = MEDIASUBTYPE_YUY2;
+        else if (nv12Available)
+            preferredSubtype = MEDIASUBTYPE_NV12;
+        else if (y210Available)
+            preferredSubtype = MEDIASUBTYPE_Y210;
+        dshow_log("[DShow] capture format policy: explicit ARGB32 unavailable; fallback prefers RGB32/RGB24 before YUY2/NV12");
+    }
+    else if (explicitSubtype == MEDIASUBTYPE_NV12 || explicitSubtype == MFVideoFormat_NV12)
+    {
+        if (nv12Available)
+            preferredSubtype = MEDIASUBTYPE_NV12;
+        else if (yuy2Available)
+            preferredSubtype = MEDIASUBTYPE_YUY2;
+        else if (y210Available)
+            preferredSubtype = MEDIASUBTYPE_Y210;
+        else if (rgb32Available)
+            preferredSubtype = MEDIASUBTYPE_RGB32;
+        else if (rgb24Available)
+            preferredSubtype = MEDIASUBTYPE_RGB24;
+        dshow_log("[DShow] capture format policy: explicit NV12 unavailable; fallback prefers YUY2/Y210 before RGB");
+    }
+    else if (explicitSubtype == MEDIASUBTYPE_YUY2 || explicitSubtype == MFVideoFormat_YUY2)
+    {
+        if (yuy2Available)
+            preferredSubtype = MEDIASUBTYPE_YUY2;
+        else if (y210Available)
+            preferredSubtype = MEDIASUBTYPE_Y210;
+        else if (nv12Available)
+            preferredSubtype = MEDIASUBTYPE_NV12;
+        else if (rgb32Available)
+            preferredSubtype = MEDIASUBTYPE_RGB32;
+        else if (rgb24Available)
+            preferredSubtype = MEDIASUBTYPE_RGB24;
+        dshow_log("[DShow] capture format policy: explicit YUY2 unavailable; fallback prefers Y210/NV12 before RGB");
+    }
+    else if (explicitSubtype == MEDIASUBTYPE_Y210 || explicitSubtype == MFVideoFormat_Y210)
+    {
+        if (y210Available)
+            preferredSubtype = MEDIASUBTYPE_Y210;
+        else if (yuy2Available)
+            preferredSubtype = MEDIASUBTYPE_YUY2;
+        else if (nv12Available)
+            preferredSubtype = MEDIASUBTYPE_NV12;
+        else if (rgb32Available)
+            preferredSubtype = MEDIASUBTYPE_RGB32;
+        else if (rgb24Available)
+            preferredSubtype = MEDIASUBTYPE_RGB24;
+        dshow_log("[DShow] capture format policy: explicit Y210 unavailable; fallback prefers YUY2/NV12 before RGB");
+    }
+    else if (explicitSubtype == MFVideoFormat_P010)
+    {
+        if (p010Available)
+            preferredSubtype = MFVideoFormat_P010;
+        else if (y210Available)
+            preferredSubtype = MEDIASUBTYPE_Y210;
+        else if (yuy2Available)
+            preferredSubtype = MEDIASUBTYPE_YUY2;
+        else if (nv12Available)
+            preferredSubtype = MEDIASUBTYPE_NV12;
+        else if (rgb32Available)
+            preferredSubtype = MEDIASUBTYPE_RGB32;
+        else if (rgb24Available)
+            preferredSubtype = MEDIASUBTYPE_RGB24;
+        dshow_log("[DShow] capture format policy: explicit P010 unavailable; fallback prefers Y210/YUY2/NV12 before RGB");
+    }
     else
     {
         if (y210Available)
@@ -720,10 +843,14 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
             preferredSubtype = MEDIASUBTYPE_YUY2;
         else if (nv12Available)
             preferredSubtype = MEDIASUBTYPE_NV12;
+        else if (argb32Available)
+            preferredSubtype = MEDIASUBTYPE_ARGB32;
+        else if (rgb32Available)
+            preferredSubtype = MEDIASUBTYPE_RGB32;
         else if (rgb24Available)
             preferredSubtype = MEDIASUBTYPE_RGB24;
-
-        dshow_log("[DShow] capture format policy: high-quality preferred order Y210 > YUY2 > NV12 > RGB24");
+        // Auto mode: do not silently fall into P010. Only use P010 when explicitly requested and advertised.
+        dshow_log("[DShow] capture format policy: high-quality preferred order Y210 > YUY2 > NV12 > ARGB32 > RGB32 > RGB24 (P010 explicit-only)");
     }
 
     AM_MEDIA_TYPE *best = nullptr;
@@ -785,11 +912,15 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 
     int w = 0, h = 0, fpsNum = 0, fpsDen = 0;
     mediaTypeToVideoInfo(best, w, h, fpsNum, fpsDen);
-    char buf[640] = {};
-    sprintf_s(buf, "[DShow] negotiated by HQ policy -> explicit=%s available=%d preferred=%s negotiated=%s %dx%d %.2ffps",
-              subtypeName(explicitSubtype), explicitSubtypeAvailable ? 1 : 0,
-              subtypeName(preferredSubtype),
-              subtypeName(best->subtype), w, h, (fpsNum > 0 && fpsDen > 0) ? ((double)fpsNum / (double)fpsDen) : 0.0);
+    char buf[768] = {};
+    const std::string explicitGuid = guidToString(explicitSubtype);
+    const std::string preferredGuid = guidToString(preferredSubtype);
+    const std::string negotiatedGuid = guidToString(best->subtype);
+    sprintf_s(buf, "[DShow] negotiated -> explicit=%s guid=%s available=%d preferred=%s guid=%s negotiated=%s guid=%s %dx%d %.2ffps",
+              subtypeName(explicitSubtype), explicitGuid.c_str(), explicitSubtypeAvailable ? 1 : 0,
+              subtypeName(preferredSubtype), preferredGuid.c_str(),
+              subtypeName(best->subtype), negotiatedGuid.c_str(),
+              w, h, (fpsNum > 0 && fpsDen > 0) ? ((double)fpsNum / (double)fpsDen) : 0.0);
     OutputDebugStringA(buf);
     freeMediaType(best);
     return true;
@@ -797,7 +928,7 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
 
 bool DShowProvider::isRawCandidate() const
 {
-    return (subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210 ||
+    return (subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MFVideoFormat_P010 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210 ||
             subtype_ == MEDIASUBTYPE_RGB24 || subtype_ == MEDIASUBTYPE_RGB32 || subtype_ == MEDIASUBTYPE_ARGB32);
 }
 
@@ -1657,7 +1788,7 @@ void DShowProvider::framePumpLoop()
         const bool previewOnlyActive = (previewHwnd_ != nullptr);
         const bool directY210Allowed = (rawSubtype != MEDIASUBTYPE_Y210) || canUseDirectY210Preview(rw, rh, rstride, raw.size());
         const bool canUseSharedRaw = pipeline_ && haveRaw && rawOnlyActive_ &&
-                                     (rawSubtype == MEDIASUBTYPE_NV12 || rawSubtype == MEDIASUBTYPE_YUY2 || rawSubtype == MEDIASUBTYPE_Y210) &&
+                                     (rawSubtype == MEDIASUBTYPE_NV12 || rawSubtype == MFVideoFormat_P010 || rawSubtype == MEDIASUBTYPE_YUY2 || rawSubtype == MEDIASUBTYPE_Y210) &&
                                      directY210Allowed;
         // DS preview + low-frequency ARGB callback coexist mode:
         //   - preview path still owns render/present timing when a preview window is active

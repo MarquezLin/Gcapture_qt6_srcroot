@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <mfapi.h>
 #include <chrono>
 
 namespace
@@ -31,9 +32,10 @@ namespace
 
 const char *DShowRawRenderer::subtypeName(const GUID &g)
 {
-    if (g == MEDIASUBTYPE_NV12) return "NV12";
-    if (g == MEDIASUBTYPE_YUY2) return "YUY2";
-    if (g == MEDIASUBTYPE_Y210) return "Y210";
+    if (g == MEDIASUBTYPE_NV12 || g == MFVideoFormat_NV12) return "NV12";
+    if (g == MFVideoFormat_P010) return "P010";
+    if (g == MEDIASUBTYPE_YUY2 || g == MFVideoFormat_YUY2) return "YUY2";
+    if (g == MEDIASUBTYPE_Y210 || g == MFVideoFormat_Y210) return "Y210";
     if (g == MEDIASUBTYPE_MJPG) return "MJPG";
     if (g == MEDIASUBTYPE_RGB24) return "RGB24";
     if (g == MEDIASUBTYPE_RGB32) return "RGB32";
@@ -104,13 +106,14 @@ void DShowRawRenderer::setNegotiated(const GUID &subtype, int width, int height,
 
 bool DShowRawRenderer::isSupportedSubtype() const
 {
-    return subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210 ||
+    return subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MFVideoFormat_P010 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210 ||
            subtype_ == MEDIASUBTYPE_RGB24 || subtype_ == MEDIASUBTYPE_RGB32 || subtype_ == MEDIASUBTYPE_ARGB32;
 }
 
 GUID DShowRawRenderer::negotiatedFormat() const
 {
     if (subtype_ == MEDIASUBTYPE_NV12) return MEDIASUBTYPE_NV12;
+    if (subtype_ == MFVideoFormat_P010) return MFVideoFormat_P010;
     if (subtype_ == MEDIASUBTYPE_YUY2) return MEDIASUBTYPE_YUY2;
     if (subtype_ == MEDIASUBTYPE_Y210) return MEDIASUBTYPE_Y210;
     if (subtype_ == MEDIASUBTYPE_RGB24) return MEDIASUBTYPE_RGB24;
@@ -180,6 +183,11 @@ bool DShowRawRenderer::copyLatestRaw(std::vector<uint8_t> &out, int &w, int &h, 
     else if (subtype_ == MEDIASUBTYPE_Y210)
     {
         stride = width_ * 4;
+    }
+    else if (subtype_ == MFVideoFormat_P010)
+    {
+        // P010 is 4:2:0, 16 bits per sample; one luma row is width * 2 bytes.
+        stride = width_ * 2;
     }
     else if (subtype_ == MEDIASUBTYPE_RGB24)
     {
@@ -346,9 +354,11 @@ void DShowRawRenderer::bgraToArgb(const uint8_t *src, int width, int height, int
     dstStride = width * 4;
     dst.resize(static_cast<size_t>(dstStride) * static_cast<size_t>(height));
 
+    // DShow RGB32/ARGB32 samples are commonly delivered as bottom-up DIB rows.
+    // Keep preview/callback output top-down, same as rgb24ToArgb().
     for (int y = 0; y < height; ++y)
     {
-        const uint8_t *srcRow = src + static_cast<size_t>(y) * static_cast<size_t>(srcStride);
+        const uint8_t *srcRow = src + static_cast<size_t>(height - 1 - y) * static_cast<size_t>(srcStride);
         uint8_t *dstRow = dst.data() + static_cast<size_t>(y) * static_cast<size_t>(dstStride);
         std::memcpy(dstRow, srcRow, static_cast<size_t>(dstStride));
     }

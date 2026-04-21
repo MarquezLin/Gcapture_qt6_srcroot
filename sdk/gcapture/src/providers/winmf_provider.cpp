@@ -1087,7 +1087,8 @@ bool WinMFProvider::open(int index)
     }
 
     refresh_signal_probe(true);
-    const bool profileAuto = (profile_.width <= 0 && profile_.height <= 0 && profile_.fps_num <= 0 && profile_.fps_den <= 0 && profile_.format == GCAP_FMT_NV12);
+    const bool profileAuto = (profile_.mode == GCAP_PROFILE_DEVICE_DEFAULT) ||
+                             (profile_.width <= 0 && profile_.height <= 0 && profile_.fps_num <= 0 && profile_.fps_den <= 0 && profile_.format == GCAP_FMT_NV12);
     const GUID preferredSub = profileAuto ? GUID_NULL : mf_subtype_from_profile_fmt(profile_.format);
 
     if (prefer_gpu_)
@@ -1176,23 +1177,32 @@ bool WinMFProvider::setProfile(const gcap_profile_t &p)
 {
     profile_ = p;
 
-    // OBS-style: Device Default 不強制設定解析度
+    // Device default / auto negotiation: keep the profile cached, but do not force a media type.
     if (p.mode == GCAP_PROFILE_DEVICE_DEFAULT)
         return true;
 
     if (!reader_)
         return true;
 
+    // Format-only preference (width/height/fps all unset) is handled during open()/pick_best_native().
+    // Do not re-apply a synthetic custom IMFMediaType here, or MF GPU path can reject it post-open.
+    if (p.width <= 0 && p.height <= 0 && p.fps_num <= 0 && p.fps_den <= 0)
+    {
+        emit_error(GCAP_OK, "[WinMF] format-only profile cached; skip post-open SetCurrentMediaType");
+        return true;
+    }
+
     ComPtr<IMFMediaType> mt;
     if (FAILED(MFCreateMediaType(&mt)))
         return false;
 
     mt->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-    mt->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
-    MFSetAttributeSize(mt.Get(), MF_MT_FRAME_SIZE, p.width, p.height);
+    const GUID reqSub = mf_subtype_from_profile_fmt(p.format);
+    mt->SetGUID(MF_MT_SUBTYPE, reqSub == GUID_NULL ? MFVideoFormat_NV12 : reqSub);
+    MFSetAttributeSize(mt.Get(), MF_MT_FRAME_SIZE, p.width > 0 ? (UINT32)p.width : (UINT32)cur_w_, p.height > 0 ? (UINT32)p.height : (UINT32)cur_h_);
     MFSetAttributeRatio(mt.Get(), MF_MT_FRAME_RATE,
-                        p.fps_num ? p.fps_num : 60,
-                        p.fps_den ? p.fps_den : 1);
+                        p.fps_num > 0 ? (UINT32)p.fps_num : (UINT32)(cur_fps_num_ > 0 ? cur_fps_num_ : 60),
+                        p.fps_den > 0 ? (UINT32)p.fps_den : (UINT32)(cur_fps_den_ > 0 ? cur_fps_den_ : 1));
     MFSetAttributeRatio(mt.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
 
     HRESULT hr = reader_->SetCurrentMediaType(

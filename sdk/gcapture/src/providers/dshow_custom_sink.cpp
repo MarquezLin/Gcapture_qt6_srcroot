@@ -2,6 +2,7 @@
 #include "dshow_raw_renderer.h"
 
 #include <dvdmedia.h>
+#include <mfapi.h>
 #include <cstring>
 #include <new>
 
@@ -148,9 +149,13 @@ STDMETHODIMP DShowCustomSinkPin::ReceiveConnection(IPin *pConnector, const AM_ME
     {
         int w=0,h=0,fn=0,fd=0;
         extract_video_info(*pmt,w,h,fn,fd);
-        char msg[256] = {};
-        sprintf_s(msg, "[DShowRawSink] ReceiveConnection subtype=%s %dx%d fps=%d/%d",
-                  DShowRawRenderer::subtypeName(pmt->subtype), w, h, fn, fd);
+        wchar_t wguid[64] = {};
+        StringFromGUID2(pmt->subtype, wguid, static_cast<int>(sizeof(wguid) / sizeof(wguid[0])));
+        char guid[128] = {};
+        WideCharToMultiByte(CP_UTF8, 0, wguid, -1, guid, static_cast<int>(sizeof(guid)), nullptr, nullptr);
+        char msg[384] = {};
+        sprintf_s(msg, "[DShowRawSink] ReceiveConnection subtype=%s guid=%s %dx%d fps=%d/%d",
+                  DShowRawRenderer::subtypeName(pmt->subtype), guid, w, h, fn, fd);
         dshow_sink_log(msg);
     }
     std::lock_guard<std::mutex> lock(mtx_);
@@ -225,7 +230,7 @@ STDMETHODIMP DShowCustomSinkPin::QueryAccept(const AM_MEDIA_TYPE *pmt)
 {
     if (!pmt) return E_POINTER;
     if (pmt->majortype != MEDIATYPE_Video) return S_FALSE;
-    if (pmt->subtype == MEDIASUBTYPE_NV12 || pmt->subtype == MEDIASUBTYPE_YUY2 || pmt->subtype == MEDIASUBTYPE_Y210 ||
+    if (pmt->subtype == MEDIASUBTYPE_NV12 || pmt->subtype == MFVideoFormat_P010 || pmt->subtype == MEDIASUBTYPE_YUY2 || pmt->subtype == MEDIASUBTYPE_Y210 ||
         pmt->subtype == MEDIASUBTYPE_RGB24 || pmt->subtype == MEDIASUBTYPE_RGB32 || pmt->subtype == MEDIASUBTYPE_ARGB32) return S_OK;
     return S_FALSE;
 }

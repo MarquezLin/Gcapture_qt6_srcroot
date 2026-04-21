@@ -1085,6 +1085,15 @@ void dshow_dump_signal_diagnostics_by_index(int devIndex)
         dshow_probe_log("Probe failed.");
 }
 
+
+static bool dshow_known_capture_subtype(const GUID &sub)
+{
+    return sub == MEDIASUBTYPE_NV12 || sub == MEDIASUBTYPE_YUY2 || sub == MEDIASUBTYPE_Y210 ||
+           sub == MEDIASUBTYPE_RGB24 || sub == MEDIASUBTYPE_RGB32 || sub == MEDIASUBTYPE_ARGB32 ||
+           sub == MFVideoFormat_NV12 || sub == MFVideoFormat_YUY2 || sub == MFVideoFormat_P010 ||
+           sub == MFVideoFormat_Y210 || sub == MFVideoFormat_ARGB32;
+}
+
 gcap_pixfmt_t gcap_subtype_to_pixfmt(const GUID &sub)
 {
     if (sub == MEDIASUBTYPE_NV12)
@@ -1093,6 +1102,8 @@ gcap_pixfmt_t gcap_subtype_to_pixfmt(const GUID &sub)
         return GCAP_FMT_YUY2;
     if (sub == MEDIASUBTYPE_Y210)
         return GCAP_FMT_Y210;
+    if (sub == MEDIASUBTYPE_RGB24 || sub == MEDIASUBTYPE_RGB32 || sub == MEDIASUBTYPE_ARGB32)
+        return GCAP_FMT_ARGB;
 #ifdef MFVideoFormat_NV12
     if (sub == MFVideoFormat_NV12)
         return GCAP_FMT_NV12;
@@ -1105,7 +1116,7 @@ gcap_pixfmt_t gcap_subtype_to_pixfmt(const GUID &sub)
     if (sub == MFVideoFormat_ARGB32)
         return GCAP_FMT_ARGB;
 #endif
-    return GCAP_FMT_ARGB;
+    return GCAP_FMT_YUY2;
 }
 
 int gcap_pixfmt_bitdepth(gcap_pixfmt_t f)
@@ -1150,6 +1161,12 @@ const char *gcap_subtype_name(const GUID &sub)
         return "YUY2";
     if (sub == MEDIASUBTYPE_Y210)
         return "Y210";
+    if (sub == MEDIASUBTYPE_RGB24)
+        return "RGB24";
+    if (sub == MEDIASUBTYPE_RGB32)
+        return "RGB32";
+    if (sub == MEDIASUBTYPE_ARGB32)
+        return "ARGB32";
 
     if (sub == MFVideoFormat_NV12)
         return "NV12";
@@ -1339,6 +1356,8 @@ static bool dshow_extract_video_cap(const AM_MEDIA_TYPE &mt, gcap_video_cap_t &o
 {
     DShowSignalProbeResult tmp{};
     if (!dshow_extract_media_type(mt, tmp))
+        return false;
+    if (!dshow_known_capture_subtype(tmp.subtype))
         return false;
 
     out.width = tmp.width;

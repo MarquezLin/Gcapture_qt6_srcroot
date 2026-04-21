@@ -367,7 +367,10 @@ void MainWindow::updateRuntimeStatusUi()
     const QString source = QString::fromUtf8(rt.frame_source);
 
     QString negotiatedFmt;
-    if (rt.negotiated_desc[0])
+    const QString backendLower = QString::fromUtf8(rt.backend_name).toLower();
+    if (backendLower.contains(QStringLiteral("dshow")) && rt.source_format[0])
+        negotiatedFmt = QString::fromUtf8(rt.source_format);
+    else if (rt.negotiated_desc[0])
         negotiatedFmt = QString::fromUtf8(rt.negotiated_desc);
     else if (rt.source_format[0])
         negotiatedFmt = QString::fromUtf8(rt.source_format);
@@ -592,6 +595,18 @@ void MainWindow::setupProcAmpAction()
 
 void MainWindow::setupBackendControls()
 {
+    if (ui->comboPixelFormat)
+    {
+        ui->comboPixelFormat->clear();
+        ui->comboPixelFormat->addItem(QStringLiteral("Format: Auto"), -1);
+        ui->comboPixelFormat->addItem(QStringLiteral("Format: NV12"), static_cast<int>(GCAP_FMT_NV12));
+        ui->comboPixelFormat->addItem(QStringLiteral("Format: YUY2"), static_cast<int>(GCAP_FMT_YUY2));
+        ui->comboPixelFormat->addItem(QStringLiteral("Format: Y210"), static_cast<int>(GCAP_FMT_Y210));
+        ui->comboPixelFormat->addItem(QStringLiteral("Format: P010"), static_cast<int>(GCAP_FMT_P010));
+        ui->comboPixelFormat->addItem(QStringLiteral("Format: ARGB32"), static_cast<int>(GCAP_FMT_ARGB));
+        ui->comboPixelFormat->setCurrentIndex(0);
+    }
+
     if (!ui->comboBackend)
         return;
 

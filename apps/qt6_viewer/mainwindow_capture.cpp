@@ -203,8 +203,6 @@ void MainWindow::onStart()
     if (ui->comboGpu)
         gcap_set_d3d_adapter(ui->comboGpu->currentData().toInt());
 
-    currentProfile_ = {};
-
     gcap_status_t st = gcap_create(&h_);
     if (st != GCAP_OK || !h_)
     {
@@ -262,6 +260,28 @@ void MainWindow::onStart()
         showCaptureErrorAndClose(QStringLiteral("set preview"), st, "gcap_set_preview");
         return;
     }
+
+    const int selectedPixfmt = ui->comboPixelFormat ? ui->comboPixelFormat->currentData().toInt() : -1;
+    currentProfile_ = {};
+    currentProfile_.mode = (selectedPixfmt >= 0) ? GCAP_PROFILE_CUSTOM : GCAP_PROFILE_DEVICE_DEFAULT;
+    currentProfile_.width = 0;
+    currentProfile_.height = 0;
+    currentProfile_.fps_num = 0;
+    currentProfile_.fps_den = 0;
+    // Keep format enum valid across all backends; Auto is expressed by mode, not by an invalid format value.
+    currentProfile_.format = static_cast<gcap_pixfmt_t>((selectedPixfmt >= 0) ? selectedPixfmt : GCAP_FMT_NV12);
+
+    st = gcap_set_profile(h_, &currentProfile_);
+    if (st != GCAP_OK)
+    {
+        showCaptureErrorAndClose(QStringLiteral("set profile"), st, "gcap_set_profile");
+        return;
+    }
+
+    const QString prefText = ui->comboPixelFormat ? ui->comboPixelFormat->currentText() : QStringLiteral("Format: Auto");
+    appendDebugLog(QStringLiteral("[Start] user negotiation preference=%1 profile.format=%2")
+                       .arg(prefText)
+                       .arg(static_cast<int>(currentProfile_.format)));
 
     st = gcap_open2(h_, deviceIndex_);
     if (st != GCAP_OK)
