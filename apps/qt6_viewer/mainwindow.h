@@ -131,6 +131,7 @@ private:
     QString lastRuntimeStatusText_;
     bool suppressAuxDialogRefresh_ = false;
     bool openingTiffDialog_ = false;
+    QString lastPixelFormatWarningKey_;
     void updateRuntimeStatusUi();
     int currentDeviceIndex() const;
     QString currentDeviceText() const;
@@ -152,7 +153,8 @@ private:
     void setupDebugDock();
     void setupProcAmpAction();
     void setupBackendControls();
-    void refreshPixelFormatOptions();
+    void refreshPixelFormatOptions(bool showFailurePrompt = false);
+    void notifyPixelFormatEnumerationFailure(int backend);
     void initializeDeviceList();
     void initializeGpuList();
     void setupConnections();

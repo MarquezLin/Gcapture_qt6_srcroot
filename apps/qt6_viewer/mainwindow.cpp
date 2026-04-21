@@ -640,14 +640,14 @@ void MainWindow::setupProcAmpAction()
 
 void MainWindow::setupBackendControls()
 {
-    refreshPixelFormatOptions();
-
     if (!ui->comboBackend)
         return;
 
+    const QSignalBlocker blocker(ui->comboBackend);
+    ui->comboBackend->clear();
+    ui->comboBackend->addItem("DirectShow", 2);
     ui->comboBackend->addItem("WinMF GPU", 1);
     ui->comboBackend->addItem("WinMF CPU", 0);
-    ui->comboBackend->addItem("DirectShow", 2);
 
 #ifdef _WIN32
     ui->comboBackend->addItem("CaptureSDK", 100);
@@ -655,20 +655,43 @@ void MainWindow::setupBackendControls()
     connect(capSdk_, &CaptureSdkSource::frameReady, this, &MainWindow::onFrameArrived, Qt::QueuedConnection);
     connect(capSdk_, &CaptureSdkSource::errorOccurred, this, [this](const QString &m)
             { MainWindow::postLog(QStringLiteral("[CaptureSDK] %1").arg(m), true); });
-
-    if (ui->comboDevice)
-    {
-        connect(ui->comboBackend, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
-                {
-                    const int backend = ui->comboBackend->currentData().toInt();
-                    const bool isCapSdk = (backend == 100);
-                    ui->comboDevice->setEnabled(!isCapSdk); });
-    }
 #endif
+
+    const int dsIndex = ui->comboBackend->findData(2);
+    ui->comboBackend->setCurrentIndex(dsIndex >= 0 ? dsIndex : 0);
+
+    refreshPixelFormatOptions(false);
 }
 
+void MainWindow::notifyPixelFormatEnumerationFailure(int backend)
+{
+    if (!ui->comboBackend)
+        return;
 
-void MainWindow::refreshPixelFormatOptions()
+    QString title = QStringLiteral("Pixel Format");
+    QString message;
+    switch (backend)
+    {
+    case GCAP_BACKEND_DSHOW:
+        message = QStringLiteral("此裝置的 DirectShow 格式枚舉失敗。\n請確認驅動或裝置狀態。");
+        break;
+    case GCAP_BACKEND_WINMF_CPU:
+    case GCAP_BACKEND_WINMF_GPU:
+        message = QStringLiteral("此裝置可能不支援 Media Foundation，請改用 DirectShow。");
+        break;
+    default:
+        return;
+    }
+
+    const QString warningKey = QStringLiteral("%1:%2").arg(deviceIndex_).arg(backend);
+    if (lastPixelFormatWarningKey_ == warningKey)
+        return;
+
+    lastPixelFormatWarningKey_ = warningKey;
+    QMessageBox::warning(this, title, message);
+}
+
+void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
 {
     if (!ui->comboPixelFormat)
         return;
@@ -687,6 +710,11 @@ void MainWindow::refreshPixelFormatOptions()
         if (!label.isEmpty())
             ui->comboPixelFormat->addItem(label, static_cast<int>(fmt));
     }
+
+    if (!supported.empty())
+        lastPixelFormatWarningKey_.clear();
+    else if (showFailurePrompt)
+        notifyPixelFormatEnumerationFailure(backend);
 
     int restoreIndex = ui->comboPixelFormat->findData(previousData);
     if (restoreIndex < 0)
@@ -713,7 +741,7 @@ void MainWindow::initializeDeviceList()
         deviceIndex_ = ui->comboDevice->itemData(0).toInt();
     }
 
-    refreshPixelFormatOptions();
+    refreshPixelFormatOptions(true);
 }
 
 void MainWindow::initializeGpuList()
@@ -774,13 +802,26 @@ void MainWindow::setupConnections()
                 {
                     deviceIndex_ = ui->comboDevice->itemData(idx).toInt();
                     invalidateDeviceCapabilityCache();
-                    refreshPixelFormatOptions();
+                    refreshPixelFormatOptions(true);
                     refreshCaptureInfoFromSdkAndRuntime(false);
                     if (infoDlg_ && infoDlg_->isVisible())
                     {
                         infoDlg_->setInfoText(lastInfoText_);
                         infoDlg_->setPropertyPages(captureInfo_.propertyPages);
                     }
+                });
+    }
+
+    if (ui->comboBackend)
+    {
+        connect(ui->comboBackend, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int)
+                {
+                    const int backend = ui->comboBackend->currentData().toInt();
+                    const bool isCapSdk = (backend == 100);
+                    if (ui->comboDevice)
+                        ui->comboDevice->setEnabled(!isCapSdk);
+                    refreshPixelFormatOptions(true);
                 });
     }
 
