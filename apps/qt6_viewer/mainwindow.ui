@@ -73,7 +73,7 @@
     <item row="0" column="5">
      <widget class="QPushButton" name="btnOpenTiff">
       <property name="enabled">
-       <bool>false</bool>
+       <bool>true</bool>
       </property>
       <property name="text">
        <string>Open TIFF</string>
@@ -138,7 +138,7 @@
   <widget class="QStatusBar" name="statusbar"/>
   <action name="actionOpenTiffAnalyzer">
    <property name="enabled">
-    <bool>false</bool>
+    <bool>true</bool>
    </property>
    <property name="text">
     <string>Open TIFF Analyzer...</string>

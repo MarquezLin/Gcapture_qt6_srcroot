@@ -88,18 +88,27 @@ echo ============================================================
 if exist "%ZIP_OUT%" del /f /q "%ZIP_OUT%"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%OUT_DIR%\*' -DestinationPath '%ZIP_OUT%' -Force"
+echo PowerShell errorlevel=%errorlevel%
+
 if errorlevel 1 (
     echo ERROR: Compress-Archive failed. (Need PowerShell 5+)
     pause
     exit /b 1
 )
 
-echo.
+if not exist "%ZIP_OUT%" (
+    echo ERROR: Zip file was not created.
+    pause
+    exit /b 1
+)
+
+cls
 echo ============================================================
 echo [5/5] Done
 echo ============================================================
 echo Output folder: "%OUT_DIR%"
 echo Zip         : "%ZIP_OUT%"
 echo.
-pause
-endlocal
+dir "%ZIP_OUT%"
+echo.
+cmd /k

@@ -26,6 +26,14 @@ struct Vertex
     float uv[2];
 };
 
+struct PsConstants
+{
+    UINT ditheringEnabled;
+    float invTargetWidth;
+    float invTargetHeight;
+    float pad;
+};
+
 static QString dxgiFormatName(DXGI_FORMAT fmt)
 {
     switch (fmt)
@@ -34,6 +42,7 @@ static QString dxgiFormatName(DXGI_FORMAT fmt)
     case DXGI_FORMAT_B8G8R8A8_UNORM: return QStringLiteral("B8G8R8A8_UNORM");
     case DXGI_FORMAT_R16G16B16A16_UNORM: return QStringLiteral("R16G16B16A16_UNORM");
     case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: return QStringLiteral("B8G8R8A8_UNORM_SRGB");
+    case DXGI_FORMAT_R16G16B16A16_FLOAT: return QStringLiteral("R16G16B16A16_FLOAT");
     default: return QStringLiteral("UNKNOWN(%1)").arg(int(fmt));
     }
 }
@@ -120,17 +129,30 @@ void d3dpreviewwidget::clearFrame()
     emit diagnosticsChanged();
 }
 
+void d3dpreviewwidget::setDitheringEnabled(bool enabled)
+{
+    if (ditheringEnabled_ == enabled)
+        return;
+    ditheringEnabled_ = enabled;
+    renderNow();
+    emit diagnosticsChanged();
+}
+
+bool d3dpreviewwidget::isDitheringEnabled() const { return ditheringEnabled_; }
+
 QString d3dpreviewwidget::rendererName() const { return rendererName_; }
 QString d3dpreviewwidget::internalTextureFormatName() const { return internalTextureFormatName_; }
 QString d3dpreviewwidget::outputSurfaceFormatName() const { return outputSurfaceFormatName_; }
 bool d3dpreviewwidget::isTenBitOutputSurface() const { return outputSurface10Bit_; }
 QString d3dpreviewwidget::diagnosticsText() const
 {
-    return QStringLiteral("Renderer: %1\nInternal Texture: %2\nOutput Surface: %3\n10-bit Output Surface: %4")
+    return QStringLiteral("Renderer: %1\nInternal Texture: %2\nOutput Surface: %3\n10-bit Output Surface: %4\nSwapChain 8-bit Fallback: %5\nDithering: %6")
         .arg(rendererName_.isEmpty() ? QStringLiteral("Unavailable") : rendererName_)
         .arg(internalTextureFormatName_)
         .arg(outputSurfaceFormatName_)
-        .arg(outputSurface10Bit_ ? QStringLiteral("Yes") : QStringLiteral("No"));
+        .arg(outputSurface10Bit_ ? QStringLiteral("Yes") : QStringLiteral("No"))
+        .arg(swapChainFallbackTo8Bit_ ? QStringLiteral("Yes") : QStringLiteral("No"))
+        .arg(ditheringEnabled_ ? QStringLiteral("On") : QStringLiteral("Off"));
 }
 
 void d3dpreviewwidget::paintEvent(QPaintEvent *event)
@@ -260,11 +282,13 @@ void d3dpreviewwidget::ensureSwapChain()
     desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
     desc.Scaling = DXGI_SCALING_STRETCH;
     desc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+    swapChainFallbackTo8Bit_ = false;
 
     HRESULT hr = factory->CreateSwapChainForHwnd(device_.Get(), HWND(currentWid), &desc, nullptr, nullptr, &swapChain_);
     if (FAILED(hr))
     {
         desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        swapChainFallbackTo8Bit_ = true;
         hr = factory->CreateSwapChainForHwnd(device_.Get(), HWND(currentWid), &desc, nullptr, nullptr, &swapChain_);
     }
     if (FAILED(hr) || !swapChain_)
@@ -298,8 +322,25 @@ void d3dpreviewwidget::ensurePipeline()
     static const char *psSrc =
         "Texture2D tex0 : register(t0);"
         "SamplerState samp0 : register(s0);"
+        "cbuffer PsConstants : register(b0) { uint ditheringEnabled; float invTargetWidth; float invTargetHeight; float _pad; };"
         "struct PSIn { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };"
-        "float4 main(PSIn i) : SV_Target { return tex0.Sample(samp0, i.uv); }";
+        "float bayer4(int2 p) {"
+        "  int x = p.x & 3; int y = p.y & 3;"
+        "  static const float m[16] = { 0.0/16.0, 8.0/16.0, 2.0/16.0, 10.0/16.0,"
+        "                               12.0/16.0, 4.0/16.0, 14.0/16.0, 6.0/16.0,"
+        "                               3.0/16.0, 11.0/16.0, 1.0/16.0, 9.0/16.0,"
+        "                               15.0/16.0, 7.0/16.0, 13.0/16.0, 5.0/16.0 };"
+        "  return m[y * 4 + x] - 0.5;"
+        "}"
+        "float4 main(PSIn i) : SV_Target {"
+        "  float4 c = tex0.Sample(samp0, i.uv);"
+        "  if (ditheringEnabled != 0) {"
+        "    int2 pix = int2(i.pos.xy);"
+        "    float n = bayer4(pix) / 1023.0;"
+        "    c.rgb = saturate(c.rgb + n);"
+        "  }"
+        "  return c;"
+        "}";
 
     const QByteArray vsBlob = compileShader(vsSrc, "main", "vs_4_0");
     const QByteArray psBlob = compileShader(psSrc, "main", "ps_4_0");
@@ -332,6 +373,12 @@ void d3dpreviewwidget::ensurePipeline()
     sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     sd.MaxLOD = D3D11_FLOAT32_MAX;
     device_->CreateSamplerState(&sd, &sampler_);
+
+    D3D11_BUFFER_DESC cbd = {};
+    cbd.ByteWidth = sizeof(PsConstants);
+    cbd.Usage = D3D11_USAGE_DEFAULT;
+    cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    device_->CreateBuffer(&cbd, nullptr, &psConstants_);
 #endif
 }
 
@@ -443,6 +490,12 @@ void d3dpreviewwidget::renderNow()
         context_->VSSetShader(vs_.Get(), nullptr, 0);
         context_->PSSetShader(ps_.Get(), nullptr, 0);
         context_->PSSetSamplers(0, 1, sampler_.GetAddressOf());
+        if (psConstants_)
+        {
+            const PsConstants psData = { ditheringEnabled_ ? 1u : 0u, 1.0f / qMax(1, width()), 1.0f / qMax(1, height()), 0.0f };
+            context_->UpdateSubresource(psConstants_.Get(), 0, nullptr, &psData, 0, 0);
+            context_->PSSetConstantBuffers(0, 1, psConstants_.GetAddressOf());
+        }
         context_->PSSetShaderResources(0, 1, internalSrv_.GetAddressOf());
         context_->Draw(4, 0);
         ID3D11ShaderResourceView *nullSrv = nullptr;
@@ -463,6 +516,7 @@ void d3dpreviewwidget::releaseSwapChainResources()
     outputSurfaceFormat_ = DXGI_FORMAT_UNKNOWN;
     outputSurfaceFormatName_ = QStringLiteral("None");
     outputSurface10Bit_ = false;
+    swapChainFallbackTo8Bit_ = false;
     swapChainWid_ = 0;
 #endif
 }
@@ -475,6 +529,7 @@ void d3dpreviewwidget::releaseAllD3d()
     vb_.Reset();
     inputLayout_.Reset();
     sampler_.Reset();
+    psConstants_.Reset();
     ps_.Reset();
     vs_.Reset();
     releaseSwapChainResources();

@@ -40,6 +40,12 @@ struct TiffBitDepthReport
 
     QByteArray previewRgba64;
     int previewStrideBytes = 0;
+
+    int sampledRowY = -1;
+    QString sampledRowSource;
+    QString sampledRowLogical10Rule;
+    QString sampledRowRaw16Csv;
+    QString sampledRowLogical10Csv;
 };
 
 class TiffAnalyzer

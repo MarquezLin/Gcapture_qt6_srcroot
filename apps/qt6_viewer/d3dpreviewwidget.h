@@ -26,6 +26,8 @@ public:
     void setFrame(const QImage &img);
     void setFrameRgba64(int width, int height, const QByteArray &rgba64, int strideBytes);
     void clearFrame();
+    void setDitheringEnabled(bool enabled);
+    bool isDitheringEnabled() const;
 
     QString rendererName() const;
     QString internalTextureFormatName() const;
@@ -74,6 +76,8 @@ private:
     QString internalTextureFormatName_ = QStringLiteral("None");
     QString outputSurfaceFormatName_ = QStringLiteral("None");
     bool outputSurface10Bit_ = false;
+    bool swapChainFallbackTo8Bit_ = false;
+    bool ditheringEnabled_ = true;
 
 #ifdef _WIN32
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
@@ -83,6 +87,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11VertexShader> vs_;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> ps_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> psConstants_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> vb_;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> inputLayout_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> internalTexture_;

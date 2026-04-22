@@ -284,6 +284,55 @@ static QVector<quint16> extractGrayAxisCol(const QVector<quint16> &gray, int wid
     return out;
 }
 
+static QString joinU16Csv(const QVector<quint16> &values)
+{
+    QStringList parts;
+    parts.reserve(values.size());
+    for (quint16 v : values)
+        parts.push_back(QString::number(v));
+    return parts.join(QStringLiteral(","));
+}
+
+static QVector<quint16> convertAxisToLogical10(const QVector<quint16> &axis, const TiffBitDepthReport &report, QString *rule)
+{
+    QVector<quint16> out;
+    out.reserve(axis.size());
+
+    if (report.valuesLookShifted10Bit)
+    {
+        if (rule)
+            *rule = QStringLiteral("logical10 = raw16 >> 6 (looks like shifted 10-bit in 16-bit container)");
+        for (quint16 v : axis)
+            out.push_back(static_cast<quint16>(v >> 6));
+        return out;
+    }
+
+    if (report.maxValue <= 1023)
+    {
+        if (rule)
+            *rule = QStringLiteral("logical10 = raw16 (already within 0..1023)");
+        return axis;
+    }
+
+    if (rule)
+        *rule = QStringLiteral("logical10 ~= round(raw16 * 1023 / 65535) (scaled estimate)");
+    for (quint16 v : axis)
+        out.push_back(static_cast<quint16>((quint32(v) * 1023u + 32767u) / 65535u));
+    return out;
+}
+
+static void fillSampledRowDump(const QVector<quint16> &rowAxis, int height, const QString &sourceName, TiffBitDepthReport &report)
+{
+    report.sampledRowY = (height > 0) ? (height / 2) : -1;
+    report.sampledRowSource = sourceName;
+    report.sampledRowRaw16Csv = joinU16Csv(rowAxis);
+
+    QString rule;
+    const QVector<quint16> logical10 = convertAxisToLogical10(rowAxis, report, &rule);
+    report.sampledRowLogical10Rule = rule;
+    report.sampledRowLogical10Csv = joinU16Csv(logical10);
+}
+
 static bool analyzeGray16Frame(IWICBitmapSource *src, UINT width, UINT height, TiffBitDepthReport &report)
 {
     const UINT stride = width * 2u;
@@ -317,6 +366,7 @@ static bool analyzeGray16Frame(IWICBitmapSource *src, UINT width, UINT height, T
 
     const QVector<quint16> rowAxis = extractGrayAxisRow(samples, int(width), int(height));
     const QVector<quint16> colAxis = extractGrayAxisCol(samples, int(width), int(height));
+    fillSampledRowDump(rowAxis, int(height), QStringLiteral("gray16"), report);
 
     QString rowReason;
     QString colReason;
@@ -391,6 +441,7 @@ static bool analyzeRgba64Frame(IWICBitmapSource *src, UINT width, UINT height, T
 
     const QVector<quint16> rowAxis = extractGrayAxisRow(gray, int(width), int(height));
     const QVector<quint16> colAxis = extractGrayAxisCol(gray, int(width), int(height));
+    fillSampledRowDump(rowAxis, int(height), rgbNearlyEqual ? QStringLiteral("rgba64 gray-average") : QStringLiteral("rgba64 gray-average (non-gray RGB)"), report);
 
     QString rowReason;
     QString colReason;
@@ -597,5 +648,17 @@ QString TiffAnalyzer::formatReportText(const TiffBitDepthReport &r)
     lines << QStringLiteral("Visual 10-bit ramp candidate: %1").arg(r.visualTenBitRampCandidate ? QStringLiteral("Yes") : QStringLiteral("No"));
     lines << QStringLiteral("10-bit ramp: %1").arg(r.likelyTenBitRamp ? QStringLiteral("Yes") : QStringLiteral("No"));
     lines << QStringLiteral("Ramp reason: %1").arg(r.rampReason);
+    if (r.sampledRowY >= 0 && !r.sampledRowRaw16Csv.isEmpty())
+    {
+        lines << QString();
+        lines << QStringLiteral("Sampled center row y=%1 (%2)").arg(r.sampledRowY).arg(r.sampledRowSource);
+        lines << QStringLiteral("Logical 10-bit range should be 0..1023 (1024 levels), not 0..1024.");
+        if (!r.sampledRowLogical10Rule.isEmpty())
+            lines << QStringLiteral("Logical10 rule: %1").arg(r.sampledRowLogical10Rule);
+        lines << QStringLiteral("Center row raw16 CSV:");
+        lines << r.sampledRowRaw16Csv;
+        lines << QStringLiteral("Center row logical10 CSV:");
+        lines << r.sampledRowLogical10Csv;
+    }
     return lines.join('\n');
 }

@@ -5,6 +5,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QCheckBox>
 #include <QGroupBox>
 #include "d3dpreviewwidget.h"
 
@@ -22,10 +23,13 @@ TiffAnalysisDialog::TiffAnalysisDialog(QWidget *parent)
     auto *viewerLayout = new QVBoxLayout(viewerBox);
     viewer_ = new d3dpreviewwidget(viewerBox);
     viewer_->setMinimumSize(420, 320);
+    ditherCheck_ = new QCheckBox(QStringLiteral("Enable 10-bit dithering"), viewerBox);
+    ditherCheck_->setChecked(true);
     viewerDiagLabel_ = new QLabel(viewerBox);
     viewerDiagLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     viewerDiagLabel_->setWordWrap(true);
     viewerLayout->addWidget(viewer_, 1);
+    viewerLayout->addWidget(ditherCheck_);
     viewerLayout->addWidget(viewerDiagLabel_);
     top->addWidget(viewerBox, 1);
 
@@ -40,6 +44,7 @@ TiffAnalysisDialog::TiffAnalysisDialog(QWidget *parent)
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(viewer_, &d3dpreviewwidget::diagnosticsChanged, this, &TiffAnalysisDialog::refreshViewerDiagnostics);
+    connect(ditherCheck_, &QCheckBox::toggled, this, &TiffAnalysisDialog::onDitheringToggled);
     layout->addWidget(buttons);
 
     refreshViewerDiagnostics();
@@ -64,4 +69,11 @@ void TiffAnalysisDialog::refreshViewerDiagnostics()
 {
     if (viewerDiagLabel_ && viewer_)
         viewerDiagLabel_->setText(viewer_->diagnosticsText());
+}
+
+void TiffAnalysisDialog::onDitheringToggled(bool checked)
+{
+    if (viewer_)
+        viewer_->setDitheringEnabled(checked);
+    refreshViewerDiagnostics();
 }
