@@ -136,14 +136,22 @@ namespace
     {
         switch (fmt)
         {
-        case GCAP_FMT_NV12: return "NV12";
-        case GCAP_FMT_YUY2: return "YUY2";
-        case GCAP_FMT_ARGB: return "ARGB32";
-        case GCAP_FMT_P010: return "P010";
-        case GCAP_FMT_Y210: return "Y210";
-        case GCAP_FMT_V210: return "V210";
-        case GCAP_FMT_R210: return "R210";
-        default: return "AUTO/UNKNOWN";
+        case GCAP_FMT_NV12:
+            return "NV12";
+        case GCAP_FMT_YUY2:
+            return "YUY2";
+        case GCAP_FMT_ARGB:
+            return "ARGB32";
+        case GCAP_FMT_P010:
+            return "P010";
+        case GCAP_FMT_Y210:
+            return "Y210";
+        case GCAP_FMT_V210:
+            return "V210";
+        case GCAP_FMT_R210:
+            return "R210";
+        default:
+            return "AUTO/UNKNOWN";
         }
     }
 
@@ -586,7 +594,7 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     if (previewHwnd_ && rawOnlyActive_)
         strcpy_s(out.frame_source, "RawSink Preview");
     else if (out.frame_source[0] == 0 || strcmp(out.frame_source, "Unknown") == 0)
-        strcpy_s(out.frame_source, rawOnlyActive_ ? "RawSink" : "RendererImage");
+        strcpy_s(out.frame_source, rawOnlyActive_ ? "RawSink" : "Unknown");
     strcpy_s(out.source_format, gcap_subtype_name(subtype_));
     if (rawOnlyActive_)
         strcpy_s(out.render_format, pipeline_ ? (pipeline_->preview_swapchain_10bit() ? "FP16 Scene -> 10bit Swapchain" : "FP16 Scene -> 8bit Swapchain") : "FP16 Scene");
@@ -938,10 +946,6 @@ const char *DShowProvider::callbackSourceName(CallbackSource src) const
     {
     case CallbackSource::RawSink:
         return "RawSink";
-    case CallbackSource::RendererImage:
-        return "RendererImage";
-    case CallbackSource::PreviewBitBlt:
-        return "PreviewBitBlt";
     default:
         return "Unknown";
     }
@@ -1482,152 +1486,8 @@ bool DShowProvider::captureRawFrameToArgb(std::vector<uint8_t> &out, int &w, int
     return true;
 }
 
-bool DShowProvider::captureRendererFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride)
-{
-    if (!vmrWindowless_)
-        return false;
 
-    BYTE *dib = nullptr;
-    if (FAILED(vmrWindowless_->GetCurrentImage(&dib)) || !dib)
-        return false;
 
-    auto *bih = reinterpret_cast<BITMAPINFOHEADER *>(dib);
-    if (bih->biSize < sizeof(BITMAPINFOHEADER) || bih->biBitCount != 32 || bih->biCompression != BI_RGB)
-    {
-        CoTaskMemFree(dib);
-        return false;
-    }
-
-    w = bih->biWidth;
-    h = std::abs(bih->biHeight);
-    if (w <= 0 || h <= 0)
-    {
-        CoTaskMemFree(dib);
-        return false;
-    }
-
-    const int srcStride = w * 4;
-    const uint8_t *srcBits = reinterpret_cast<const uint8_t *>(dib + bih->biSize + bih->biClrUsed * sizeof(RGBQUAD));
-    stride = srcStride;
-    out.resize(static_cast<size_t>(stride) * static_cast<size_t>(h));
-
-    if (bih->biHeight > 0)
-    {
-        for (int y = 0; y < h; ++y)
-        {
-            const uint8_t *srcRow = srcBits + static_cast<size_t>(h - 1 - y) * srcStride;
-            uint8_t *dstRow = out.data() + static_cast<size_t>(y) * stride;
-            memcpy(dstRow, srcRow, static_cast<size_t>(stride));
-        }
-    }
-    else
-    {
-        memcpy(out.data(), srcBits, out.size());
-    }
-
-    CoTaskMemFree(dib);
-    return true;
-}
-
-bool DShowProvider::capturePreviewFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride)
-{
-    if (captureRendererFrameToArgb(out, w, h, stride))
-    {
-        lastCallbackSource_ = CallbackSource::RendererImage;
-        return true;
-    }
-
-    if (!previewHwnd_)
-        return false;
-
-    RECT rc{};
-    if (!GetClientRect(previewHwnd_, &rc))
-        return false;
-    w = rc.right - rc.left;
-    h = rc.bottom - rc.top;
-    if (w <= 0 || h <= 0)
-        return false;
-
-    HDC wndDc = GetDC(previewHwnd_);
-    if (!wndDc)
-        return false;
-    HDC memDc = CreateCompatibleDC(wndDc);
-    if (!memDc)
-    {
-        ReleaseDC(previewHwnd_, wndDc);
-        return false;
-    }
-
-    BITMAPINFO bmi{};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -h; // top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-
-    void *bits = nullptr;
-    HBITMAP hbmp = CreateDIBSection(wndDc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!hbmp || !bits)
-    {
-        if (hbmp)
-            DeleteObject(hbmp);
-        DeleteDC(memDc);
-        ReleaseDC(previewHwnd_, wndDc);
-        return false;
-    }
-
-    HGDIOBJ old = SelectObject(memDc, hbmp);
-    BOOL bltOk = BitBlt(memDc, 0, 0, w, h, wndDc, 0, 0, SRCCOPY | CAPTUREBLT);
-
-    stride = w * 4;
-    if (bltOk)
-    {
-        out.resize(static_cast<size_t>(stride) * static_cast<size_t>(h));
-        memcpy(out.data(), bits, out.size());
-    }
-
-    SelectObject(memDc, old);
-    DeleteObject(hbmp);
-    DeleteDC(memDc);
-    ReleaseDC(previewHwnd_, wndDc);
-    if (bltOk == TRUE)
-        lastCallbackSource_ = CallbackSource::PreviewBitBlt;
-    return bltOk == TRUE;
-}
-
-bool DShowProvider::captureCallbackFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride)
-{
-    std::vector<uint8_t> tmp;
-    int cw = 0, ch = 0, cstride = 0;
-
-    if (rawOnlyActive_)
-    {
-        if (!captureRawFrameToArgb(tmp, cw, ch, cstride))
-            return false;
-    }
-    else
-    {
-        if (!captureRawFrameToArgb(tmp, cw, ch, cstride) && !capturePreviewFrameToArgb(tmp, cw, ch, cstride))
-            return false;
-    }
-
-    const int targetW = width_ > 0 ? width_ : cw;
-    const int targetH = height_ > 0 ? height_ : ch;
-    if (cw == targetW && ch == targetH)
-    {
-        out.swap(tmp);
-        w = cw;
-        h = ch;
-        stride = cstride;
-        return true;
-    }
-
-    resizeArgbNearest(tmp, cw, ch, cstride, out, targetW, targetH, stride);
-    w = targetW;
-    h = targetH;
-    return true;
-}
 
 void DShowProvider::resetPreviewProbeStats()
 {
@@ -1887,6 +1747,20 @@ void DShowProvider::framePumpLoop()
             {
                 sharedW = rw;
                 sharedH = rh;
+                if (frameId <= 5 || (frameId % 60) == 0)
+                {
+                    char rawMsg[256] = {};
+                    sprintf_s(rawMsg,
+                              "[DShow][RawSample] frame=%llu subtype=%s sample=%dx%d stride=%d negotiated=%dx%d",
+                              static_cast<unsigned long long>(frameId),
+                              subtypeName(rawSubtype),
+                              rw,
+                              rh,
+                              rstride,
+                              width_,
+                              height_);
+                    dshow_log(rawMsg);
+                }
                 bool ensuredRt = false;
                 bool ensuredSwap = false;
                 {
@@ -1916,6 +1790,19 @@ void DShowProvider::framePumpLoop()
                 }
                 if (ensuredRt && ensuredSwap)
                 {
+                    if (frameId <= 5 || (frameId % 60) == 0)
+                    {
+                        char uploadMsg[256] = {};
+                        sprintf_s(uploadMsg,
+                                  "[DShow][PreviewUpload] frame=%llu upload=%dx%d subtype=%s swapTarget=%dx%d",
+                                  static_cast<unsigned long long>(frameId),
+                                  rw,
+                                  rh,
+                                  subtypeName(rawSubtype),
+                                  rw,
+                                  rh);
+                        dshow_log(uploadMsg);
+                    }
                     bool uploaded = false;
                     if (rawSubtype == MEDIASUBTYPE_NV12)
                     {
@@ -2157,6 +2044,21 @@ void DShowProvider::framePumpLoop()
                         ++previewProbeStats_.readbackFrames;
                         if (readbackOk)
                         {
+                            if (frameId <= 5 || (frameId % 60) == 0 || f.width != width_ || f.height != height_)
+                            {
+                                char cbmsg[320] = {};
+                                sprintf_s(cbmsg,
+                                          "[DShow][CallbackRawSample] frame=%llu src=shared-scene out=%dx%d stride=%d negotiated=%dx%d source=%s resize=%s",
+                                          static_cast<unsigned long long>(frameId),
+                                          f.width,
+                                          f.height,
+                                          f.stride[0],
+                                          width_,
+                                          height_,
+                                          callbackSourceName(lastCallbackSource_.load()),
+                                          (f.width == width_ && f.height == height_) ? "NO" : "YES");
+                                dshow_log(cbmsg);
+                            }
                             if (frameId == 1 || (previewOnlyActive && previewProbeStats_.callbackFrames == 0))
                             {
                                 char msg[320] = {};
@@ -2186,6 +2088,21 @@ void DShowProvider::framePumpLoop()
                     f.format = GCAP_FMT_ARGB;
                     f.pts_ns = ptsNs;
                     f.frame_id = frameId;
+                    if (frameId <= 5 || (frameId % 60) == 0 || w != width_ || h != height_)
+                    {
+                        char cbmsg[320] = {};
+                        sprintf_s(cbmsg,
+                                  "[DShow][CallbackRawSample] frame=%llu src=argb-bridge out=%dx%d stride=%d negotiated=%dx%d source=%s resize=%s",
+                                  static_cast<unsigned long long>(frameId),
+                                  w,
+                                  h,
+                                  stride,
+                                  width_,
+                                  height_,
+                                  callbackSourceName(lastCallbackSource_.load()),
+                                  (w == width_ && h == height_) ? "NO" : "YES");
+                        dshow_log(cbmsg);
+                    }
                     if (f.frame_id == 1 || (previewOnlyActive && previewProbeStats_.callbackFrames == 0))
                     {
                         char msg[256] = {};

@@ -65,15 +65,10 @@ private:
     enum class CallbackSource
     {
         Unknown = 0,
-        RawSink,
-        RendererImage,
-        PreviewBitBlt
+        RawSink
     };
 
     bool captureRawFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
-    bool capturePreviewFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
-    bool captureRendererFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
-    bool captureCallbackFrameToArgb(std::vector<uint8_t> &out, int &w, int &h, int &stride);
     int framePumpSleepMs() const;
     bool shouldDoSharedReadback(uint64_t ptsNs, uint64_t frameId, bool sharedReady, bool havePreview, bool haveCallback, uint64_t &lastReadbackPtsNs) const;
     int callbackTargetFps() const;
