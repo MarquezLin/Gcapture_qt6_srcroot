@@ -81,6 +81,7 @@ public:
     bool setProcessing(const gcap_processing_opts_t &opts) override;
     bool setProcAmp(const gcap_procamp_t &p) override;
     bool setPreview(const gcap_preview_desc_t &desc) override;
+    bool exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats) override;
 
     bool isUsingGpu() const { return use_dxgi_ && !cpu_path_; }
 

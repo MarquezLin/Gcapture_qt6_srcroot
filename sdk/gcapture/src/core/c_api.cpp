@@ -437,6 +437,17 @@ extern "C"
         return h->mgr.setPreview(*desc);
     }
 
+    GCAP_API gcap_status_t gcap_export_preview_scene_rgb10(gcap_handle h, const char *base_path_utf8,
+                                                           int export_raw, int export_tiff, int export_stats)
+    {
+        if (!h || !base_path_utf8 || !*base_path_utf8)
+            return GCAP_EINVAL;
+        return h->mgr.exportPreviewSceneRgb10(base_path_utf8,
+                                              export_raw != 0,
+                                              export_tiff != 0,
+                                              export_stats != 0);
+    }
+
     extern "C" GCAP_API int gcap_get_audio_device_count(void)
     {
         auto list = gcap::audio::enumerate_devices();

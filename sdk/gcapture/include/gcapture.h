@@ -248,6 +248,8 @@ extern "C"
     // 查詢目前 handle 實際使用中的 backend。
     // 非 Auto 模式下通常等於 gcap_set_backend() 指定值；Auto 模式下則可能回傳 WinMF GPU / WinMF CPU / DShow。
     GCAP_API int gcap_get_active_backend(gcap_handle h);
+    GCAP_API gcap_status_t gcap_export_preview_scene_rgb10(gcap_handle h, const char *base_path_utf8,
+                                                           int export_raw, int export_tiff, int export_stats);
 
     // --- OBS-like "Properties" ---
     gcap_status_t gcap_get_device_props(gcap_handle h, gcap_device_props_t *out);

@@ -51,6 +51,7 @@ public:
     bool copy_fp16_to_scene();
     bool readback_to_frame(int frame_w, int frame_h, uint64_t pts_ns, uint64_t frame_id,
                            gcap_frame_t *out);
+    bool export_scene_rgb10(const wchar_t *base_path, bool export_raw, bool export_tiff, bool export_stats);
 
     ID3D11Device *d3d_ = nullptr;
     ID3D11DeviceContext *ctx_ = nullptr;
@@ -73,6 +74,7 @@ public:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> upload_y210_packed_;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv_rgba_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> rt_stage_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> rt_scene_stage_fp16_;
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cs_params_;
     Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> rt_uav_;

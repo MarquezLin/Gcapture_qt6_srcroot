@@ -93,26 +93,50 @@ void MainWindow::logFramePacketIfNeeded(const gcap_frame_packet_t &pkt)
     MainWindow::postLog(line);
 }
 
-QString MainWindow::buildSnapshotPath() const
+QString MainWindow::buildSnapshotBasePath() const
 {
     const QString baseDir = QCoreApplication::applicationDirPath() + "/snapshots";
     QDir().mkpath(baseDir);
 
     const QDateTime now = QDateTime::currentDateTime();
     const QString ts = now.toString("yyyyMMdd_HHmmss_zzz");
-    return baseDir + "/" + QStringLiteral("snapshot_%1.png").arg(ts);
+    return baseDir + "/" + QStringLiteral("snapshot_%1").arg(ts);
 }
 
-bool MainWindow::saveSnapshotImage(QString *outPath)
+QString MainWindow::buildSnapshotPath() const
+{
+    return buildSnapshotBasePath() + ".png";
+}
+
+bool MainWindow::saveSnapshotImage(QString *outPath, const QString &fullPath)
 {
     if (lastFrameImage_.isNull())
         return false;
 
-    const QString fullPath = buildSnapshotPath();
-    const bool ok = lastFrameImage_.save(fullPath, "PNG");
+    const QString finalPath = fullPath.isEmpty() ? buildSnapshotPath() : fullPath;
+    const bool ok = lastFrameImage_.save(finalPath, "PNG");
     if (ok && outPath)
-        *outPath = fullPath;
+        *outPath = finalPath;
     return ok;
+}
+
+bool MainWindow::saveRgb10Exports(const QString &basePath, QString *rawPath, QString *tiffPath, QString *statsPath)
+{
+    if (!h_ || basePath.isEmpty())
+        return false;
+
+    const QByteArray baseUtf8 = QDir::toNativeSeparators(basePath).toUtf8();
+    const gcap_status_t st = gcap_export_preview_scene_rgb10(h_, baseUtf8.constData(), 1, 1, 1);
+    if (st != GCAP_OK)
+        return false;
+
+    if (rawPath)
+        *rawPath = basePath + ".raw";
+    if (tiffPath)
+        *tiffPath = basePath + ".tiff";
+    if (statsPath)
+        *statsPath = basePath + ".stats.txt";
+    return true;
 }
 
 void MainWindow::onFrameArrived(const QImage &img)
@@ -138,23 +162,38 @@ void MainWindow::onSnapshot()
         return;
     }
 
-    QString fullPath;
-    const bool ok = saveSnapshotImage(&fullPath);
-    const QString fileName = QFileInfo(fullPath).fileName();
-    if (!ok)
+    const QString basePath = buildSnapshotBasePath();
+    QString pngPath;
+    const bool pngOk = saveSnapshotImage(&pngPath, basePath + ".png");
+    QString rawPath, tiffPath, statsPath;
+    const bool rgb10Ok = saveRgb10Exports(basePath, &rawPath, &tiffPath, &statsPath);
+
+    if (!pngOk && !rgb10Ok)
     {
         QMessageBox::warning(this, "Snapshot",
-                             QString("Snapshot storage failed:%1").arg(fullPath));
+                             QStringLiteral("Snapshot / RGB10 export failed.\nBase path: %1").arg(basePath));
         return;
+    }
+
+    QStringList saved;
+    if (pngOk)
+        saved << pngPath;
+    if (rgb10Ok)
+    {
+        saved << rawPath << tiffPath << statsPath;
+        MainWindow::postLog(QStringLiteral("[RGB10Export] RAW=%1 TIFF=%2 STATS=%3")
+                                .arg(rawPath, tiffPath, statsPath));
     }
 
     if (ui->statusbar)
     {
         ui->statusbar->showMessage(
-            QStringLiteral("Snapshot saved: %1").arg(fileName),
-            5000);
+            rgb10Ok
+                ? QStringLiteral("Snapshot + RGB10 RAW/TIFF saved: %1").arg(QFileInfo(tiffPath).fileName())
+                : QStringLiteral("Snapshot saved: %1").arg(QFileInfo(pngPath).fileName()),
+            6000);
     }
 
     QMessageBox::information(this, "Snapshot",
-                             QString("Snapshot already saved:\n%1").arg(fullPath));
+                             QStringLiteral("Saved files:\n%1").arg(saved.join("\n")));
 }

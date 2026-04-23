@@ -171,7 +171,9 @@ private:
     void refreshFrameDependentUi(const QImage &img);
     void logFramePacketIfNeeded(const gcap_frame_packet_t &pkt);
     QString buildSnapshotPath() const;
-    bool saveSnapshotImage(QString *outPath);
+    QString buildSnapshotBasePath() const;
+    bool saveSnapshotImage(QString *outPath, const QString &fullPath = QString());
+    bool saveRgb10Exports(const QString &basePath, QString *rawPath, QString *tiffPath, QString *statsPath);
 
 signals:
     void sigFrame(const QImage &);

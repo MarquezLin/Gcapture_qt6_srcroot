@@ -10,6 +10,15 @@
 #include <cstdio>
 #include <chrono>
 #include <cstring>
+#include <vector>
+#include <fstream>
+#include <algorithm>
+#include <cmath>
+#include <sstream>
+#include <filesystem>
+#include <wincodec.h>
+#include <DirectXMath.h>
+#include <DirectXPackedVector.h>
 
 static void SSP_DBG(const char *stage, HRESULT hr)
 {
@@ -34,19 +43,27 @@ static const char *ss_dxgi_format_name(DXGI_FORMAT fmt)
 {
     switch (fmt)
     {
-    case DXGI_FORMAT_UNKNOWN: return "UNKNOWN";
-    case DXGI_FORMAT_B8G8R8A8_UNORM: return "B8G8R8A8_UNORM";
-    case DXGI_FORMAT_R10G10B10A2_UNORM: return "R10G10B10A2_UNORM";
-    case DXGI_FORMAT_R16G16B16A16_FLOAT: return "R16G16B16A16_FLOAT";
-    case DXGI_FORMAT_NV12: return "NV12";
-    case DXGI_FORMAT_P010: return "P010";
-    default: return "OTHER";
+    case DXGI_FORMAT_UNKNOWN:
+        return "UNKNOWN";
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+        return "B8G8R8A8_UNORM";
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+        return "R10G10B10A2_UNORM";
+    case DXGI_FORMAT_R16G16B16A16_FLOAT:
+        return "R16G16B16A16_FLOAT";
+    case DXGI_FORMAT_NV12:
+        return "NV12";
+    case DXGI_FORMAT_P010:
+        return "P010";
+    default:
+        return "OTHER";
     }
 }
 
 static void ssp_log_text(const char *msg)
 {
-    if (!msg) return;
+    if (!msg)
+        return;
     ::OutputDebugStringA(msg);
     ::OutputDebugStringA("\n");
 }
@@ -673,6 +690,7 @@ void SharedScenePipeline::shutdown()
     rtv_rgba_.Reset();
     rt_rgba_.Reset();
     rt_stage_.Reset();
+    rt_scene_stage_fp16_.Reset();
     samp_.Reset();
     vb_.Reset();
     il_.Reset();
@@ -821,7 +839,7 @@ bool SharedScenePipeline::ensure_rt_and_pipeline(int w, int h)
                                rt_scene_fp16_ && rtv_scene_fp16_ && srv_scene_fp16_ &&
                                rt_rgba_ && rtv_rgba_ && srv_rgba_ &&
                                overlay_rgba_ && overlay_rtv_ && overlay_srv_ &&
-                               rt_stage_ && d2d_bitmap_rt_;
+                               rt_stage_ && rt_scene_stage_fp16_ && d2d_bitmap_rt_;
 
     if (hasAllTargets && rt_w_ == w && rt_h_ == h)
     {
@@ -853,6 +871,7 @@ bool SharedScenePipeline::ensure_rt_and_pipeline(int w, int h)
     overlay_rtv_.Reset();
     overlay_srv_.Reset();
     rt_stage_.Reset();
+    rt_scene_stage_fp16_.Reset();
     d2d_bitmap_rt_.Reset();
 
     // 1) High precision intermediate target
@@ -911,6 +930,10 @@ bool SharedScenePipeline::ensure_rt_and_pipeline(int w, int h)
     td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     td.Usage = D3D11_USAGE_STAGING;
     if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &rt_stage_)))
+        return false;
+
+    td.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &rt_scene_stage_fp16_)))
         return false;
 
     // 6) D2D target now stays on dedicated overlay texture, not the final preview/readback surface
@@ -1317,7 +1340,6 @@ bool SharedScenePipeline::upload_yuy2_frame(const uint8_t *data, int src_stride,
 
     ctx_->Unmap(upload_yuy2_packed_.Get(), 0);
     return true;
-
 }
 
 bool SharedScenePipeline::upload_y210_frame(const uint8_t *data, int src_stride, int frame_w, int frame_h)
@@ -1372,9 +1394,9 @@ bool SharedScenePipeline::upload_y210_frame(const uint8_t *data, int src_stride,
         {
             const int srcX = x * 4;
             const uint16_t Y0 = normalize_y210_word_for_upload(src16[srcX + 0]);
-            const uint16_t U  = normalize_y210_word_for_upload(src16[srcX + 1]);
+            const uint16_t U = normalize_y210_word_for_upload(src16[srcX + 1]);
             const uint16_t Y1 = (srcX + 2 < rowWords) ? normalize_y210_word_for_upload(src16[srcX + 2]) : Y0;
-            const uint16_t V  = (srcX + 3 < rowWords) ? normalize_y210_word_for_upload(src16[srcX + 3]) : U;
+            const uint16_t V = (srcX + 3 < rowWords) ? normalize_y210_word_for_upload(src16[srcX + 3]) : U;
 
             uint16_t *d4 = dst16 + x * 4;
             d4[0] = Y0;
@@ -1539,6 +1561,147 @@ bool SharedScenePipeline::render_uploaded_yuv_to_fp16(gcap_pixfmt_t fmt, int fra
     return true;
 }
 
+namespace
+{
+    struct RawRgb10Header
+    {
+        uint32_t magic;
+        uint32_t width;
+        uint32_t height;
+        uint32_t channels;
+        uint32_t bitDepth;
+    };
+
+    static inline uint16_t ssp_float_to_10bit(float v)
+    {
+        if (v < 0.0f)
+            v = 0.0f;
+        if (v > 1.0f)
+            v = 1.0f;
+        return static_cast<uint16_t>(std::lround(v * 1023.0f));
+    }
+
+    static bool ssp_write_rgb10_raw(const std::wstring &path, int w, int h, const std::vector<uint16_t> &rgb10)
+    {
+        std::ofstream ofs(std::filesystem::path(path), std::ios::binary);
+        if (!ofs)
+            return false;
+        RawRgb10Header hdr{0x30314752u, static_cast<uint32_t>(w), static_cast<uint32_t>(h), 3u, 10u};
+        ofs.write(reinterpret_cast<const char *>(&hdr), sizeof(hdr));
+        ofs.write(reinterpret_cast<const char *>(rgb10.data()), static_cast<std::streamsize>(rgb10.size() * sizeof(uint16_t)));
+        return ofs.good();
+    }
+
+    static bool ssp_write_rgb10_stats(const std::wstring &path, int w, int h, const std::vector<uint16_t> &rgb10)
+    {
+        if (rgb10.empty())
+            return false;
+        uint16_t minV[3] = {1023, 1023, 1023};
+        uint16_t maxV[3] = {0, 0, 0};
+        bool anyGt255 = false;
+        bool bins[3][1024] = {};
+        for (size_t i = 0; i + 2 < rgb10.size(); i += 3)
+        {
+            for (int c = 0; c < 3; ++c)
+            {
+                uint16_t v = rgb10[i + c];
+                minV[c] = (std::min)(minV[c], v);
+                maxV[c] = (std::max)(maxV[c], v);
+                if (v > 255)
+                    anyGt255 = true;
+                bins[c][v] = true;
+            }
+        }
+        int unique[3] = {0, 0, 0};
+        for (int c = 0; c < 3; ++c)
+            for (bool hit : bins[c])
+                if (hit)
+                    ++unique[c];
+        std::ofstream ofs{std::filesystem::path(path)};
+        if (!ofs)
+            return false;
+        ofs << "Width=" << w << "\n";
+        ofs << "Height=" << h << "\n";
+        ofs << "Format=RGB10 dump from FP16 scene\n";
+        ofs << "R min=" << minV[0] << " max=" << maxV[0] << " unique=" << unique[0] << "\n";
+        ofs << "G min=" << minV[1] << " max=" << maxV[1] << " unique=" << unique[1] << "\n";
+        ofs << "B min=" << minV[2] << " max=" << maxV[2] << " unique=" << unique[2] << "\n";
+        ofs << "Any value > 255=" << (anyGt255 ? "YES" : "NO") << "\n";
+        return ofs.good();
+    }
+
+    static bool ssp_write_rgb16_tiff(const std::wstring &path, int w, int h, const std::vector<uint16_t> &rgb10)
+    {
+        HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        const bool needUninit = SUCCEEDED(hr);
+        IWICImagingFactory *factory = nullptr;
+        IWICBitmapEncoder *encoder = nullptr;
+        IWICStream *stream = nullptr;
+        IWICBitmapFrameEncode *frame = nullptr;
+        IPropertyBag2 *bag = nullptr;
+        bool ok = false;
+        do
+        {
+            hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+            if (FAILED(hr) || !factory)
+                break;
+            hr = factory->CreateStream(&stream);
+            if (FAILED(hr) || !stream)
+                break;
+            hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
+            if (FAILED(hr))
+                break;
+            hr = factory->CreateEncoder(GUID_ContainerFormatTiff, nullptr, &encoder);
+            if (FAILED(hr) || !encoder)
+                break;
+            hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
+            if (FAILED(hr))
+                break;
+            hr = encoder->CreateNewFrame(&frame, &bag);
+            if (FAILED(hr) || !frame)
+                break;
+            hr = frame->Initialize(bag);
+            if (FAILED(hr))
+                break;
+            hr = frame->SetSize(static_cast<UINT>(w), static_cast<UINT>(h));
+            if (FAILED(hr))
+                break;
+            WICPixelFormatGUID pf = GUID_WICPixelFormat48bppRGB;
+            hr = frame->SetPixelFormat(&pf);
+            if (FAILED(hr) || !IsEqualGUID(pf, GUID_WICPixelFormat48bppRGB))
+                break;
+            std::vector<uint16_t> rgb16(rgb10.size());
+            for (size_t i = 0; i < rgb10.size(); ++i)
+                rgb16[i] = static_cast<uint16_t>((static_cast<uint32_t>(rgb10[i]) * 65535u + 511u) / 1023u);
+            const UINT stride = static_cast<UINT>(w * 3 * sizeof(uint16_t));
+            const UINT imageSize = static_cast<UINT>(rgb16.size() * sizeof(uint16_t));
+            hr = frame->WritePixels(static_cast<UINT>(h), stride, imageSize, reinterpret_cast<BYTE *>(rgb16.data()));
+            if (FAILED(hr))
+                break;
+            hr = frame->Commit();
+            if (FAILED(hr))
+                break;
+            hr = encoder->Commit();
+            if (FAILED(hr))
+                break;
+            ok = true;
+        } while (false);
+        if (bag)
+            bag->Release();
+        if (frame)
+            frame->Release();
+        if (encoder)
+            encoder->Release();
+        if (stream)
+            stream->Release();
+        if (factory)
+            factory->Release();
+        if (needUninit)
+            CoUninitialize();
+        return ok;
+    }
+}
+
 bool SharedScenePipeline::copy_fp16_to_scene()
 {
     if (!ctx_ || !rt_fp16_ || !rt_scene_fp16_)
@@ -1568,6 +1731,52 @@ bool SharedScenePipeline::readback_to_frame(int frame_w, int frame_h, uint64_t p
     out->pts_ns = pts_ns;
     out->frame_id = frame_id;
     return true;
+}
+
+bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool export_raw, bool export_tiff, bool export_stats)
+{
+    if (!base_path || !*base_path || !ctx_ || !rt_scene_stage_fp16_ || !rt_scene_fp16_ || rt_w_ <= 0 || rt_h_ <= 0)
+        return false;
+
+    ctx_->CopyResource(rt_scene_stage_fp16_.Get(), rt_scene_fp16_.Get());
+    D3D11_MAPPED_SUBRESOURCE m{};
+    if (FAILED(ctx_->Map(rt_scene_stage_fp16_.Get(), 0, D3D11_MAP_READ, 0, &m)))
+        return false;
+
+    std::vector<uint16_t> rgb10;
+    rgb10.resize(static_cast<size_t>(rt_w_) * static_cast<size_t>(rt_h_) * 3u);
+    for (int y = 0; y < rt_h_; ++y)
+    {
+        const uint8_t *srcRow = static_cast<const uint8_t *>(m.pData) + static_cast<size_t>(y) * static_cast<size_t>(m.RowPitch);
+        const uint16_t *src = reinterpret_cast<const uint16_t *>(srcRow);
+        for (int x = 0; x < rt_w_; ++x)
+        {
+            const size_t di = (static_cast<size_t>(y) * static_cast<size_t>(rt_w_) + static_cast<size_t>(x)) * 3u;
+            const float r = DirectX::PackedVector::XMConvertHalfToFloat(src[x * 4 + 0]);
+            const float g = DirectX::PackedVector::XMConvertHalfToFloat(src[x * 4 + 1]);
+            const float b = DirectX::PackedVector::XMConvertHalfToFloat(src[x * 4 + 2]);
+            rgb10[di + 0] = ssp_float_to_10bit(r);
+            rgb10[di + 1] = ssp_float_to_10bit(g);
+            rgb10[di + 2] = ssp_float_to_10bit(b);
+        }
+    }
+    ctx_->Unmap(rt_scene_stage_fp16_.Get(), 0);
+
+    const std::wstring base(base_path);
+    bool ok = true;
+    if (export_raw)
+        ok = ssp_write_rgb10_raw(base + L".raw", rt_w_, rt_h_, rgb10) && ok;
+    if (export_tiff)
+        ok = ssp_write_rgb16_tiff(base + L".tiff", rt_w_, rt_h_, rgb10) && ok;
+    if (export_stats)
+        ok = ssp_write_rgb10_stats(base + L".stats.txt", rt_w_, rt_h_, rgb10) && ok;
+
+    char msg[512] = {};
+    std::snprintf(msg, sizeof(msg),
+                  "[SharedScene] export_scene_rgb10 base=%ls size=%dx%d raw=%d tiff=%d stats=%d ok=%d",
+                  base_path, rt_w_, rt_h_, export_raw ? 1 : 0, export_tiff ? 1 : 0, export_stats ? 1 : 0, ok ? 1 : 0);
+    ssp_log_text(msg);
+    return ok;
 }
 
 void SharedScenePipeline::release_preview_swapchain()
@@ -1803,7 +2012,6 @@ bool SharedScenePipeline::present_preview(int src_w, int src_h)
     HRESULT hr = preview_swapchain_->Present(1, 0);
     return SUCCEEDED(hr);
 }
-
 
 DXGI_FORMAT SharedScenePipeline::preview_backbuffer_format() const
 {

@@ -23,6 +23,7 @@ EXPORTS
     gcap_get_audio_device_count
     gcap_enum_audio_devices
     gcap_get_active_backend
+    gcap_export_preview_scene_rgb10
     gcap_enum_video_caps
     gcap_enum_supported_pixel_formats
     gcap_enum_property_pages
