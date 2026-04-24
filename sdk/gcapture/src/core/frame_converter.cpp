@@ -8,11 +8,9 @@
 static constexpr float kPi = 3.14159265358979323846f;
 static inline uint16_t normalize_y210_word(uint16_t v)
 {
-    const uint16_t low10 = static_cast<uint16_t>(v & 0x03FFu);
-    const uint16_t high10 = static_cast<uint16_t>((v >> 6) & 0x03FFu);
-    if (low10 != 0)
-        return low10;
-    return high10;
+    // Y210 stores each 10-bit component left-aligned in a 16-bit WORD.
+    // Bits [15:6] are valid, bits [5:0] are padding.
+    return static_cast<uint16_t>((v >> 6) & 0x03FFu);
 }
 
 
@@ -275,9 +273,7 @@ void gcap::y210_to_argb(const uint8_t *y210,
         for (int x = 0; x < width; x += 2)
         {
             const int base = x * 2;
-
-            // Many drivers place valid 10-bit values in the low 10 bits for Y210.
-            // This matches the rest of this project’s current Y210 handling.
+            // Y210 WORD layout is Y0 U Y1 V; each component is 10-bit left-aligned.
             const int Y0 = (int)(normalize_y210_word(src[base + 0]) * 255u + 511u) / 1023;
             uint8_t U = (uint8_t)((normalize_y210_word(src[base + 1]) * 255u + 511u) / 1023);
             const int Y1 = (x + 1 < width)

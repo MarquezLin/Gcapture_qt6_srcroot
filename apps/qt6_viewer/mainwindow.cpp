@@ -46,11 +46,9 @@ namespace
 
     static inline uint16_t normalizeY210WordLocal(uint16_t v)
     {
-        const uint16_t low10 = static_cast<uint16_t>(v & 0x03FFu);
-        const uint16_t high10 = static_cast<uint16_t>((v >> 6) & 0x03FFu);
-        if (low10 != 0)
-            return low10;
-        return high10;
+        // Y210 stores each 10-bit component left-aligned in a 16-bit WORD.
+        // Bits [15:6] are valid, bits [5:0] are padding.
+        return static_cast<uint16_t>((v >> 6) & 0x03FFu);
     }
 
     static inline void yuvToRgbLocal(int y, int u, int v, uint8_t &b, uint8_t &g, uint8_t &r)

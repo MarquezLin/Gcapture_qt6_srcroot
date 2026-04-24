@@ -32,11 +32,9 @@ using Microsoft::WRL::ComPtr;
 
 static inline uint16_t normalize_y210_word_for_upload(uint16_t v)
 {
-    const uint16_t low10 = static_cast<uint16_t>(v & 0x03FFu);
-    const uint16_t high10 = static_cast<uint16_t>((v >> 6) & 0x03FFu);
-    if (low10 != 0)
-        return low10;
-    return high10;
+    // Y210 stores each 10-bit component left-aligned in a 16-bit WORD.
+    // Bits [15:6] are valid, bits [5:0] are padding.
+    return static_cast<uint16_t>((v >> 6) & 0x03FFu);
 }
 
 static const char *ss_dxgi_format_name(DXGI_FORMAT fmt)
