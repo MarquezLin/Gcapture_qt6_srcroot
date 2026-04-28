@@ -8,6 +8,78 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QUrl>
+namespace
+{
+QString recordInputFormatName(gcap_pixfmt_t fmt)
+{
+    switch (fmt)
+    {
+    case GCAP_FMT_NV12: return QStringLiteral("NV12");
+    case GCAP_FMT_YUY2: return QStringLiteral("YUY2");
+    case GCAP_FMT_ARGB: return QStringLiteral("ARGB/RGB32");
+    case GCAP_FMT_P010: return QStringLiteral("P010");
+    case GCAP_FMT_Y210: return QStringLiteral("Y210");
+    case GCAP_FMT_V210: return QStringLiteral("V210");
+    case GCAP_FMT_R210: return QStringLiteral("R210");
+    default: return QStringLiteral("UNKNOWN");
+    }
+}
+
+bool recordFormatUsesHevcMain10(gcap_pixfmt_t fmt)
+{
+    return fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
+}
+
+gcap_pixfmt_t effectiveRecordingFormat(gcap_handle h, gcap_pixfmt_t fallback)
+{
+    if (!h)
+        return fallback;
+    gcap_runtime_info_t rt{};
+    if (gcap_get_runtime_info(h, &rt) == GCAP_OK)
+    {
+        switch (rt.negotiated.pixfmt)
+        {
+        case GCAP_FMT_NV12:
+        case GCAP_FMT_YUY2:
+        case GCAP_FMT_ARGB:
+        case GCAP_FMT_P010:
+        case GCAP_FMT_Y210:
+        case GCAP_FMT_V210:
+        case GCAP_FMT_R210:
+            return rt.negotiated.pixfmt;
+        default:
+            break;
+        }
+    }
+    return fallback;
+}
+
+QString buildRecordEncoderLabel(int backend, gcap_pixfmt_t fmt)
+{
+    const QString inFmt = recordInputFormatName(fmt);
+    if (backend == GCAP_BACKEND_DSHOW)
+    {
+        if (fmt == GCAP_FMT_P010)
+            return QStringLiteral("FFmpeg HEVC / H.265 Main10 (input P010 10-bit, output yuv420p10le, video-only)");
+        if (fmt == GCAP_FMT_Y210)
+            return QStringLiteral("FFmpeg HEVC / H.265 Main10 (input Y210 10-bit 4:2:2, output yuv420p10le 10-bit 4:2:0, video-only)");
+        return QStringLiteral("FFmpeg H.264 / AVC (input %1, output yuv420p 8-bit, video-only)").arg(inFmt);
+    }
+    if (recordFormatUsesHevcMain10(fmt))
+        return QStringLiteral("Media Foundation HEVC / H.265 Encoder (Sink Writer, input %1 / 10-bit)").arg(inFmt);
+    return QStringLiteral("Media Foundation H.264 / AVC Encoder (Sink Writer, input %1 / 8-bit)").arg(inFmt);
+}
+
+QString buildRecordModeLabel(int backend)
+{
+    if (backend == GCAP_BACKEND_DSHOW)
+        return QStringLiteral("DShow + FFmpeg MP4");
+    if (backend == GCAP_BACKEND_WINMF_CPU || backend == GCAP_BACKEND_WINMF_GPU)
+        return QStringLiteral("Media Foundation Sink Writer");
+    return QStringLiteral("Recorder");
+}
+}
+
 
 void MainWindow::resetRuntimeTracking()
 {
@@ -87,15 +159,11 @@ void MainWindow::stopRecordingSession(bool showSummary)
 
         const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
         const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
-
-        QString codecLabel;
-        if (currentProfile_.format == GCAP_FMT_P010)
-            codecLabel = QStringLiteral("HEVC / H.265 (input P010 10-bit)");
-        else
-            codecLabel = QStringLiteral("H.264 / AVC(input NV12 8-bit)");
-
-        if (!recordEncoderName_.isEmpty())
-            codecLabel = recordEncoderName_;
+        const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
+        const QString modeLabel = buildRecordModeLabel(backend);
+        const QString codecLabel = recordEncoderName_.isEmpty()
+                                     ? buildRecordEncoderLabel(backend, effectiveRecordingFormat(h_, currentProfile_.format))
+                                     : recordEncoderName_;
 
         const QString info = QStringLiteral(
                                  "Record done\n"
@@ -103,13 +171,15 @@ void MainWindow::stopRecordingSession(bool showSummary)
                                  "size:%2 MB\n"
                                  "Actual resolution:%3 x %4\n"
                                  "Actual FPS:%5\n"
-                                 "encoder:%6\n"
-                                 "bit rate : %7 kbps")
+                                 "record mode:%6\n"
+                                 "encoder:%7\n"
+                                 "file avg bit rate:%8 kbps")
                                  .arg(recordPath_)
                                  .arg(QString::number(sizeBytes / (1024.0 * 1024.0), 'f', 2))
                                  .arg(srcW)
                                  .arg(srcH)
                                  .arg(QString::number(fps, 'f', 2))
+                                 .arg(modeLabel)
                                  .arg(codecLabel)
                                  .arg(QString::number(bitrateKbps, 'f', 1));
 
@@ -117,14 +187,14 @@ void MainWindow::stopRecordingSession(bool showSummary)
 
         if (ui->statusbar)
         {
-            const QString sb = QStringLiteral("Record mode:Media Foundation (Sink Writer) | file:%1 | %2 kbps")
+            const QString sb = QStringLiteral("Record done: %1 | file:%2 | avg %3 kbps")
+                                   .arg(modeLabel)
                                    .arg(fi.fileName())
                                    .arg(QString::number(bitrateKbps, 'f', 1));
             ui->statusbar->showMessage(sb);
         }
     }
 }
-
 QString MainWindow::buildRecordingPath(const QDateTime &now) const
 {
     const QString baseDir = QCoreApplication::applicationDirPath() + QStringLiteral("/recordings");
@@ -413,16 +483,17 @@ void MainWindow::onRecord()
     recordStartTime_ = now;
     recordPath_ = fullPath;
 
-    if (currentProfile_.format == GCAP_FMT_P010)
-        recordEncoderName_ = QStringLiteral("Media Foundation HEVC / H.265 Encoder(Sink Writer, P010 10-bit)");
-    else
-        recordEncoderName_ = QStringLiteral("Media Foundation H.264 / AVC Encoder(Sink Writer, NV12 8-bit)");
+    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
+    const gcap_pixfmt_t recFmt = effectiveRecordingFormat(h_, currentProfile_.format);
+    const QString modeLabel = buildRecordModeLabel(backend);
+    recordEncoderName_ = buildRecordEncoderLabel(backend, recFmt);
 
     if (ui->statusbar)
     {
         const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
         const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
-        const QString sb = QStringLiteral("Record mode : Media Foundation (Sink Writer) | Encord : %1 | %2 x %3")
+        const QString sb = QStringLiteral("Record mode: %1 | Encoder: %2 | %3 x %4")
+                               .arg(modeLabel)
                                .arg(recordEncoderName_)
                                .arg(srcW)
                                .arg(srcH);
