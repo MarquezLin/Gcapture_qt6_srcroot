@@ -8,6 +8,7 @@
 #include "dshow_provider.h"
 #include "dshow_custom_sink.h"
 #include "dshow_signal_probe.h"
+#include "ffmpeg_video_recorder.h"
 #include <objbase.h>
 #include <dvdmedia.h>
 #include <mfapi.h>
@@ -163,6 +164,26 @@ namespace
                : (fmt == GCAP_FMT_YUY2) ? MEDIASUBTYPE_YUY2
                : (fmt == GCAP_FMT_ARGB) ? MEDIASUBTYPE_ARGB32
                                         : GUID{};
+    }
+
+    static gcap_pixfmt_t gcapFmtFromDShowSubtype(const GUID &g)
+    {
+        if (g == MEDIASUBTYPE_NV12 || g == MFVideoFormat_NV12)
+            return GCAP_FMT_NV12;
+        if (g == MEDIASUBTYPE_YUY2 || g == MFVideoFormat_YUY2)
+            return GCAP_FMT_YUY2;
+        if (g == MFVideoFormat_P010)
+            return GCAP_FMT_P010;
+        if (g == MEDIASUBTYPE_Y210 || g == MFVideoFormat_Y210)
+            return GCAP_FMT_Y210;
+        if (g == MEDIASUBTYPE_ARGB32 || g == MFVideoFormat_ARGB32 || g == MEDIASUBTYPE_RGB32 || g == MEDIASUBTYPE_RGB24)
+            return GCAP_FMT_ARGB;
+        return GCAP_FMT_NV12;
+    }
+
+    static bool ffmpegRecordableFormat(gcap_pixfmt_t fmt)
+    {
+        return fmt == GCAP_FMT_NV12 || fmt == GCAP_FMT_YUY2 || fmt == GCAP_FMT_ARGB || fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
     }
 
     static int dshowQualityRank(const GUID &g)
@@ -1677,7 +1698,7 @@ void DShowProvider::framePumpLoop()
             const uint64_t ptsNs = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
             const uint64_t frameId = ++frameCounter_;
 
-            if (pcb && haveRaw && rawOnlyActive_)
+            if ((pcb || recordingThreadRunning_.load()) && haveRaw && rawOnlyActive_)
             {
                 gcap_frame_packet_t pkt{};
                 pkt.width = rw;
@@ -1740,7 +1761,9 @@ void DShowProvider::framePumpLoop()
                                   user);
                     dshow_log(dbg);
                 }
-                pcb(&pkt, user);
+                enqueueRecordingFrame(pkt);
+                if (pcb)
+                    pcb(&pkt, user);
             }
 
             bool sharedReady = false;
@@ -2521,6 +2544,7 @@ void DShowProvider::stop()
 void DShowProvider::close()
 {
     dshow_log("[DShow] close()");
+    stopRecording();
     stop();
 
     std::lock_guard<std::mutex> lock(mtx_);
@@ -2551,4 +2575,273 @@ void DShowProvider::close()
     signalVendorModule_[0] = 0;
     deviceLost_ = false;
     disableDirectY210Preview_ = false;
+}
+
+gcap_status_t DShowProvider::startRecording(const char *pathUtf8)
+{
+    if (!pathUtf8 || !*pathUtf8)
+        return GCAP_EINVAL;
+    if (!rawOnlyActive_ || width_ <= 0 || height_ <= 0)
+        return GCAP_ESTATE;
+    const gcap_pixfmt_t recFmt = gcapFmtFromDShowSubtype(subtype_);
+    if (!ffmpegRecordableFormat(recFmt))
+    {
+        char msg[256] = {};
+        sprintf_s(msg, "[DShow][Record][FFmpeg] unsupported format for MP4 recording: %s", subtypeName(subtype_));
+        dshow_log(msg);
+        return GCAP_ENOTSUP;
+    }
+
+    stopRecordingWorker();
+
+    auto rec = std::make_unique<FfmpegVideoRecorder>();
+    FfmpegVideoRecordConfig cfg{};
+    cfg.path = pathUtf8;
+    cfg.width = width_;
+    cfg.height = height_;
+    cfg.fps_num = 30;
+    cfg.fps_den = 1;
+    cfg.bitrate_kbps = readEnvIntClamp("GCAP_FFMPEG_BITRATE_KBPS", 8000, 500, 50000);
+    cfg.input_format = recFmt;
+
+    std::string err;
+    if (!rec->open(cfg, &err))
+    {
+        char msg[512] = {};
+        sprintf_s(msg, "[DShow][Record][FFmpeg] open failed: %s", err.c_str());
+        dshow_log(msg);
+        return GCAP_ENOTSUP;
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(recordingQueueMutex_);
+        recordingLatestFrame_ = RecordingQueuedFrame{};
+        recordingHaveLatestFrame_ = false;
+        recordingWrittenFrames_ = 0;
+        recordingDuplicatedFrames_ = 0;
+        recordingInputFrames_ = 0;
+        recordingOverwrittenFrames_ = 0;
+        recordingUnsupportedFrames_ = 0;
+        recordingDroppedFrames_ = 0;
+        recordingFpsNum_ = cfg.fps_num;
+        recordingFpsDen_ = cfg.fps_den;
+    }
+    {
+        std::lock_guard<std::mutex> lk(recorderMutex_);
+        ffmpegRecorder_ = std::move(rec);
+    }
+
+    recordingThreadRunning_.store(true);
+    recordingThread_ = std::thread([this]() { this->recordingWorkerLoop(); });
+
+    char msg[512] = {};
+    sprintf_s(msg,
+              "[DShow][Record] start FFmpeg MP4 recording: %dx%d %s input=%.2ffps output=30fps codec=H264 bitrate=%dkbps mode=latest-frame-cfr audio=off",
+              width_, height_, profileFormatName(recFmt), negotiatedFpsDen_ ? (double)negotiatedFpsNum_ / (double)negotiatedFpsDen_ : 0.0, cfg.bitrate_kbps);
+    dshow_log(msg);
+    return GCAP_OK;
+}
+
+gcap_status_t DShowProvider::stopRecording()
+{
+    stopRecordingWorker();
+    return GCAP_OK;
+}
+
+gcap_status_t DShowProvider::setRecordingAudioDevice(const char *device_id_utf8)
+{
+    rec_audio_device_id_ = device_id_utf8 ? device_id_utf8 : "";
+    dshow_log("[DShow][Record][FFmpeg] audio device ignored in first FFmpeg recorder version (video-only)");
+    return GCAP_OK;
+}
+
+void DShowProvider::stopRecordingWorker()
+{
+    const bool wasRunning = recordingThreadRunning_.exchange(false);
+    recordingQueueCv_.notify_all();
+    if (recordingThread_.joinable())
+        recordingThread_.join();
+
+    {
+        std::lock_guard<std::mutex> lk(recorderMutex_);
+        if (ffmpegRecorder_)
+        {
+            ffmpegRecorder_->close();
+            ffmpegRecorder_.reset();
+        }
+    }
+
+    if (wasRunning)
+    {
+        char msg[512] = {};
+        sprintf_s(msg,
+                  "[DShow][Record] stop FFmpeg MP4 recording: written=%llu duplicated=%llu input=%llu overwritten=%llu unsupported=%llu",
+                  static_cast<unsigned long long>(recordingWrittenFrames_),
+                  static_cast<unsigned long long>(recordingDuplicatedFrames_),
+                  static_cast<unsigned long long>(recordingInputFrames_),
+                  static_cast<unsigned long long>(recordingOverwrittenFrames_),
+                  static_cast<unsigned long long>(recordingUnsupportedFrames_));
+        dshow_log(msg);
+    }
+
+    std::lock_guard<std::mutex> lk(recordingQueueMutex_);
+    recordingLatestFrame_ = RecordingQueuedFrame{};
+    recordingHaveLatestFrame_ = false;
+    recordingQueue_.clear();
+}
+
+void DShowProvider::enqueueRecordingFrame(const gcap_frame_packet_t &pkt)
+{
+    if (!recordingThreadRunning_.load())
+        return;
+    if (!ffmpegRecordableFormat(pkt.format) || !pkt.data[0] || pkt.width <= 0 || pkt.height <= 0)
+    {
+        std::lock_guard<std::mutex> lk(recordingQueueMutex_);
+        ++recordingUnsupportedFrames_;
+        return;
+    }
+
+    RecordingQueuedFrame q{};
+    q.pkt = pkt;
+    q.planeOffset[0] = 0;
+    q.planeOffset[1] = 0;
+    q.planeOffset[2] = 0;
+
+    size_t totalBytes = 0;
+    if (pkt.format == GCAP_FMT_NV12 || pkt.format == GCAP_FMT_P010)
+    {
+        if (pkt.plane_count < 2 || !pkt.data[1] || pkt.stride[0] <= 0 || pkt.stride[1] <= 0)
+        {
+            std::lock_guard<std::mutex> lk(recordingQueueMutex_);
+            ++recordingUnsupportedFrames_;
+            return;
+        }
+        const size_t yBytes = static_cast<size_t>(pkt.stride[0]) * static_cast<size_t>(pkt.height);
+        const size_t uvBytes = static_cast<size_t>(pkt.stride[1]) * static_cast<size_t>(pkt.height / 2);
+        q.planeOffset[0] = 0;
+        q.planeOffset[1] = yBytes;
+        q.bytes.resize(yBytes + uvBytes);
+        std::memcpy(q.bytes.data(), pkt.data[0], yBytes);
+        std::memcpy(q.bytes.data() + yBytes, pkt.data[1], uvBytes);
+        totalBytes = yBytes + uvBytes;
+    }
+    else if (pkt.format == GCAP_FMT_YUY2 || pkt.format == GCAP_FMT_Y210 || pkt.format == GCAP_FMT_ARGB)
+    {
+        if (pkt.stride[0] <= 0)
+        {
+            std::lock_guard<std::mutex> lk(recordingQueueMutex_);
+            ++recordingUnsupportedFrames_;
+            return;
+        }
+        const size_t bytes = static_cast<size_t>(pkt.stride[0]) * static_cast<size_t>(pkt.height);
+        q.planeOffset[0] = 0;
+        q.bytes.resize(bytes);
+        std::memcpy(q.bytes.data(), pkt.data[0], bytes);
+        totalBytes = bytes;
+    }
+    else
+    {
+        std::lock_guard<std::mutex> lk(recordingQueueMutex_);
+        ++recordingUnsupportedFrames_;
+        return;
+    }
+
+    q.pkt.data[0] = nullptr;
+    q.pkt.data[1] = nullptr;
+    q.pkt.data[2] = nullptr;
+
+    {
+        std::lock_guard<std::mutex> lk(recordingQueueMutex_);
+        ++recordingInputFrames_;
+        if (recordingHaveLatestFrame_)
+            ++recordingOverwrittenFrames_;
+        recordingLatestFrame_ = std::move(q);
+        recordingHaveLatestFrame_ = true;
+    }
+    (void)totalBytes;
+    recordingQueueCv_.notify_one();
+}
+
+void DShowProvider::recordingWorkerLoop()
+{
+    RecordingQueuedFrame last{};
+    bool haveLast = false;
+    uint64_t lastFrameId = 0;
+    const uint32_t fpsN = recordingFpsNum_ ? recordingFpsNum_ : 30;
+    const uint32_t fpsD = recordingFpsDen_ ? recordingFpsDen_ : 1;
+    const auto frameDur = std::chrono::nanoseconds((1000000000ull * fpsD) / fpsN);
+    auto nextTick = std::chrono::steady_clock::now();
+
+    while (recordingThreadRunning_.load())
+    {
+        RecordingQueuedFrame cur{};
+        bool haveCur = false;
+        {
+            std::unique_lock<std::mutex> lk(recordingQueueMutex_);
+            if (!recordingHaveLatestFrame_ && !haveLast)
+            {
+                recordingQueueCv_.wait_for(lk, std::chrono::milliseconds(200), [this]() {
+                    return !recordingThreadRunning_.load() || recordingHaveLatestFrame_;
+                });
+            }
+            if (!recordingThreadRunning_.load())
+                break;
+            if (recordingHaveLatestFrame_)
+            {
+                cur = recordingLatestFrame_;
+                recordingHaveLatestFrame_ = false;
+                haveCur = true;
+            }
+        }
+
+        if (haveCur)
+        {
+            last = std::move(cur);
+            haveLast = true;
+        }
+        if (!haveLast)
+            continue;
+
+        if (last.pkt.frame_id == lastFrameId)
+            ++recordingDuplicatedFrames_;
+        lastFrameId = last.pkt.frame_id;
+
+        FfmpegVideoFrameView view{};
+        view.format = last.pkt.format;
+        view.width = last.pkt.width;
+        view.height = last.pkt.height;
+        view.data[0] = last.bytes.data() + last.planeOffset[0];
+        view.stride[0] = last.pkt.stride[0];
+        if ((last.pkt.format == GCAP_FMT_NV12 || last.pkt.format == GCAP_FMT_P010) && last.pkt.plane_count >= 2)
+        {
+            view.data[1] = last.bytes.data() + last.planeOffset[1];
+            view.stride[1] = last.pkt.stride[1];
+        }
+        view.pts = static_cast<int64_t>(recordingWrittenFrames_);
+
+        FfmpegVideoRecorder *rec = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(recorderMutex_);
+            rec = ffmpegRecorder_.get();
+        }
+        if (!rec)
+            break;
+
+        std::string err;
+        if (!rec->writeFrame(view, &err))
+        {
+            char msg[512] = {};
+            sprintf_s(msg, "[DShow][Record][FFmpeg] writeFrame failed: %s", err.c_str());
+            dshow_log(msg);
+            break;
+        }
+        ++recordingWrittenFrames_;
+
+        nextTick += frameDur;
+        const auto now = std::chrono::steady_clock::now();
+        if (nextTick > now)
+            std::this_thread::sleep_until(nextTick);
+        else
+            nextTick = now;
+    }
 }

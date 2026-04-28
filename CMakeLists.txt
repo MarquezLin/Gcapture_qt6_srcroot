@@ -12,6 +12,12 @@ set(CMAKE_AUTORCC ON)
 
 # ---- NVAPI root: shared by all targets ----
 set(NVAPI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvapi")
+# ---- FFmpeg root: shared by gcapture / viewer ----
+# Expected layout:
+#   third_party/ffmpeg/include
+#   third_party/ffmpeg/lib
+#   third_party/ffmpeg/bin
+set(FFMPEG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ffmpeg" CACHE PATH "FFmpeg root directory")
 
 # Output folders (keep build tree tidy)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

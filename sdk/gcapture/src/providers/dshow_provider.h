@@ -6,6 +6,8 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <condition_variable>
+#include <deque>
 #include <wrl/client.h>
 
 #include <windows.h>
@@ -23,6 +25,7 @@
 #include "dshow_custom_sink.h"
 #include "../core/capture_manager.h"
 #include "../pipeline/shared_scene_pipeline.h"
+class FfmpegVideoRecorder;
 
 class DShowProvider : public ICaptureProvider
 {
@@ -43,6 +46,9 @@ public:
     bool getRuntimeInfo(gcap_runtime_info_t &out) override;
     bool setPreview(const gcap_preview_desc_t &desc) override;
     bool exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats) override;
+    gcap_status_t startRecording(const char *pathUtf8);
+    gcap_status_t stopRecording();
+    gcap_status_t setRecordingAudioDevice(const char *device_id_utf8);
 
 private:
     void ensure_com();
@@ -84,6 +90,9 @@ private:
     void logPreviewProbeStats(uint64_t frameId, int frameW, int frameH, bool directRaw, const char *presentTag);
     bool refreshSignalProbe(bool force);
     void logCurrentStreamConfigFormat(const char *tag);
+    void enqueueRecordingFrame(const gcap_frame_packet_t &pkt);
+    void stopRecordingWorker();
+    void recordingWorkerLoop();
 
 private:
     Microsoft::WRL::ComPtr<IGraphBuilder> graph_;
@@ -124,6 +133,32 @@ private:
     std::vector<uint8_t> argbBuffer_;
     std::atomic<uint64_t> frameCounter_{0};
     std::atomic<CallbackSource> lastCallbackSource_{CallbackSource::Unknown};
+
+    struct RecordingQueuedFrame
+    {
+        gcap_frame_packet_t pkt{};
+        std::vector<uint8_t> bytes;
+        size_t planeOffset[4] = {};
+    };
+
+    std::unique_ptr<FfmpegVideoRecorder> ffmpegRecorder_;
+    RecordingQueuedFrame recordingLatestFrame_;
+    bool recordingHaveLatestFrame_ = false;
+    uint64_t recordingWrittenFrames_ = 0;
+    uint64_t recordingDuplicatedFrames_ = 0;
+    uint64_t recordingInputFrames_ = 0;
+    uint64_t recordingOverwrittenFrames_ = 0;
+    uint64_t recordingUnsupportedFrames_ = 0;
+    uint32_t recordingFpsNum_ = 30;
+    uint32_t recordingFpsDen_ = 1;
+    std::mutex recorderMutex_;
+    std::string rec_audio_device_id_;
+    std::thread recordingThread_;
+    std::atomic<bool> recordingThreadRunning_{false};
+    std::mutex recordingQueueMutex_;
+    std::condition_variable recordingQueueCv_;
+    std::deque<RecordingQueuedFrame> recordingQueue_;
+    uint64_t recordingDroppedFrames_ = 0;
 
     std::thread framePumpThread_;
     std::atomic<bool> framePumpThreadRunning_{false};

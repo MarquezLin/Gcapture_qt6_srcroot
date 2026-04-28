@@ -11,6 +11,7 @@ add_library(gcapture SHARED
     src/pipeline/shared_scene_pipeline.cpp
     src/providers/winmf_provider.cpp
     src/providers/mf_recorder.cpp
+    src/providers/ffmpeg_video_recorder.cpp
     src/providers/dshow_provider.cpp
     src/providers/dshow_signal_probe.cpp
     src/providers/dshow_raw_renderer.cpp
@@ -23,6 +24,33 @@ target_include_directories(gcapture
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# Optional FFmpeg recorder support for DShow recording.
+# Set FFMPEG_ROOT to a folder containing include/ and lib/.
+set(FFMPEG_ROOT "${CMAKE_SOURCE_DIR}/third_party/ffmpeg" CACHE PATH "FFmpeg root directory")
+if (NOT FFMPEG_ROOT AND DEFINED ENV{FFMPEG_ROOT})
+  set(FFMPEG_ROOT "$ENV{FFMPEG_ROOT}")
+endif()
+if (FFMPEG_ROOT)
+  set(FFMPEG_INCLUDE_DIR "${FFMPEG_ROOT}/include")
+  find_library(FFMPEG_AVFORMAT_LIB avformat PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
+  find_library(FFMPEG_AVCODEC_LIB avcodec PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
+  find_library(FFMPEG_AVUTIL_LIB avutil PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
+  find_library(FFMPEG_SWSCALE_LIB swscale PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
+  if (EXISTS "${FFMPEG_INCLUDE_DIR}/libavformat/avformat.h" AND FFMPEG_AVFORMAT_LIB AND FFMPEG_AVCODEC_LIB AND FFMPEG_AVUTIL_LIB)
+    target_compile_definitions(gcapture PRIVATE GCAP_ENABLE_FFMPEG=1)
+    target_include_directories(gcapture PRIVATE "${FFMPEG_INCLUDE_DIR}")
+    target_link_libraries(gcapture PRIVATE ${FFMPEG_AVFORMAT_LIB} ${FFMPEG_AVCODEC_LIB} ${FFMPEG_AVUTIL_LIB})
+    if (FFMPEG_SWSCALE_LIB)
+      target_link_libraries(gcapture PRIVATE ${FFMPEG_SWSCALE_LIB})
+    endif()
+    message(STATUS "gcapture: FFmpeg recorder enabled: ${FFMPEG_ROOT}")
+  else()
+    message(WARNING "gcapture: FFMPEG_ROOT is set, but FFmpeg headers/libs were not found. DShow FFmpeg recording will return Not supported.")
+  endif()
+else()
+  message(STATUS "gcapture: FFmpeg recorder disabled. Set FFMPEG_ROOT to enable DShow FFmpeg MP4 recording.")
+endif()
 
 if (WIN32)
   target_compile_definitions(gcapture PRIVATE GCAP_WIN_MF GCAP_WIN_DSHOW)

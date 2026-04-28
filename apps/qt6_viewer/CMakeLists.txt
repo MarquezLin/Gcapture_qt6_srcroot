@@ -126,6 +126,21 @@ if (WIN32)
   endif()
 endif()
 
+# Copy FFmpeg runtime DLLs next to qt6_viewer.exe (Windows)
+# FFmpeg itself is kept under srcroot/third_party/ffmpeg, but this patch zip does not include third_party.
+if (WIN32)
+  set(FFMPEG_BIN_DIR "${CMAKE_SOURCE_DIR}/third_party/ffmpeg/bin")
+  if (EXISTS "${FFMPEG_BIN_DIR}")
+    add_custom_command(TARGET qt6_viewer POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${FFMPEG_BIN_DIR}"
+        $<TARGET_FILE_DIR:qt6_viewer>
+    )
+  else()
+    message(WARNING "FFmpeg bin directory not found: ${FFMPEG_BIN_DIR} (skip copy)")
+  endif()
+endif()
+
 # Optional: copy external edid-decode.exe next to qt6_viewer.exe
 option(EDID_DECODE_EXE "Path to a prebuilt edid-decode.exe" "")
 if (EDID_DECODE_EXE)
