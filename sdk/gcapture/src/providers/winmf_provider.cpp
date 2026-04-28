@@ -1178,7 +1178,12 @@ bool WinMFProvider::open(int index)
     }
 
     refresh_signal_probe(true);
-    const bool profileAuto = (profile_.width <= 0 && profile_.height <= 0 && profile_.fps_num <= 0 && profile_.fps_den <= 0 && profile_.format == GCAP_FMT_NV12);
+    // IMPORTANT:
+    // GCAP_FMT_NV12 is also the enum value used when the UI explicitly selects NV12.
+    // Do not treat "format == NV12 && width/height/fps == 0" as AUTO, otherwise
+    // Format: NV12 becomes explicit=AUTO and the HQ policy may still negotiate YUY2.
+    // AUTO is represented by profile_.mode == GCAP_PROFILE_DEVICE_DEFAULT.
+    const bool profileAuto = (profile_.mode == GCAP_PROFILE_DEVICE_DEFAULT);
     const GUID preferredSub = profileAuto ? GUID_NULL : mf_subtype_from_profile_fmt(profile_.format);
 
     if (prefer_gpu_)
@@ -1271,15 +1276,40 @@ bool WinMFProvider::setProfile(const gcap_profile_t &p)
     if (p.mode == GCAP_PROFILE_DEVICE_DEFAULT)
         return true;
 
+    // Before open(), only store the preference. open() / pick_best_native() will use profile_.format.
     if (!reader_)
         return true;
+
+    // UI format combo can create a "format-only" profile:
+    //   mode=CUSTOM, format=NV12/P010/..., width=0, height=0, fps=0.
+    // Do NOT call SetCurrentMediaType with 0x0 / 0fps after open(), otherwise MF returns
+    // an error and CaptureManager::applyCachedStateToProvider() makes gcap_open2() fail.
+    const bool formatOnly =
+        (p.width <= 0) &&
+        (p.height <= 0) &&
+        (p.fps_num <= 0) &&
+        (p.fps_den <= 0);
+
+    if (formatOnly)
+    {
+        std::ostringstream oss;
+        oss << "[WinMF] setProfile: format-only preference stored; skip post-open SetCurrentMediaType"
+            << ", preferred=" << mf_subtype_name(mf_subtype_from_profile_fmt(p.format));
+        emit_error(GCAP_OK, oss.str().c_str());
+        return true;
+    }
 
     ComPtr<IMFMediaType> mt;
     if (FAILED(MFCreateMediaType(&mt)))
         return false;
 
     mt->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-    mt->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+
+    GUID sub = mf_subtype_from_profile_fmt(p.format);
+    if (sub == GUID_NULL)
+        sub = MFVideoFormat_NV12;
+    mt->SetGUID(MF_MT_SUBTYPE, sub);
+
     MFSetAttributeSize(mt.Get(), MF_MT_FRAME_SIZE, p.width, p.height);
     MFSetAttributeRatio(mt.Get(), MF_MT_FRAME_RATE,
                         p.fps_num ? p.fps_num : 60,
@@ -1291,9 +1321,19 @@ bool WinMFProvider::setProfile(const gcap_profile_t &p)
 
     if (FAILED(hr))
     {
-        emit_error(GCAP_OK,
-                   "[WinMF] Custom profile rejected, fallback to device default");
-        return false;
+        std::ostringstream oss;
+        oss << "[WinMF] Custom profile rejected, keep current negotiated media type"
+            << ", requested=" << mf_subtype_name(sub)
+            << ", " << p.width << "x" << p.height
+            << " @ " << (p.fps_num ? p.fps_num : 60);
+        if ((p.fps_den ? p.fps_den : 1) != 1)
+            oss << "/" << (p.fps_den ? p.fps_den : 1);
+        oss << " fps";
+        emit_error(GCAP_OK, oss.str().c_str());
+
+        // Do not fail open() just because the post-open custom apply was rejected.
+        // The provider already has a negotiated media type from open().
+        return true;
     }
 
     emit_error(GCAP_OK, "[WinMF] Custom profile applied");
@@ -1754,6 +1794,90 @@ bool WinMFProvider::pick_best_native(const GUID &preferredSub, GUID &sub, UINT32
     std::sort(list.begin(), list.end(), [](const auto &a, const auto &b)
               { return a.score < b.score; });
     const auto &best = list[0];
+
+    // If the user explicitly selected NV12/P010 and the device does not expose that
+    // subtype as a native type, try asking SourceReader to output the requested
+    // subtype at the best matching size/fps. This is useful for recording, because
+    // MfRecorder currently accepts NV12/P010 only. If the driver/MF transform rejects
+    // it, we keep the old preview fallback below instead of failing open().
+    if ((preferredSub == MFVideoFormat_NV12 || preferredSub == MFVideoFormat_P010) &&
+        best.sub != preferredSub)
+    {
+        ComPtr<IMFMediaType> req;
+        if (SUCCEEDED(MFCreateMediaType(&req)) && req)
+        {
+            req->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+            req->SetGUID(MF_MT_SUBTYPE, preferredSub);
+            MFSetAttributeSize(req.Get(), MF_MT_FRAME_SIZE, best.w, best.h);
+            if (best.fn > 0 && best.fd > 0)
+                MFSetAttributeRatio(req.Get(), MF_MT_FRAME_RATE, best.fn, best.fd);
+            MFSetAttributeRatio(req.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+
+            HRESULT hr = reader_->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, req.Get());
+            if (SUCCEEDED(hr))
+            {
+                ComPtr<IMFMediaType> cur;
+                UINT32 rw = 0, rh = 0, rfn = 0, rfd = 1;
+                GUID rsub = GUID_NULL;
+
+                if (SUCCEEDED(reader_->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &cur)) && cur)
+                {
+                    MFGetAttributeSize(cur.Get(), MF_MT_FRAME_SIZE, &rw, &rh);
+                    MFGetAttributeRatio(cur.Get(), MF_MT_FRAME_RATE, &rfn, &rfd);
+                    cur->GetGUID(MF_MT_SUBTYPE, &rsub);
+                    cur_stride_ = mf_default_stride_bytes(cur.Get());
+                }
+
+                if (rw == 0) rw = best.w;
+                if (rh == 0) rh = best.h;
+                if (rfn == 0) rfn = best.fn;
+                if (rfd == 0) rfd = best.fd ? best.fd : 1;
+                if (rsub == GUID_NULL) rsub = preferredSub;
+
+                if (cur_stride_ <= 0)
+                {
+                    if (rsub == MFVideoFormat_P010)
+                        cur_stride_ = (int)rw * 2;
+                    else if (rsub == MFVideoFormat_NV12)
+                        cur_stride_ = (int)rw;
+                    else if (rsub == MFVideoFormat_Y210)
+                        cur_stride_ = (int)rw * 4;
+                    else if (rsub == MFVideoFormat_YUY2)
+                        cur_stride_ = (int)rw * 2;
+                    else
+                        cur_stride_ = (int)rw * 4;
+                }
+
+                sub = rsub;
+                w = rw;
+                h = rh;
+                fn = rfn;
+                fd = rfd;
+                cpu_path_ = !use_dxgi_;
+
+                std::ostringstream oss;
+                oss << "[WinMF] pick_best_native: explicit=" << mf_explicit_name(preferredSub)
+                    << ", converted_output=" << mf_subtype_name(rsub)
+                    << " from native " << mf_subtype_name(best.sub)
+                    << ", " << rw << "x" << rh
+                    << " @ " << rfn;
+                if (rfd != 1)
+                    oss << "/" << rfd;
+                oss << " fps"
+                    << ", default_stride=" << cur_stride_ << " bytes";
+                emit_error(GCAP_OK, oss.str().c_str());
+                return true;
+            }
+            else
+            {
+                std::ostringstream oss;
+                oss << "[WinMF] explicit " << mf_explicit_name(preferredSub)
+                    << " conversion rejected, fallback to native " << mf_subtype_name(best.sub)
+                    << " hr=0x" << std::hex << (unsigned long)hr;
+                emit_error(GCAP_OK, oss.str().c_str());
+            }
+        }
+    }
 
     // 1) 優先保留可直接進目前管線的完整 media type
     if (best.sub == MFVideoFormat_P010 || best.sub == MFVideoFormat_NV12 ||
