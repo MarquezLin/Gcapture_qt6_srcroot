@@ -842,8 +842,28 @@ gcap_status_t WinMFProvider::startRecording(const char *pathUtf8)
 
     UINT32 w = static_cast<UINT32>(cur_w_);
     UINT32 h = static_cast<UINT32>(cur_h_);
-    UINT32 fpsN = profile_.fps_num ? profile_.fps_num : 60;
-    UINT32 fpsD = profile_.fps_den ? profile_.fps_den : 1;
+
+    // Use the actually negotiated source frame rate for recording.
+    // A format-only UI selection leaves profile_.fps_num/profile_.fps_den as 0,
+    // and the old fallback opened SinkWriter at 60 fps even when the device
+    // negotiated 1920x1080 @ 30 fps.  That doubles encoder pressure and can
+    // make capture-card recording stutter.
+    UINT32 fpsN = (cur_fps_num_ > 0) ? static_cast<UINT32>(cur_fps_num_)
+                                     : (profile_.fps_num ? static_cast<UINT32>(profile_.fps_num) : 30u);
+    UINT32 fpsD = (cur_fps_den_ > 0) ? static_cast<UINT32>(cur_fps_den_)
+                                     : (profile_.fps_den ? static_cast<UINT32>(profile_.fps_den) : 1u);
+    if (fpsD == 0)
+        fpsD = 1;
+
+    {
+        std::ostringstream oss;
+        oss << "[WinMF] startRecording: negotiated=" << mf_subtype_name(cur_subtype_)
+            << " " << w << "x" << h << " @ " << fpsN;
+        if (fpsD != 1)
+            oss << "/" << fpsD;
+        oss << " fps";
+        emit_error(GCAP_OK, oss.str().c_str());
+    }
 
     std::wstring wpath = utf8_to_wstring(pathUtf8);
     // recording audio endpoint (empty => default)
