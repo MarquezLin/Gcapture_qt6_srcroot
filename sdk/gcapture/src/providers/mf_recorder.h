@@ -143,7 +143,26 @@ struct WinMFProvider::MfRecorder
     std::vector<uint8_t> audioAccum;  // PCM16 bytes accumulator
     LONGLONG audioPtsCursor100ns = 0; // continuous audio PTS (OBS-style)
 
+    // ---- Video async writer ----
+    // Keep SinkWriter::WriteSample off the capture / preview thread.
+    // Capture thread only packs one frame and pushes it into this small queue.
+    struct PendingVideoFrame
+    {
+        std::vector<uint8_t> packed; // tight NV12/P010 buffer: Y plane + UV plane
+        LONGLONG ts100ns = 0;
+    };
+
+    std::thread videoThread;
+    std::atomic<bool> videoRunning{false};
+    std::mutex videoMutex;
+    std::condition_variable videoCv;
+    std::deque<PendingVideoFrame> videoQueue;
+    uint64_t videoDropped = 0;
+    uint64_t videoWritten = 0;
+
     void stopAudioThread();
+    void stopVideoThread();
+    void videoWorker();
     void close();
 
     bool open(const std::wstring &path,
@@ -163,7 +182,8 @@ struct WinMFProvider::MfRecorder
 private:
     bool writeOneAudioSample(LONGLONG ts100ns, LONGLONG dur100ns, const uint8_t *data, DWORD bytes);
     bool writeAudioDrainOnce();
-    bool writePlanar(const uint8_t *y, const uint8_t *uv,
-                     UINT32 yStrideBytes, UINT32 uvStrideBytes,
-                     LONGLONG ts100ns);
+    bool enqueuePlanar(const uint8_t *y, const uint8_t *uv,
+                       UINT32 yStrideBytes, UINT32 uvStrideBytes,
+                       LONGLONG ts100ns);
+    bool writePackedFrame(const PendingVideoFrame &frame);
 };

@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <sstream>
@@ -405,8 +406,32 @@ void WinMFProvider::MfRecorder::stopAudioThread()
         audioThread.join();
 }
 
+void WinMFProvider::MfRecorder::stopVideoThread()
+{
+    videoRunning.store(false);
+    {
+        std::lock_guard<std::mutex> lk(videoMutex);
+        // Stop Rec must be responsive. Do not drain a large backlog on UI stop.
+        videoDropped += videoQueue.size();
+        videoQueue.clear();
+    }
+    videoCv.notify_all();
+
+    if (videoThread.joinable())
+        videoThread.join();
+
+    std::ostringstream oss;
+    oss << "[WinMF][Rec] video async stopped: written=" << videoWritten
+        << ", dropped=" << videoDropped << "\n";
+    OutputDebugStringA(oss.str().c_str());
+}
+
 void WinMFProvider::MfRecorder::close()
 {
+    // Stop producers/workers before Finalize().  The video worker drains queued
+    // frames first, but capture thread is no longer allowed to enqueue because
+    // videoRunning is cleared here.
+    stopVideoThread();
     stopAudioThread();
     if (writer)
     {
@@ -605,8 +630,13 @@ bool WinMFProvider::MfRecorder::open(const std::wstring &path, UINT32 w, UINT32 
         return false;
 
     // ------------------------------
-    // Add audio track (AAC out, PCM in) + start WASAPI capture
+    // Optional audio track (AAC out, PCM in) + WASAPI capture
     // ------------------------------
+    // Default is video-only because some capture-card paths become laggy or hang
+    // during Stop Rec when audio muxing is enabled. Set GCAP_RECORD_AUDIO=1 to enable.
+    const char *recordAudioEnv = std::getenv("GCAP_RECORD_AUDIO");
+    const bool enableAudio = (recordAudioEnv && std::string(recordAudioEnv) == "1");
+    if (enableAudio)
     {
         // ------------------------------
         // Audio (OBS-style):
@@ -718,6 +748,12 @@ bool WinMFProvider::MfRecorder::open(const std::wstring &path, UINT32 w, UINT32 
         }
     }
 
+    else
+    {
+        hasAudio = false;
+        OutputDebugStringA("[WinMF][Rec] audio disabled by default; set GCAP_RECORD_AUDIO=1 to enable\n");
+    }
+
     hr = wtr->BeginWriting();
     if (FAILED(hr))
         return false;
@@ -726,6 +762,17 @@ bool WinMFProvider::MfRecorder::open(const std::wstring &path, UINT32 w, UINT32 
     streamIndex = idx;
     firstTs100ns = -1;
     lastAudioTs100ns = 0;
+    videoDropped = 0;
+    videoWritten = 0;
+    {
+        std::lock_guard<std::mutex> lk(videoMutex);
+        videoQueue.clear();
+    }
+
+    // Start independent video writer thread so SinkWriter::WriteSample() never
+    // blocks the MF SourceReader / preview path.
+    videoRunning.store(true);
+    videoThread = std::thread([this]() { this->videoWorker(); });
 
     // WASAPI already started above (before media-type setup)
 
@@ -768,11 +815,43 @@ bool WinMFProvider::MfRecorder::open(const std::wstring &path, UINT32 w, UINT32 
     return true;
 }
 
-bool WinMFProvider::MfRecorder::writePlanar(const uint8_t *y, const uint8_t *uv,
-                                            UINT32 yStrideBytes, UINT32 uvStrideBytes,
-                                            LONGLONG ts100ns)
+void WinMFProvider::MfRecorder::videoWorker()
 {
-    if (!writer || !y || !uv)
+    for (;;)
+    {
+        PendingVideoFrame frame;
+        {
+            std::unique_lock<std::mutex> lk(videoMutex);
+            videoCv.wait(lk, [this]() {
+                return !videoQueue.empty() || !videoRunning.load();
+            });
+
+            if (videoQueue.empty() && !videoRunning.load())
+                break;
+
+            frame = std::move(videoQueue.front());
+            videoQueue.pop_front();
+        }
+
+        if (writePackedFrame(frame))
+        {
+            ++videoWritten;
+            if ((videoWritten % 120) == 0)
+            {
+                std::ostringstream oss;
+                oss << "[WinMF][Rec] video async progress: written=" << videoWritten
+                    << ", dropped=" << videoDropped << "\n";
+                OutputDebugStringA(oss.str().c_str());
+            }
+        }
+    }
+}
+
+bool WinMFProvider::MfRecorder::enqueuePlanar(const uint8_t *y, const uint8_t *uv,
+                                              UINT32 yStrideBytes, UINT32 uvStrideBytes,
+                                              LONGLONG ts100ns)
+{
+    if (!writer || !y || !uv || !videoRunning.load())
         return false;
 
     if (firstTs100ns < 0)
@@ -780,15 +859,54 @@ bool WinMFProvider::MfRecorder::writePlanar(const uint8_t *y, const uint8_t *uv,
 
     const UINT32 w = width;
     const UINT32 h = height;
-
-    // tight packed stride (no padding)
     const UINT32 bpp = isP010 ? 2 : 1; // NV12:1 byte, P010:2 bytes per sample
     const UINT32 rowBytesY_tight = w * bpp;
     const UINT32 rowBytesUV_tight = w * bpp;
-
     const DWORD yBytes = rowBytesY_tight * h;
     const DWORD uvBytes = rowBytesUV_tight * (h / 2);
     const DWORD frameBytes = yBytes + uvBytes;
+
+    PendingVideoFrame frame;
+    frame.ts100ns = ts100ns;
+    frame.packed.resize(frameBytes);
+
+    uint8_t *dstY = frame.packed.data();
+    uint8_t *dstUV = frame.packed.data() + yBytes;
+
+    // Pack into a tight buffer on the capture thread.  This is only memory copy;
+    // the expensive SinkWriter call happens on videoWorker().
+    for (UINT32 row = 0; row < h; ++row)
+    {
+        memcpy(dstY + rowBytesY_tight * row,
+               y + yStrideBytes * row,
+               rowBytesY_tight);
+    }
+
+    for (UINT32 row = 0; row < h / 2; ++row)
+    {
+        memcpy(dstUV + rowBytesUV_tight * row,
+               uv + uvStrideBytes * row,
+               rowBytesUV_tight);
+    }
+
+    constexpr size_t kMaxVideoQueueFrames = 4;
+    {
+        std::lock_guard<std::mutex> lk(videoMutex);
+        while (videoQueue.size() >= kMaxVideoQueueFrames)
+        {
+            videoQueue.pop_front();
+            ++videoDropped;
+        }
+        videoQueue.push_back(std::move(frame));
+    }
+    videoCv.notify_one();
+    return true;
+}
+
+bool WinMFProvider::MfRecorder::writePackedFrame(const PendingVideoFrame &frame)
+{
+    if (!writer || frame.packed.empty())
+        return false;
 
     ComPtr<IMFSample> sample;
     HRESULT hr = MFCreateSample(&sample);
@@ -796,6 +914,7 @@ bool WinMFProvider::MfRecorder::writePlanar(const uint8_t *y, const uint8_t *uv,
         return false;
 
     ComPtr<IMFMediaBuffer> buf;
+    const DWORD frameBytes = static_cast<DWORD>(frame.packed.size());
     hr = MFCreateMemoryBuffer(frameBytes, &buf);
     if (FAILED(hr))
         return false;
@@ -806,25 +925,7 @@ bool WinMFProvider::MfRecorder::writePlanar(const uint8_t *y, const uint8_t *uv,
     if (FAILED(hr) || !dst || maxLen < frameBytes)
         return false;
 
-    BYTE *dstY = dst;
-    BYTE *dstUV = dst + yBytes;
-
-    // copy Y (only valid width, ignore source padding)
-    for (UINT32 row = 0; row < h; ++row)
-    {
-        memcpy(dstY + rowBytesY_tight * row,
-               y + yStrideBytes * row,
-               rowBytesY_tight);
-    }
-
-    // copy UV (h/2 rows)
-    for (UINT32 row = 0; row < h / 2; ++row)
-    {
-        memcpy(dstUV + rowBytesUV_tight * row,
-               uv + uvStrideBytes * row,
-               rowBytesUV_tight);
-    }
-
+    memcpy(dst, frame.packed.data(), frameBytes);
     buf->Unlock();
     buf->SetCurrentLength(frameBytes);
 
@@ -832,28 +933,24 @@ bool WinMFProvider::MfRecorder::writePlanar(const uint8_t *y, const uint8_t *uv,
     if (FAILED(hr))
         return false;
 
-    // timestamp (relative)
-    LONGLONG rtStart = ts100ns - firstTs100ns;
+    LONGLONG baseTs = firstTs100ns;
+    if (baseTs < 0)
+        baseTs = frame.ts100ns;
+
+    const LONGLONG rtStart = frame.ts100ns - baseTs;
     sample->SetSampleTime(rtStart);
 
-    // duration: 1 frame
-    // vFpsN/vFpsD are already stored in recorder (if you don't have them, compute from profile)
-    if (fpsN != 0)
+    if (fpsNum != 0)
     {
-        const LONGLONG vDuration = (10'000'000LL * (LONGLONG)fpsD) / (LONGLONG)fpsN;
-        // Duration = 1 frame
-        if (fpsNum != 0)
-        {
-            const LONGLONG vDuration = (10'000'000LL * (LONGLONG)fpsDen) / (LONGLONG)fpsNum;
-            sample->SetSampleDuration(vDuration);
-        }
+        const LONGLONG vDuration = (10'000'000LL * (LONGLONG)fpsDen) / (LONGLONG)fpsNum;
+        sample->SetSampleDuration(vDuration);
     }
 
     std::lock_guard<std::mutex> lk(writerMutex);
     hr = writer->WriteSample(streamIndex, sample.Get());
     if (FAILED(hr))
     {
-        OutputDebugStringA(("[WinMF][Rec] video WriteSample failed: " + hr_msg(hr) + "\\n").c_str());
+        OutputDebugStringA(("[WinMF][Rec] video WriteSample failed: " + hr_msg(hr) + "\n").c_str());
         return false;
     }
 
@@ -866,7 +963,7 @@ bool WinMFProvider::MfRecorder::writeNV12(const uint8_t *y, const uint8_t *uv,
 {
     if (isP010)
         return false;
-    return writePlanar(y, uv, yStride, uvStride, ts100ns);
+    return enqueuePlanar(y, uv, yStride, uvStride, ts100ns);
 }
 
 bool WinMFProvider::MfRecorder::writeP010(const uint8_t *y, const uint8_t *uv,
@@ -875,5 +972,5 @@ bool WinMFProvider::MfRecorder::writeP010(const uint8_t *y, const uint8_t *uv,
 {
     if (!isP010)
         return false;
-    return writePlanar(y, uv, yStrideBytes, uvStrideBytes, ts100ns);
+    return enqueuePlanar(y, uv, yStrideBytes, uvStrideBytes, ts100ns);
 }
