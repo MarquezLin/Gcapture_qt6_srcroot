@@ -186,6 +186,17 @@ namespace
         return fmt == GCAP_FMT_NV12 || fmt == GCAP_FMT_YUY2 || fmt == GCAP_FMT_ARGB || fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
     }
 
+
+    static bool ffmpegUseHevcMain10(gcap_pixfmt_t fmt)
+    {
+        return fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
+    }
+
+    static const char *ffmpegRecordCodecName(gcap_pixfmt_t fmt)
+    {
+        return ffmpegUseHevcMain10(fmt) ? "HEVC Main10" : "H264";
+    }
+
     static int dshowQualityRank(const GUID &g)
     {
         if (g == MFVideoFormat_P010)
@@ -2601,8 +2612,10 @@ gcap_status_t DShowProvider::startRecording(const char *pathUtf8)
     cfg.height = height_;
     cfg.fps_num = 30;
     cfg.fps_den = 1;
-    cfg.bitrate_kbps = readEnvIntClamp("GCAP_FFMPEG_BITRATE_KBPS", 8000, 500, 50000);
+    const int defaultBitrate = ffmpegUseHevcMain10(recFmt) ? 12000 : 8000;
+    cfg.bitrate_kbps = readEnvIntClamp("GCAP_FFMPEG_BITRATE_KBPS", defaultBitrate, 500, 80000);
     cfg.input_format = recFmt;
+    cfg.force_hevc_main10 = ffmpegUseHevcMain10(recFmt);
 
     std::string err;
     if (!rec->open(cfg, &err))
@@ -2636,8 +2649,9 @@ gcap_status_t DShowProvider::startRecording(const char *pathUtf8)
 
     char msg[512] = {};
     sprintf_s(msg,
-              "[DShow][Record] start FFmpeg MP4 recording: %dx%d %s input=%.2ffps output=30fps codec=H264 bitrate=%dkbps mode=latest-frame-cfr audio=off",
-              width_, height_, profileFormatName(recFmt), negotiatedFpsDen_ ? (double)negotiatedFpsNum_ / (double)negotiatedFpsDen_ : 0.0, cfg.bitrate_kbps);
+              "[DShow][Record] start FFmpeg MP4 recording: %dx%d %s input=%.2ffps output=30fps codec=%s bitrate=%dkbps mode=latest-frame-cfr audio=off",
+              width_, height_, profileFormatName(recFmt), negotiatedFpsDen_ ? (double)negotiatedFpsNum_ / (double)negotiatedFpsDen_ : 0.0,
+              ffmpegRecordCodecName(recFmt), cfg.bitrate_kbps);
     dshow_log(msg);
     return GCAP_OK;
 }

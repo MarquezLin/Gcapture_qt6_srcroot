@@ -14,6 +14,11 @@ struct FfmpegVideoRecordConfig
     int fps_den = 1;
     int bitrate_kbps = 8000;
     gcap_pixfmt_t input_format = GCAP_FMT_NV12;
+
+    // Auto-selected by input_format:
+    //   NV12/YUY2/ARGB -> H.264 8-bit yuv420p
+    //   P010/Y210     -> HEVC Main10 yuv420p10le
+    bool force_hevc_main10 = false;
 };
 
 struct FfmpegVideoFrameView

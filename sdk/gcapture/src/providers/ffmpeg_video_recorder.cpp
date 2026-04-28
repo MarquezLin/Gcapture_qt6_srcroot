@@ -50,6 +50,11 @@ static bool supportedInput(gcap_pixfmt_t fmt)
            fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
 }
 
+static bool wantsHevcMain10(gcap_pixfmt_t fmt, bool force)
+{
+    return force || fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
+}
+
 static uint8_t clampByte(int v)
 {
     return static_cast<uint8_t>(std::max(0, std::min(255, v)));
@@ -59,6 +64,17 @@ static uint8_t word10To8(uint16_t v)
 {
     // P010/Y210 store 10-bit components left-aligned in 16-bit words.
     return static_cast<uint8_t>(v >> 8);
+}
+
+static uint16_t word10LeftAlignedTo10(uint16_t v)
+{
+    // P010/Y210 valid 10-bit component is stored in bits 15..6.
+    return static_cast<uint16_t>((v >> 6) & 0x03FFu);
+}
+
+static uint16_t byte8To10(uint8_t v)
+{
+    return static_cast<uint16_t>((static_cast<unsigned>(v) * 1023u + 127u) / 255u);
 }
 
 static void rgbToBt709Limited(uint8_t r, uint8_t g, uint8_t b, uint8_t &y, uint8_t &u, uint8_t &v)
@@ -210,8 +226,6 @@ static bool fillYuv420pFromInput(const FfmpegVideoFrameView &view, AVFrame *fram
             setErr(error, "invalid ARGB/RGB32 frame");
             return false;
         }
-        // The app-side ARGB/RGB32 buffer is treated as BGRA byte order, which is the common
-        // DIB/DirectShow memory layout for RGB32/ARGB32 on little-endian Windows.
         for (int y = 0; y < h; y += 2)
         {
             const uint8_t *row0 = view.data[0] + y * view.stride[0];
@@ -243,6 +257,148 @@ static bool fillYuv420pFromInput(const FfmpegVideoFrameView &view, AVFrame *fram
     }
     default:
         setErr(error, std::string("unsupported FFmpeg recorder input format: ") + fmtName(view.format));
+        return false;
+    }
+}
+
+static bool fillYuv420p10FromInput(const FfmpegVideoFrameView &view, AVFrame *frame, std::string *error)
+{
+    const int w = view.width;
+    const int h = view.height;
+    if (!frame || w <= 0 || h <= 0 || (w & 1) || (h & 1))
+    {
+        setErr(error, "FFmpeg Main10 recorder requires even video size");
+        return false;
+    }
+
+    uint16_t *dstY = reinterpret_cast<uint16_t *>(frame->data[0]);
+    uint16_t *dstU = reinterpret_cast<uint16_t *>(frame->data[1]);
+    uint16_t *dstV = reinterpret_cast<uint16_t *>(frame->data[2]);
+    const int lsY = frame->linesize[0] / 2;
+    const int lsU = frame->linesize[1] / 2;
+    const int lsV = frame->linesize[2] / 2;
+
+    switch (view.format)
+    {
+    case GCAP_FMT_P010:
+    {
+        if (!view.data[0] || !view.data[1] || view.stride[0] <= 0 || view.stride[1] <= 0)
+        {
+            setErr(error, "invalid P010 frame");
+            return false;
+        }
+        for (int y = 0; y < h; ++y)
+        {
+            const uint16_t *src = reinterpret_cast<const uint16_t *>(view.data[0] + y * view.stride[0]);
+            uint16_t *dy = dstY + y * lsY;
+            for (int x = 0; x < w; ++x)
+                dy[x] = word10LeftAlignedTo10(src[x]);
+        }
+        for (int y = 0; y < h / 2; ++y)
+        {
+            const uint16_t *src = reinterpret_cast<const uint16_t *>(view.data[1] + y * view.stride[1]);
+            uint16_t *du = dstU + y * lsU;
+            uint16_t *dv = dstV + y * lsV;
+            for (int x = 0; x < w / 2; ++x)
+            {
+                du[x] = word10LeftAlignedTo10(src[x * 2 + 0]);
+                dv[x] = word10LeftAlignedTo10(src[x * 2 + 1]);
+            }
+        }
+        return true;
+    }
+    case GCAP_FMT_Y210:
+    {
+        if (!view.data[0] || view.stride[0] <= 0)
+        {
+            setErr(error, "invalid Y210 frame");
+            return false;
+        }
+        for (int y = 0; y < h; ++y)
+        {
+            const uint16_t *src = reinterpret_cast<const uint16_t *>(view.data[0] + y * view.stride[0]);
+            uint16_t *dy = dstY + y * lsY;
+            for (int x = 0; x < w; x += 2)
+            {
+                dy[x + 0] = word10LeftAlignedTo10(src[x * 2 + 0]);
+                dy[x + 1] = word10LeftAlignedTo10(src[x * 2 + 2]);
+            }
+        }
+        for (int y = 0; y < h / 2; ++y)
+        {
+            const uint16_t *row0 = reinterpret_cast<const uint16_t *>(view.data[0] + (y * 2 + 0) * view.stride[0]);
+            const uint16_t *row1 = reinterpret_cast<const uint16_t *>(view.data[0] + (y * 2 + 1) * view.stride[0]);
+            uint16_t *du = dstU + y * lsU;
+            uint16_t *dv = dstV + y * lsV;
+            for (int x = 0; x < w / 2; ++x)
+            {
+                const int off = x * 4;
+                const unsigned u0 = word10LeftAlignedTo10(row0[off + 1]);
+                const unsigned u1 = word10LeftAlignedTo10(row1[off + 1]);
+                const unsigned v0 = word10LeftAlignedTo10(row0[off + 3]);
+                const unsigned v1 = word10LeftAlignedTo10(row1[off + 3]);
+                du[x] = static_cast<uint16_t>((u0 + u1 + 1u) / 2u);
+                dv[x] = static_cast<uint16_t>((v0 + v1 + 1u) / 2u);
+            }
+        }
+        return true;
+    }
+    case GCAP_FMT_NV12:
+    case GCAP_FMT_YUY2:
+    case GCAP_FMT_ARGB:
+    {
+        AVFrame *tmp = av_frame_alloc();
+        if (!tmp)
+        {
+            setErr(error, "av_frame_alloc temp failed");
+            return false;
+        }
+        tmp->format = AV_PIX_FMT_YUV420P;
+        tmp->width = w;
+        tmp->height = h;
+        int ret = av_frame_get_buffer(tmp, 32);
+        if (ret < 0)
+        {
+            setErr(error, "av_frame_get_buffer temp failed: " + ffErr(ret));
+            av_frame_free(&tmp);
+            return false;
+        }
+        ret = av_frame_make_writable(tmp);
+        if (ret < 0)
+        {
+            setErr(error, "av_frame_make_writable temp failed: " + ffErr(ret));
+            av_frame_free(&tmp);
+            return false;
+        }
+        if (!fillYuv420pFromInput(view, tmp, error))
+        {
+            av_frame_free(&tmp);
+            return false;
+        }
+        for (int y = 0; y < h; ++y)
+        {
+            const uint8_t *sy = tmp->data[0] + y * tmp->linesize[0];
+            uint16_t *dy = dstY + y * lsY;
+            for (int x = 0; x < w; ++x)
+                dy[x] = byte8To10(sy[x]);
+        }
+        for (int y = 0; y < h / 2; ++y)
+        {
+            const uint8_t *su = tmp->data[1] + y * tmp->linesize[1];
+            const uint8_t *sv = tmp->data[2] + y * tmp->linesize[2];
+            uint16_t *du = dstU + y * lsU;
+            uint16_t *dv = dstV + y * lsV;
+            for (int x = 0; x < w / 2; ++x)
+            {
+                du[x] = byte8To10(su[x]);
+                dv[x] = byte8To10(sv[x]);
+            }
+        }
+        av_frame_free(&tmp);
+        return true;
+    }
+    default:
+        setErr(error, std::string("unsupported Main10 input format: ") + fmtName(view.format));
         return false;
     }
 }
@@ -292,6 +448,7 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     }
 
     cfg_ = cfg;
+    const bool useHevcMain10 = wantsHevcMain10(cfg.input_format, cfg.force_hevc_main10);
 
     int ret = avformat_alloc_output_context2(&impl_->fmt, nullptr, nullptr, cfg.path.c_str());
     if (ret < 0 || !impl_->fmt)
@@ -301,14 +458,30 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
         return false;
     }
 
-    const AVCodec *codec = avcodec_find_encoder_by_name("libx264");
-    if (!codec)
-        codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-    if (!codec)
+    const AVCodec *codec = nullptr;
+    if (useHevcMain10)
     {
-        setErr(error, "H.264 encoder not found. Install an FFmpeg build with libx264 or H.264 encoder support.");
-        close();
-        return false;
+        codec = avcodec_find_encoder_by_name("libx265");
+        if (!codec)
+            codec = avcodec_find_encoder(AV_CODEC_ID_HEVC);
+        if (!codec)
+        {
+            setErr(error, "HEVC encoder not found. Install an FFmpeg build with libx265 or HEVC encoder support.");
+            close();
+            return false;
+        }
+    }
+    else
+    {
+        codec = avcodec_find_encoder_by_name("libx264");
+        if (!codec)
+            codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+        if (!codec)
+        {
+            setErr(error, "H.264 encoder not found. Install an FFmpeg build with libx264 or H.264 encoder support.");
+            close();
+            return false;
+        }
     }
 
     impl_->stream = avformat_new_stream(impl_->fmt, nullptr);
@@ -331,7 +504,7 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     impl_->codec->codec_type = AVMEDIA_TYPE_VIDEO;
     impl_->codec->width = cfg.width;
     impl_->codec->height = cfg.height;
-    impl_->codec->pix_fmt = AV_PIX_FMT_YUV420P;
+    impl_->codec->pix_fmt = useHevcMain10 ? AV_PIX_FMT_YUV420P10LE : AV_PIX_FMT_YUV420P;
     impl_->codec->time_base = AVRational{cfg.fps_den, cfg.fps_num};
     impl_->codec->framerate = AVRational{cfg.fps_num, cfg.fps_den};
     impl_->codec->bit_rate = static_cast<int64_t>(cfg.bitrate_kbps) * 1000;
@@ -342,7 +515,15 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
         impl_->codec->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
     av_opt_set(impl_->codec->priv_data, "preset", "veryfast", 0);
-    av_opt_set(impl_->codec->priv_data, "tune", "zerolatency", 0);
+    if (useHevcMain10)
+    {
+        av_opt_set(impl_->codec->priv_data, "profile", "main10", 0);
+        av_opt_set(impl_->codec->priv_data, "x265-params", "repeat-headers=1", 0);
+    }
+    else
+    {
+        av_opt_set(impl_->codec->priv_data, "tune", "zerolatency", 0);
+    }
 
     ret = avcodec_open2(impl_->codec, codec, nullptr);
     if (ret < 0)
@@ -353,6 +534,11 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     }
 
     ret = avcodec_parameters_from_context(impl_->stream->codecpar, impl_->codec);
+    if (ret >= 0 && useHevcMain10 && impl_->stream && impl_->stream->codecpar)
+    {
+        // Prefer hvc1 sample entry for better compatibility with common MP4 players.
+        impl_->stream->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
+    }
     if (ret < 0)
     {
         setErr(error, "avcodec_parameters_from_context failed: " + ffErr(ret));
@@ -412,13 +598,15 @@ bool FfmpegVideoRecorder::writeFrame(const FfmpegVideoFrameView &view, std::stri
         return false;
     }
 
+    const bool useHevcMain10 = wantsHevcMain10(cfg_.input_format, cfg_.force_hevc_main10);
+
     AVFrame *frame = av_frame_alloc();
     if (!frame)
     {
         setErr(error, "av_frame_alloc failed");
         return false;
     }
-    frame->format = AV_PIX_FMT_YUV420P;
+    frame->format = useHevcMain10 ? AV_PIX_FMT_YUV420P10LE : AV_PIX_FMT_YUV420P;
     frame->width = cfg_.width;
     frame->height = cfg_.height;
     frame->pts = view.pts;
@@ -439,7 +627,9 @@ bool FfmpegVideoRecorder::writeFrame(const FfmpegVideoFrameView &view, std::stri
         return false;
     }
 
-    if (!fillYuv420pFromInput(view, frame, error))
+    const bool filled = useHevcMain10 ? fillYuv420p10FromInput(view, frame, error)
+                                      : fillYuv420pFromInput(view, frame, error);
+    if (!filled)
     {
         av_frame_free(&frame);
         return false;
