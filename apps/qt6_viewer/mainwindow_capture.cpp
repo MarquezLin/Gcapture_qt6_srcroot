@@ -151,7 +151,7 @@ void MainWindow::stopRecordingSession(bool showSummary)
         if (seconds > 0.0)
             bitrateKbps = (sizeBytes * 8.0 / 1000.0) / seconds;
 
-        const double fps = (avgFps_ > 0.0)
+        const double captureFps = (avgFps_ > 0.0)
                                ? avgFps_
                                : (currentProfile_.fps_den
                                       ? static_cast<double>(currentProfile_.fps_num) / currentProfile_.fps_den
@@ -165,20 +165,28 @@ void MainWindow::stopRecordingSession(bool showSummary)
                                      ? buildRecordEncoderLabel(backend, effectiveRecordingFormat(h_, currentProfile_.format))
                                      : recordEncoderName_;
 
+        const double recordOutputFps = (backend == GCAP_BACKEND_DSHOW)
+                                           ? 30.0
+                                           : (currentProfile_.fps_den
+                                                  ? static_cast<double>(currentProfile_.fps_num) / currentProfile_.fps_den
+                                                  : static_cast<double>(currentProfile_.fps_num));
+
         const QString info = QStringLiteral(
                                  "Record done\n"
                                  "file:%1\n"
                                  "size:%2 MB\n"
                                  "Actual resolution:%3 x %4\n"
-                                 "Actual FPS:%5\n"
-                                 "record mode:%6\n"
-                                 "encoder:%7\n"
-                                 "file avg bit rate:%8 kbps")
+                                 "Capture FPS:%5\n"
+                                 "Record output FPS:%6\n"
+                                 "record mode:%7\n"
+                                 "encoder:%8\n"
+                                 "file avg bit rate:%9 kbps")
                                  .arg(recordPath_)
                                  .arg(QString::number(sizeBytes / (1024.0 * 1024.0), 'f', 2))
                                  .arg(srcW)
                                  .arg(srcH)
-                                 .arg(QString::number(fps, 'f', 2))
+                                 .arg(QString::number(captureFps, 'f', 2))
+                                 .arg(QString::number(recordOutputFps, 'f', 2))
                                  .arg(modeLabel)
                                  .arg(codecLabel)
                                  .arg(QString::number(bitrateKbps, 'f', 1));
