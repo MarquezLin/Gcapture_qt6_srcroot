@@ -39,3 +39,4 @@ Makefile
 
 # Third-party submodules (optional)
 /third_party/edid-decode
+/third_party/ffmpeg
