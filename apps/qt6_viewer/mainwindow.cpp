@@ -101,12 +101,18 @@ namespace
     {
         switch (fmt)
         {
-        case GCAP_FMT_NV12: return QStringLiteral("Format: NV12");
-        case GCAP_FMT_YUY2: return QStringLiteral("Format: YUY2");
-        case GCAP_FMT_Y210: return QStringLiteral("Format: Y210");
-        case GCAP_FMT_P010: return QStringLiteral("Format: P010");
-        case GCAP_FMT_ARGB: return QStringLiteral("Format: ARGB32");
-        default: return QString();
+        case GCAP_FMT_NV12:
+            return QStringLiteral("Format: NV12");
+        case GCAP_FMT_YUY2:
+            return QStringLiteral("Format: YUY2");
+        case GCAP_FMT_Y210:
+            return QStringLiteral("Format: Y210");
+        case GCAP_FMT_P010:
+            return QStringLiteral("Format: P010");
+        case GCAP_FMT_ARGB:
+            return QStringLiteral("Format: ARGB32");
+        default:
+            return QString();
         }
     }
 
@@ -170,7 +176,6 @@ namespace
                 info.propertyPages << formatPropertyPageDisplay(pages[static_cast<size_t>(i)]);
         }
     }
-
 
     static QImage framePacketToQImage(const gcap_frame_packet_t &pkt)
     {
@@ -578,8 +583,7 @@ void MainWindow::setupRuntimeStatusTimer()
 
                     if (DpinfoDlg_ && DpinfoDlg_->isVisible())
                         DpinfoDlg_->setInfoText(formatDisplayOutputInfo(displayInfo_));
-                }
-            });
+                } });
     runtimeStatusTimer_->start();
 }
 
@@ -662,7 +666,6 @@ void MainWindow::setupBackendControls()
     refreshPixelFormatOptions(false);
 }
 
-
 void MainWindow::setupPreviewBitDepthControls()
 {
     if (!ui->comboPreviewBitDepth)
@@ -737,11 +740,11 @@ void MainWindow::notifyPixelFormatEnumerationFailure(int backend)
     switch (backend)
     {
     case GCAP_BACKEND_DSHOW:
-        message = QStringLiteral("此裝置的 DirectShow 格式枚舉失敗。\n請確認驅動或裝置狀態。");
+        message = QStringLiteral("DirectShow format enumeration failed for this device.\nPlease check the driver or device status");
         break;
     case GCAP_BACKEND_WINMF_CPU:
     case GCAP_BACKEND_WINMF_GPU:
-        message = QStringLiteral("此裝置可能不支援 Media Foundation，請改用 DirectShow。");
+        message = QStringLiteral("This device may not support Media Foundation. Please use DirectShow instead.");
         break;
     default:
         return;
@@ -767,7 +770,9 @@ void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
     ui->comboPixelFormat->addItem(QStringLiteral("Format: Auto"), -1);
 
     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
-    const auto supported = enumerateSupportedPixelFormats(backend, deviceIndex_);
+    const auto supported = (deviceIndex_ >= 0)
+                               ? enumerateSupportedPixelFormats(backend, deviceIndex_)
+                               : std::vector<gcap_pixfmt_t>{};
     for (const auto fmt : supported)
     {
         const QString label = pixelFormatComboLabel(fmt);
@@ -777,7 +782,7 @@ void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
 
     if (!supported.empty())
         lastPixelFormatWarningKey_.clear();
-    else if (showFailurePrompt)
+    else if (showFailurePrompt && deviceIndex_ >= 0)
         notifyPixelFormatEnumerationFailure(backend);
 
     int restoreIndex = ui->comboPixelFormat->findData(previousData);
@@ -791,6 +796,17 @@ void MainWindow::initializeDeviceList()
     if (!ui->comboDevice)
         return;
 
+    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
+    const QString previousDeviceName = ui->comboDevice->currentText();
+
+    // gcap_enumerate() uses CaptureManager's currently selected backend.
+    // Keep the SDK backend in sync with the UI before rebuilding the device list,
+    // otherwise WinMF and DirectShow indexes can be mixed up.
+    gcap_set_backend(backend);
+
+    const QSignalBlocker blocker(ui->comboDevice);
+    ui->comboDevice->clear();
+
     gcap_device_info_t list[16];
     int n = 0;
     if (gcap_enumerate(list, 16, &n) == GCAP_OK)
@@ -799,11 +815,30 @@ void MainWindow::initializeDeviceList()
             ui->comboDevice->addItem(QString::fromUtf8(list[i].name), i);
     }
 
-    if (ui->comboDevice->count() > 0)
+    int restoreIndex = -1;
+    if (!previousDeviceName.isEmpty())
+        restoreIndex = ui->comboDevice->findText(previousDeviceName);
+    if (restoreIndex < 0 && ui->comboDevice->count() > 0)
+        restoreIndex = 0;
+
+    if (restoreIndex >= 0)
     {
-        ui->comboDevice->setCurrentIndex(0);
-        deviceIndex_ = ui->comboDevice->itemData(0).toInt();
+        ui->comboDevice->setCurrentIndex(restoreIndex);
+        deviceIndex_ = ui->comboDevice->itemData(restoreIndex).toInt();
     }
+    else
+    {
+        deviceIndex_ = -1;
+    }
+
+    invalidateDeviceCapabilityCache();
+    lastPixelFormatWarningKey_.clear();
+
+    MainWindow::postLog(QStringLiteral("[DeviceList] backend=%1 devices=%2 selectedIndex=%3 selectedName=%4")
+                            .arg(backend)
+                            .arg(ui->comboDevice->count())
+                            .arg(deviceIndex_)
+                            .arg(ui->comboDevice->currentText()));
 
     refreshPixelFormatOptions(true);
 }
@@ -864,7 +899,17 @@ void MainWindow::setupConnections()
         connect(ui->comboDevice, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this](int idx)
                 {
-                    deviceIndex_ = ui->comboDevice->itemData(idx).toInt();
+                    if (idx < 0)
+                    {
+                        deviceIndex_ = -1;
+                        invalidateDeviceCapabilityCache();
+                        refreshPixelFormatOptions(false);
+                        return;
+                    }
+
+                    bool ok = false;
+                    const int selectedDeviceIndex = ui->comboDevice->itemData(idx).toInt(&ok);
+                    deviceIndex_ = ok ? selectedDeviceIndex : -1;
                     invalidateDeviceCapabilityCache();
                     refreshPixelFormatOptions(true);
                     refreshCaptureInfoFromSdkAndRuntime(false);
@@ -872,8 +917,7 @@ void MainWindow::setupConnections()
                     {
                         infoDlg_->setInfoText(lastInfoText_);
                         infoDlg_->setPropertyPages(captureInfo_.propertyPages);
-                    }
-                });
+                    } });
     }
 
     if (ui->comboBackend)
@@ -885,17 +929,31 @@ void MainWindow::setupConnections()
                     const bool isCapSdk = (backend == 100);
                     if (ui->comboDevice)
                         ui->comboDevice->setEnabled(!isCapSdk);
-                    refreshPixelFormatOptions(true);
-                });
+
+                    // Re-enumerate devices when backend changes. Device index is only
+                    // meaningful within the backend that produced the list.
+                    if (!isCapSdk)
+                    {
+                        initializeDeviceList();
+                        refreshCaptureInfoFromSdkAndRuntime(false);
+                        if (infoDlg_ && infoDlg_->isVisible())
+                        {
+                            infoDlg_->setInfoText(lastInfoText_);
+                            infoDlg_->setPropertyPages(captureInfo_.propertyPages);
+                        }
+                    }
+                    else
+                    {
+                        invalidateDeviceCapabilityCache();
+                        refreshPixelFormatOptions(true);
+                    } });
     }
 
     if (ui->comboPreviewBitDepth)
     {
         connect(ui->comboPreviewBitDepth, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this](int)
-                {
-                    applyPreviewSettingsToActiveSession();
-                });
+                { applyPreviewSettingsToActiveSession(); });
     }
 
 #ifdef _WIN32
@@ -978,7 +1036,6 @@ void MainWindow::appendDebugLog(const QString &line)
     const QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     debugText_->appendPlainText(QStringLiteral("[%1] %2").arg(ts, line));
 }
-
 
 void MainWindow::onOpenTiffAnalyze()
 {

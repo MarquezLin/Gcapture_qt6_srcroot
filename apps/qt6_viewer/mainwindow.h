@@ -118,6 +118,7 @@ private:
 
     qint64 lastPropsQueryMs_ = 0;
     qint64 lastPreviewPushMs_ = 0;
+    int cachedDeviceCapsBackend_ = -1;
     int cachedDeviceCapsIndex_ = -1;
     QStringList cachedSupportedFormats_;
     QStringList cachedPropertyPages_;

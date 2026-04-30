@@ -57,20 +57,40 @@ static QString formatPropertyPageDisplay(const gcap_property_page_t &page)
 
 void MainWindow::ensureDeviceCapabilityCache(int deviceIndex)
 {
-    if (deviceIndex < 0)
+    const int backend = ui && ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
+
+    if (deviceIndex < 0 || backend == 100)
     {
+        cachedDeviceCapsBackend_ = -1;
         cachedDeviceCapsIndex_ = -1;
         cachedSupportedFormats_.clear();
         cachedPropertyPages_.clear();
         return;
     }
 
-    if (cachedDeviceCapsIndex_ == deviceIndex && (!cachedSupportedFormats_.isEmpty() || !cachedPropertyPages_.isEmpty()))
+    if (cachedDeviceCapsBackend_ == backend && cachedDeviceCapsIndex_ == deviceIndex &&
+        (!cachedSupportedFormats_.isEmpty() || !cachedPropertyPages_.isEmpty()))
         return;
 
+    cachedDeviceCapsBackend_ = backend;
     cachedDeviceCapsIndex_ = deviceIndex;
     cachedSupportedFormats_.clear();
     cachedPropertyPages_.clear();
+
+    // Detailed StreamCaps and vendor property pages are DirectShow-specific APIs.
+    // Do not query them with a WinMF device index, because backend indexes can differ.
+    if (backend != GCAP_BACKEND_DSHOW)
+    {
+        const int fmtCount = gcap_enum_supported_pixel_formats(backend, deviceIndex, nullptr, 0);
+        if (fmtCount > 0)
+        {
+            std::vector<gcap_pixfmt_t> formats(static_cast<size_t>(fmtCount));
+            const int written = gcap_enum_supported_pixel_formats(backend, deviceIndex, formats.data(), static_cast<int>(formats.size()));
+            for (int i = 0; i < written; ++i)
+                cachedSupportedFormats_ << QString::fromLatin1(packetFmtNameInfo(formats[static_cast<size_t>(i)]));
+        }
+        return;
+    }
 
     const int capCount = gcap_enum_video_caps(deviceIndex, nullptr, 0);
     if (capCount > 0)
@@ -93,6 +113,7 @@ void MainWindow::ensureDeviceCapabilityCache(int deviceIndex)
 
 void MainWindow::invalidateDeviceCapabilityCache()
 {
+    cachedDeviceCapsBackend_ = -1;
     cachedDeviceCapsIndex_ = -1;
     cachedSupportedFormats_.clear();
     cachedPropertyPages_.clear();
@@ -101,7 +122,12 @@ void MainWindow::invalidateDeviceCapabilityCache()
 
 int MainWindow::currentDeviceIndex() const
 {
-    return (ui && ui->comboDevice) ? ui->comboDevice->currentIndex() : 0;
+    if (!ui || !ui->comboDevice || ui->comboDevice->currentIndex() < 0)
+        return -1;
+
+    bool ok = false;
+    const int devIndex = ui->comboDevice->currentData().toInt(&ok);
+    return ok ? devIndex : -1;
 }
 
 QString MainWindow::currentDeviceText() const
@@ -346,7 +372,7 @@ void MainWindow::onShowInputInfo()
 void MainWindow::onOpenVendorPropertyPageTest()
 {
 #ifdef _WIN32
-    const int devIndex = ui && ui->comboDevice ? ui->comboDevice->currentIndex() : 0;
+    const int devIndex = currentDeviceIndex();
     MainWindow::postLog(QStringLiteral("[VendorPageTest] begin devIndex=%1").arg(devIndex));
 
     const bool ok = (gcap_open_vendor_property_page(devIndex) != 0);
