@@ -96,6 +96,9 @@
       </property>
      </widget>
     </item>
+    <item row="0" column="6">
+     <widget class="QComboBox" name="comboPreviewBitDepth"/>
+    </item>
    </layout>
   </widget>
   <widget class="QMenuBar" name="menubar">

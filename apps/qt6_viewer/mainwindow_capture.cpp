@@ -321,16 +321,11 @@ void MainWindow::onStart()
     gcap_preview_desc_t pv{};
     pv.hwnd = hwnd;
     pv.enable_preview = (hwnd != nullptr) ? 1 : 0;
-    if (backend == 2)
-    {
-        pv.use_fp16_pipeline = 1;
-        pv.swapchain_10bit = 1;
-    }
-    else
-    {
-        pv.use_fp16_pipeline = 1;
-        pv.swapchain_10bit = 1;
-    }
+    pv.use_fp16_pipeline = 1;
+    pv.swapchain_10bit = selectedPreviewBitDepthMode();
+    appendDebugLog(QStringLiteral("[Preview] requested bit depth: %1 mode=%2")
+                       .arg(selectedPreviewBitDepthText())
+                       .arg(pv.swapchain_10bit));
 
     st = gcap_set_preview(h_, &pv);
     if (st != GCAP_OK)

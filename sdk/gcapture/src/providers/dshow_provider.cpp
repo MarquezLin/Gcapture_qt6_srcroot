@@ -1056,11 +1056,8 @@ bool DShowProvider::createRenderPipeline()
     desc.enable_preview = 1;
     if (desc.use_fp16_pipeline == 0)
         desc.use_fp16_pipeline = 1;
-    if (desc.swapchain_10bit == 0)
-        desc.swapchain_10bit = 1;
-
     char previewBuf[256] = {};
-    sprintf_s(previewBuf, "[DShow] createRenderPipeline preview=%p use_fp16=%d swapchain_10bit=%d",
+    sprintf_s(previewBuf, "[DShow] createRenderPipeline preview=%p use_fp16=%d previewBitDepthMode=%d",
               previewHwnd_, desc.use_fp16_pipeline, desc.swapchain_10bit);
     OutputDebugStringA(previewBuf);
 

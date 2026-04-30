@@ -153,6 +153,10 @@ private:
     void setupDebugDock();
     void setupProcAmpAction();
     void setupBackendControls();
+    void setupPreviewBitDepthControls();
+    int selectedPreviewBitDepthMode() const;
+    QString selectedPreviewBitDepthText() const;
+    void applyPreviewSettingsToActiveSession();
     void refreshPixelFormatOptions(bool showFailurePrompt = false);
     void notifyPixelFormatEnumerationFailure(int backend);
     void initializeDeviceList();

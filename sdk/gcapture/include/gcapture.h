@@ -208,11 +208,19 @@ extern "C"
         int gpu_backed;
     } gcap_frame_packet_t;
 
+    typedef enum
+    {
+        GCAP_PREVIEW_BITDEPTH_8BIT = 0,
+        GCAP_PREVIEW_BITDEPTH_10BIT = 1,
+        GCAP_PREVIEW_BITDEPTH_AUTO = 2
+    } gcap_preview_bitdepth_t;
+
     typedef struct
     {
         void *hwnd;         // native HWND
         int enable_preview; // 0/1
         int use_fp16_pipeline;
+        // 0 = force 8-bit BGRA swapchain, 1 = force/prefer 10-bit RGB10A2 swapchain, 2 = Auto (try 10-bit, fallback 8-bit)
         int swapchain_10bit;
     } gcap_preview_desc_t;
 

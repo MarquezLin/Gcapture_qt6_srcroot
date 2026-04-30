@@ -279,6 +279,7 @@ MainWindow::MainWindow(QWidget *parent)
     setupDebugDock();
     setupProcAmpAction();
     setupBackendControls();
+    setupPreviewBitDepthControls();
     initializeDeviceList();
     initializeGpuList();
     setupConnections();
@@ -661,6 +662,71 @@ void MainWindow::setupBackendControls()
     refreshPixelFormatOptions(false);
 }
 
+
+void MainWindow::setupPreviewBitDepthControls()
+{
+    if (!ui->comboPreviewBitDepth)
+        return;
+
+    const QSignalBlocker blocker(ui->comboPreviewBitDepth);
+    ui->comboPreviewBitDepth->clear();
+    ui->comboPreviewBitDepth->addItem(QStringLiteral("Preview: Auto"), GCAP_PREVIEW_BITDEPTH_AUTO);
+    ui->comboPreviewBitDepth->addItem(QStringLiteral("Preview: 10-bit"), GCAP_PREVIEW_BITDEPTH_10BIT);
+    ui->comboPreviewBitDepth->addItem(QStringLiteral("Preview: 8-bit"), GCAP_PREVIEW_BITDEPTH_8BIT);
+    ui->comboPreviewBitDepth->setCurrentIndex(0);
+}
+
+int MainWindow::selectedPreviewBitDepthMode() const
+{
+    if (!ui->comboPreviewBitDepth)
+        return GCAP_PREVIEW_BITDEPTH_AUTO;
+
+    const int mode = ui->comboPreviewBitDepth->currentData().toInt();
+    if (mode == GCAP_PREVIEW_BITDEPTH_8BIT ||
+        mode == GCAP_PREVIEW_BITDEPTH_10BIT ||
+        mode == GCAP_PREVIEW_BITDEPTH_AUTO)
+    {
+        return mode;
+    }
+    return GCAP_PREVIEW_BITDEPTH_AUTO;
+}
+
+QString MainWindow::selectedPreviewBitDepthText() const
+{
+    if (!ui->comboPreviewBitDepth)
+        return QStringLiteral("Preview: Auto");
+    return ui->comboPreviewBitDepth->currentText();
+}
+
+void MainWindow::applyPreviewSettingsToActiveSession()
+{
+    if (!h_)
+        return;
+
+    void *hwnd = previewWindow_ ? previewWindow_->previewHwnd() : nullptr;
+
+    gcap_preview_desc_t pv{};
+    pv.hwnd = hwnd;
+    pv.enable_preview = (hwnd != nullptr) ? 1 : 0;
+    pv.use_fp16_pipeline = 1;
+    pv.swapchain_10bit = selectedPreviewBitDepthMode();
+
+    const gcap_status_t st = gcap_set_preview(h_, &pv);
+    if (st != GCAP_OK)
+    {
+        MainWindow::postLog(QStringLiteral("[Preview] apply bit depth failed: mode=%1 status=%2")
+                                .arg(pv.swapchain_10bit)
+                                .arg(int(st)),
+                            true);
+        return;
+    }
+
+    MainWindow::postLog(QStringLiteral("[Preview] requested %1 mode=%2; swapchain will be recreated on next frame")
+                            .arg(selectedPreviewBitDepthText())
+                            .arg(pv.swapchain_10bit));
+    updateRuntimeStatusUi();
+}
+
 void MainWindow::notifyPixelFormatEnumerationFailure(int backend)
 {
     if (!ui->comboBackend)
@@ -820,6 +886,15 @@ void MainWindow::setupConnections()
                     if (ui->comboDevice)
                         ui->comboDevice->setEnabled(!isCapSdk);
                     refreshPixelFormatOptions(true);
+                });
+    }
+
+    if (ui->comboPreviewBitDepth)
+    {
+        connect(ui->comboPreviewBitDepth, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int)
+                {
+                    applyPreviewSettingsToActiveSession();
                 });
     }
 

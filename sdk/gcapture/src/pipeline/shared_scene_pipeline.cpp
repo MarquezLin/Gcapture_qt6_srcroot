@@ -710,11 +710,26 @@ void SharedScenePipeline::shutdown()
 
 bool SharedScenePipeline::configurePreview(const gcap_preview_desc_t &desc)
 {
+    int requestedMode = desc.swapchain_10bit;
+    if (requestedMode != GCAP_PREVIEW_BITDEPTH_8BIT &&
+        requestedMode != GCAP_PREVIEW_BITDEPTH_10BIT &&
+        requestedMode != GCAP_PREVIEW_BITDEPTH_AUTO)
+    {
+        requestedMode = GCAP_PREVIEW_BITDEPTH_10BIT;
+    }
+
+    const bool modeChanged = (preview_swapchain_mode_ != requestedMode);
+    const bool hwndChanged = (preview_hwnd_ != desc.hwnd);
+    const bool enabledChanged = (preview_enabled_ != (desc.enable_preview != 0));
+
     preview_hwnd_ = desc.hwnd;
     preview_enabled_ = (desc.enable_preview != 0);
     preview_use_fp16_ = (desc.use_fp16_pipeline != 0);
-    preview_swapchain_10bit_ = (desc.swapchain_10bit != 0);
-    release_preview_swapchain();
+    preview_swapchain_mode_ = requestedMode;
+
+    if (modeChanged || hwndChanged || enabledChanged)
+        release_preview_swapchain();
+
     return true;
 }
 
@@ -1838,6 +1853,8 @@ void SharedScenePipeline::release_preview_swapchain()
     preview_swapchain_.Reset();
     preview_w_ = 0;
     preview_h_ = 0;
+    preview_swapchain_10bit_ = false;
+    preview_swapchain_format_ = DXGI_FORMAT_UNKNOWN;
 }
 
 bool SharedScenePipeline::ensure_preview_swapchain(int w, int h)
@@ -1880,9 +1897,9 @@ bool SharedScenePipeline::ensure_preview_swapchain(int w, int h)
         DXGI_SWAP_CHAIN_DESC1 sd{};
         sd.Width = (UINT)clientW;
         sd.Height = (UINT)clientH;
-        sd.Format = preview_swapchain_10bit_
-                        ? DXGI_FORMAT_R10G10B10A2_UNORM
-                        : DXGI_FORMAT_B8G8R8A8_UNORM;
+        sd.Format = (preview_swapchain_mode_ == GCAP_PREVIEW_BITDEPTH_8BIT)
+                        ? DXGI_FORMAT_B8G8R8A8_UNORM
+                        : DXGI_FORMAT_R10G10B10A2_UNORM;
         sd.SampleDesc.Count = 1;
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         sd.BufferCount = 2;
@@ -1898,14 +1915,36 @@ bool SharedScenePipeline::ensure_preview_swapchain(int w, int h)
             nullptr,
             &preview_swapchain_);
 
+        if ((FAILED(hr) || !preview_swapchain_) && sd.Format == DXGI_FORMAT_R10G10B10A2_UNORM)
+        {
+            char warn[320] = {};
+            std::snprintf(warn, sizeof(warn),
+                          "[SharedScene] 10-bit preview swapchain failed hr=0x%08X, fallback to 8-bit BGRA",
+                          static_cast<unsigned>(hr));
+            ssp_log_text(warn);
+
+            preview_swapchain_.Reset();
+            sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            hr = factory->CreateSwapChainForHwnd(
+                d3d_,
+                (HWND)preview_hwnd_,
+                &sd,
+                nullptr,
+                nullptr,
+                &preview_swapchain_);
+        }
+
         if (FAILED(hr) || !preview_swapchain_)
             return false;
 
+        preview_swapchain_format_ = sd.Format;
+        preview_swapchain_10bit_ = (sd.Format == DXGI_FORMAT_R10G10B10A2_UNORM);
+
         {
-            char msg[256] = {};
+            char msg[320] = {};
             std::snprintf(msg, sizeof(msg),
-                          "[SharedScene] preview swapchain created: %dx%d format=%s preview_swapchain_10bit=%d",
-                          clientW, clientH, ss_dxgi_format_name(sd.Format), preview_swapchain_10bit_ ? 1 : 0);
+                          "[SharedScene] preview swapchain created: %dx%d requestedMode=%d actualFormat=%s actual10bit=%d",
+                          clientW, clientH, preview_swapchain_mode_, ss_dxgi_format_name(sd.Format), preview_swapchain_10bit_ ? 1 : 0);
             ssp_log_text(msg);
         }
 
@@ -2067,6 +2106,8 @@ bool SharedScenePipeline::present_preview(int src_w, int src_h)
 
 DXGI_FORMAT SharedScenePipeline::preview_backbuffer_format() const
 {
+    if (preview_swapchain_format_ != DXGI_FORMAT_UNKNOWN)
+        return preview_swapchain_format_;
     if (!preview_backbuf_)
         return DXGI_FORMAT_UNKNOWN;
     D3D11_TEXTURE2D_DESC d{};

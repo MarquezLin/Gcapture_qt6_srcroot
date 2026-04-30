@@ -34,6 +34,7 @@ public:
     const char *last_ensure_rt_rebuild_reason() const { return lastEnsureRtReason_; }
     bool ensure_preview_swapchain(int w, int h);
     bool preview_swapchain_10bit() const { return preview_swapchain_10bit_; }
+    int preview_swapchain_mode() const { return preview_swapchain_mode_; }
     bool present_preview(int src_w, int src_h);
     DXGI_FORMAT preview_backbuffer_format() const;
     DXGI_FORMAT scene_texture_format() const;
@@ -103,7 +104,9 @@ public:
     void *preview_hwnd_ = nullptr;
     bool preview_enabled_ = false;
     bool preview_use_fp16_ = false;
+    int preview_swapchain_mode_ = GCAP_PREVIEW_BITDEPTH_10BIT;
     bool preview_swapchain_10bit_ = false;
+    DXGI_FORMAT preview_swapchain_format_ = DXGI_FORMAT_UNKNOWN;
     int preview_w_ = 0;
     int preview_h_ = 0;
 
