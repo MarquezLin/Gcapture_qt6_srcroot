@@ -65,6 +65,27 @@ for %%F in (gcapture.dll gdisplay.dll CaptureSDK.dll) do (
     )
 )
 
+rem === Copy FFmpeg runtime DLLs ===
+set "SRC_ROOT=%BUILD_ROOT%\..\.."
+set "FFMPEG_BIN=%SRC_ROOT%\third_party\ffmpeg\bin"
+
+if exist "%FFMPEG_BIN%" (
+    echo Copy FFmpeg DLLs
+    copy /y "%FFMPEG_BIN%\*.dll" "%OUT_DIR%\" >nul
+) else (
+    echo WARNING: FFmpeg bin not found: "%FFMPEG_BIN%"
+)
+
+rem === Copy Edid ===
+set "EDID_EXE=%SRC_ROOT%\third_party\edid-decode\vs\x64\Release"
+
+if exist "%EDID_EXE%" (
+    echo Copy edid-decode.exe
+    copy /y "%EDID_EXE%\edid-decode.exe" "%OUT_DIR%\" >nul
+) else (
+    echo WARNING: edid-decode.exe not found: "%EDID_EXE%"
+)
+
 echo.
 echo ============================================================
 echo [3/5] Run windeployqt

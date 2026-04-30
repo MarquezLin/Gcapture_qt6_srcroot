@@ -1561,14 +1561,6 @@ bool SharedScenePipeline::render_uploaded_yuv_to_fp16(gcap_pixfmt_t fmt, int fra
 
 namespace
 {
-    struct RawRgb10Header
-    {
-        uint32_t magic;
-        uint32_t width;
-        uint32_t height;
-        uint32_t channels;
-        uint32_t bitDepth;
-    };
 
     static inline uint16_t ssp_float_to_10bit(float v)
     {
@@ -1579,14 +1571,60 @@ namespace
         return static_cast<uint16_t>(std::lround(v * 1023.0f));
     }
 
-    static bool ssp_write_rgb10_raw(const std::wstring &path, int w, int h, const std::vector<uint16_t> &rgb10)
+    static inline uint16_t ssp_expand_10_to_16(uint16_t v10)
     {
+        v10 = static_cast<uint16_t>(std::min<uint16_t>(v10, 1023u));
+        return static_cast<uint16_t>((v10 << 6) | (v10 >> 4));
+    }
+
+    static bool ssp_write_fp16_raw(const std::wstring &path, int w, int h, const std::vector<uint16_t> &rgba16f)
+    {
+        if (w <= 0 || h <= 0 || rgba16f.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 4u)
+            return false;
+
+        // No header. Payload: R16F G16F B16F A16F, little-endian.
         std::ofstream ofs(std::filesystem::path(path), std::ios::binary);
         if (!ofs)
             return false;
-        RawRgb10Header hdr{0x30314752u, static_cast<uint32_t>(w), static_cast<uint32_t>(h), 3u, 10u};
-        ofs.write(reinterpret_cast<const char *>(&hdr), sizeof(hdr));
+        ofs.write(reinterpret_cast<const char *>(rgba16f.data()), static_cast<std::streamsize>(rgba16f.size() * sizeof(uint16_t)));
+        return ofs.good();
+    }
+
+    static bool ssp_write_rgb10_raw_value(const std::wstring &path, int w, int h, const std::vector<uint16_t> &rgb10)
+    {
+        if (w <= 0 || h <= 0 || rgb10.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 3u)
+            return false;
+
+        // No header. Payload: R16 G16 B16, little-endian, valid value 0..1023.
+        std::ofstream ofs(std::filesystem::path(path), std::ios::binary);
+        if (!ofs)
+            return false;
         ofs.write(reinterpret_cast<const char *>(rgb10.data()), static_cast<std::streamsize>(rgb10.size() * sizeof(uint16_t)));
+        return ofs.good();
+    }
+
+    static bool ssp_write_rgba16_expanded_raw(const std::wstring &path, int w, int h, const std::vector<uint16_t> &rgb10)
+    {
+        if (w <= 0 || h <= 0 || rgb10.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 3u)
+            return false;
+
+        // No header. Payload: R16 G16 B16 A16, little-endian.
+        // RGB is expanded from 10-bit 0..1023 to 16-bit 0..65535 for RAW viewers.
+        std::vector<uint16_t> rgba;
+        const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
+        rgba.resize(pixelCount * 4u);
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            rgba[i * 4u + 0u] = ssp_expand_10_to_16(rgb10[i * 3u + 0u]);
+            rgba[i * 4u + 1u] = ssp_expand_10_to_16(rgb10[i * 3u + 1u]);
+            rgba[i * 4u + 2u] = ssp_expand_10_to_16(rgb10[i * 3u + 2u]);
+            rgba[i * 4u + 3u] = 0xFFFFu;
+        }
+
+        std::ofstream ofs(std::filesystem::path(path), std::ios::binary);
+        if (!ofs)
+            return false;
+        ofs.write(reinterpret_cast<const char *>(rgba.data()), static_cast<std::streamsize>(rgba.size() * sizeof(uint16_t)));
         return ofs.good();
     }
 
@@ -1620,7 +1658,7 @@ namespace
             return false;
         ofs << "Width=" << w << "\n";
         ofs << "Height=" << h << "\n";
-        ofs << "Format=RGB10 dump from FP16 scene\n";
+        ofs << "Format=Triple RAW export from FP16 scene: fp16.rgba16f.raw, rgb10.u16.raw, rgba16.expanded.raw\n";
         ofs << "R min=" << minV[0] << " max=" << maxV[0] << " unique=" << unique[0] << "\n";
         ofs << "G min=" << minV[1] << " max=" << maxV[1] << " unique=" << unique[1] << "\n";
         ofs << "B min=" << minV[2] << " max=" << maxV[2] << " unique=" << unique[2] << "\n";
@@ -1741,21 +1779,33 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
     if (FAILED(ctx_->Map(rt_scene_stage_fp16_.Get(), 0, D3D11_MAP_READ, 0, &m)))
         return false;
 
+    const size_t pixelCount = static_cast<size_t>(rt_w_) * static_cast<size_t>(rt_h_);
+    std::vector<uint16_t> rgba16f;
     std::vector<uint16_t> rgb10;
-    rgb10.resize(static_cast<size_t>(rt_w_) * static_cast<size_t>(rt_h_) * 3u);
+    rgba16f.resize(pixelCount * 4u);
+    rgb10.resize(pixelCount * 3u);
     for (int y = 0; y < rt_h_; ++y)
     {
         const uint8_t *srcRow = static_cast<const uint8_t *>(m.pData) + static_cast<size_t>(y) * static_cast<size_t>(m.RowPitch);
         const uint16_t *src = reinterpret_cast<const uint16_t *>(srcRow);
         for (int x = 0; x < rt_w_; ++x)
         {
-            const size_t di = (static_cast<size_t>(y) * static_cast<size_t>(rt_w_) + static_cast<size_t>(x)) * 3u;
-            const float r = DirectX::PackedVector::XMConvertHalfToFloat(src[x * 4 + 0]);
-            const float g = DirectX::PackedVector::XMConvertHalfToFloat(src[x * 4 + 1]);
-            const float b = DirectX::PackedVector::XMConvertHalfToFloat(src[x * 4 + 2]);
-            rgb10[di + 0] = ssp_float_to_10bit(r);
-            rgb10[di + 1] = ssp_float_to_10bit(g);
-            rgb10[di + 2] = ssp_float_to_10bit(b);
+            const size_t pixelIndex = static_cast<size_t>(y) * static_cast<size_t>(rt_w_) + static_cast<size_t>(x);
+            const size_t si = static_cast<size_t>(x) * 4u;
+            const size_t fpi = pixelIndex * 4u;
+            const size_t di = pixelIndex * 3u;
+
+            rgba16f[fpi + 0u] = src[si + 0u];
+            rgba16f[fpi + 1u] = src[si + 1u];
+            rgba16f[fpi + 2u] = src[si + 2u];
+            rgba16f[fpi + 3u] = src[si + 3u];
+
+            const float r = DirectX::PackedVector::XMConvertHalfToFloat(src[si + 0u]);
+            const float g = DirectX::PackedVector::XMConvertHalfToFloat(src[si + 1u]);
+            const float b = DirectX::PackedVector::XMConvertHalfToFloat(src[si + 2u]);
+            rgb10[di + 0u] = ssp_float_to_10bit(r);
+            rgb10[di + 1u] = ssp_float_to_10bit(g);
+            rgb10[di + 2u] = ssp_float_to_10bit(b);
         }
     }
     ctx_->Unmap(rt_scene_stage_fp16_.Get(), 0);
@@ -1763,7 +1813,11 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
     const std::wstring base(base_path);
     bool ok = true;
     if (export_raw)
-        ok = ssp_write_rgb10_raw(base + L".raw", rt_w_, rt_h_, rgb10) && ok;
+    {
+        ok = ssp_write_fp16_raw(base + L"_fp16_rgba16f.raw", rt_w_, rt_h_, rgba16f) && ok;
+        ok = ssp_write_rgb10_raw_value(base + L"_rgb10_u16.raw", rt_w_, rt_h_, rgb10) && ok;
+        ok = ssp_write_rgba16_expanded_raw(base + L"_rgba16_expanded.raw", rt_w_, rt_h_, rgb10) && ok;
+    }
     if (export_tiff)
         ok = ssp_write_rgb16_tiff(base + L".tiff", rt_w_, rt_h_, rgb10) && ok;
     if (export_stats)

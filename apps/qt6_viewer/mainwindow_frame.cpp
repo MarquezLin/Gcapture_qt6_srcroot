@@ -33,62 +33,43 @@ static const char *packetFmtNameFrame(int fmt)
 }
 } // namespace
 
-struct RawRgb10HeaderView
+static bool savePngFromRgba10Raw(const QString &rawPath, const QString &pngPath, int width, int height)
 {
-    quint32 magic = 0;
-    quint32 width = 0;
-    quint32 height = 0;
-    quint32 channels = 0;
-    quint32 bitDepth = 0;
-};
+    if (width <= 0 || height <= 0)
+        return false;
 
-static bool savePngFromRg10Raw(const QString &rawPath, const QString &pngPath)
-{
     QFile f(rawPath);
     if (!f.open(QIODevice::ReadOnly))
         return false;
 
-    if (f.size() < static_cast<qint64>(sizeof(RawRgb10HeaderView)))
-        return false;
-
-    RawRgb10HeaderView hdr{};
-    if (f.read(reinterpret_cast<char *>(&hdr), sizeof(hdr)) != static_cast<qint64>(sizeof(hdr)))
-        return false;
-
-    if (qFromLittleEndian(hdr.magic) != 0x30314752u) // 'RG10'
-        return false;
-
-    const quint32 width = qFromLittleEndian(hdr.width);
-    const quint32 height = qFromLittleEndian(hdr.height);
-    const quint32 channels = qFromLittleEndian(hdr.channels);
-    const quint32 bitDepth = qFromLittleEndian(hdr.bitDepth);
-    if (width == 0 || height == 0 || channels != 3u || bitDepth != 10u)
-        return false;
-
     const qsizetype pixelCount = static_cast<qsizetype>(width) * static_cast<qsizetype>(height);
-    const qsizetype wordCount = pixelCount * 3;
-    const QByteArray payload = f.readAll();
-    if (payload.size() < wordCount * static_cast<qsizetype>(sizeof(quint16)))
+    const qsizetype wordCount = pixelCount * 4;
+    const qint64 expectedBytes = static_cast<qint64>(wordCount) * static_cast<qint64>(sizeof(quint16));
+    if (f.size() < expectedBytes)
         return false;
 
-    QImage img(static_cast<int>(width), static_cast<int>(height), QImage::Format_RGB888);
+    const QByteArray payload = f.read(expectedBytes);
+    if (payload.size() < expectedBytes)
+        return false;
+
+    QImage img(width, height, QImage::Format_RGB888);
     if (img.isNull())
         return false;
 
     const auto *src = reinterpret_cast<const quint16 *>(payload.constData());
-    for (quint32 y = 0; y < height; ++y)
+    for (int y = 0; y < height; ++y)
     {
-        uchar *dst = img.scanLine(static_cast<int>(y));
-        const qsizetype rowBase = static_cast<qsizetype>(y) * static_cast<qsizetype>(width) * 3;
-        for (quint32 x = 0; x < width; ++x)
+        uchar *dst = img.scanLine(y);
+        const qsizetype rowBase = static_cast<qsizetype>(y) * static_cast<qsizetype>(width) * 4;
+        for (int x = 0; x < width; ++x)
         {
-            const qsizetype si = rowBase + static_cast<qsizetype>(x) * 3;
-            const quint16 r10 = qFromLittleEndian(src[si + 0]);
-            const quint16 g10 = qFromLittleEndian(src[si + 1]);
-            const quint16 b10 = qFromLittleEndian(src[si + 2]);
-            dst[x * 3 + 0] = static_cast<uchar>((static_cast<unsigned>(r10) * 255u + 511u) / 1023u);
-            dst[x * 3 + 1] = static_cast<uchar>((static_cast<unsigned>(g10) * 255u + 511u) / 1023u);
-            dst[x * 3 + 2] = static_cast<uchar>((static_cast<unsigned>(b10) * 255u + 511u) / 1023u);
+            const qsizetype si = rowBase + static_cast<qsizetype>(x) * 4;
+            const quint16 r16 = qFromLittleEndian(src[si + 0]);
+            const quint16 g16 = qFromLittleEndian(src[si + 1]);
+            const quint16 b16 = qFromLittleEndian(src[si + 2]);
+            dst[x * 3 + 0] = static_cast<uchar>((static_cast<unsigned>(r16) * 255u + 32767u) / 65535u);
+            dst[x * 3 + 1] = static_cast<uchar>((static_cast<unsigned>(g16) * 255u + 32767u) / 65535u);
+            dst[x * 3 + 2] = static_cast<uchar>((static_cast<unsigned>(b16) * 255u + 32767u) / 65535u);
         }
     }
     return img.save(pngPath, "PNG");
@@ -196,7 +177,7 @@ bool MainWindow::saveRgb10Exports(const QString &basePath, QString *rawPath, QSt
         return false;
 
     if (rawPath)
-        *rawPath = basePath + ".raw";
+        *rawPath = basePath + "_rgba16_expanded.raw";
     if (tiffPath)
         *tiffPath = basePath + ".tiff";
     if (statsPath)
@@ -235,7 +216,7 @@ void MainWindow::onSnapshot()
     bool pngOk = false;
     if (rgb10Ok)
     {
-        pngOk = savePngFromRg10Raw(rawPath, pngPath);
+        pngOk = savePngFromRgba10Raw(rawPath, pngPath, lastFrameWidth_, lastFrameHeight_);
         if (!pngOk)
             pngOk = saveSnapshotImage(&pngPath, pngPath);
     }
@@ -247,7 +228,7 @@ void MainWindow::onSnapshot()
     if (!pngOk && !rgb10Ok)
     {
         QMessageBox::warning(this, "Snapshot",
-                             QStringLiteral("Snapshot / RGB10 export failed.\nBase path: %1").arg(basePath));
+                             QStringLiteral("Snapshot / scene RAW export failed.\nBase path: %1").arg(basePath));
         return;
     }
 
@@ -256,16 +237,19 @@ void MainWindow::onSnapshot()
         saved << pngPath;
     if (rgb10Ok)
     {
-        saved << rawPath << tiffPath << statsPath;
-        MainWindow::postLog(QStringLiteral("[RGB10Export] PNG=%1 RAW=%2 TIFF=%3 STATS=%4")
-                                .arg(pngPath, rawPath, tiffPath, statsPath));
+        const QString fp16RawPath = basePath + "_fp16_rgba16f.raw";
+        const QString rgb10RawPath = basePath + "_rgb10_u16.raw";
+        const QString rgba16RawPath = basePath + "_rgba16_expanded.raw";
+        saved << fp16RawPath << rgb10RawPath << rgba16RawPath << tiffPath << statsPath;
+        MainWindow::postLog(QStringLiteral("[SceneRawExport] PNG=%1 FP16=%2 RGB10=%3 RGBA16=%4 TIFF=%5 STATS=%6")
+                                .arg(pngPath, fp16RawPath, rgb10RawPath, rgba16RawPath, tiffPath, statsPath));
     }
 
     if (ui->statusbar)
     {
         ui->statusbar->showMessage(
             rgb10Ok
-                ? QStringLiteral("Snapshot + RGB10 RAW/TIFF saved: %1").arg(QFileInfo(tiffPath).fileName())
+                ? QStringLiteral("Snapshot + FP16/RGB10/RGBA16 RAW saved: %1").arg(QFileInfo(rawPath).fileName())
                 : QStringLiteral("Snapshot saved: %1").arg(QFileInfo(pngPath).fileName()),
             6000);
     }
