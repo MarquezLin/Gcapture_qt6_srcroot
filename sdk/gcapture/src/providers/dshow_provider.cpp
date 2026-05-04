@@ -648,6 +648,7 @@ bool DShowProvider::setPreview(const gcap_preview_desc_t &desc)
     if (pipeline_)
     {
         pipeline_->configurePreview(desc);
+        pipeline_->set_source_bit_depth(gcap_pixfmt_bitdepth(gcap_subtype_to_pixfmt(subtype_)));
         if (width_ > 0 && height_ > 0)
             pipeline_->ensure_preview_swapchain(width_, height_);
     }
@@ -1062,6 +1063,7 @@ bool DShowProvider::createRenderPipeline()
     OutputDebugStringA(previewBuf);
 
     pipeline_->configurePreview(desc);
+    pipeline_->set_source_bit_depth(gcap_pixfmt_bitdepth(gcap_subtype_to_pixfmt(subtype_)));
 
     return pipeline_->ensure_rt_and_pipeline(width_, height_) &&
            pipeline_->ensure_preview_swapchain(width_, height_);
@@ -1805,6 +1807,7 @@ void DShowProvider::framePumpLoop()
                 bool ensuredRt = false;
                 bool ensuredSwap = false;
                 {
+                    pipeline_->set_source_bit_depth(gcap_pixfmt_bitdepth(gcap_subtype_to_pixfmt(rawSubtype)));
                     const auto t0 = std::chrono::steady_clock::now();
                     ensuredRt = pipeline_->ensure_rt_and_pipeline(rw, rh);
                     const auto t1 = std::chrono::steady_clock::now();
@@ -1982,6 +1985,7 @@ void DShowProvider::framePumpLoop()
                 bool ensuredRt = false;
                 bool ensuredSwap = false;
                 {
+                    pipeline_->set_source_bit_depth(8);
                     const auto t0 = std::chrono::steady_clock::now();
                     ensuredRt = pipeline_->ensure_rt_and_pipeline(w, h);
                     const auto t1 = std::chrono::steady_clock::now();

@@ -715,7 +715,7 @@ bool SharedScenePipeline::configurePreview(const gcap_preview_desc_t &desc)
         requestedMode != GCAP_PREVIEW_BITDEPTH_10BIT &&
         requestedMode != GCAP_PREVIEW_BITDEPTH_AUTO)
     {
-        requestedMode = GCAP_PREVIEW_BITDEPTH_10BIT;
+        requestedMode = GCAP_PREVIEW_BITDEPTH_AUTO;
     }
 
     const bool modeChanged = (preview_swapchain_mode_ != requestedMode);
@@ -731,6 +731,23 @@ bool SharedScenePipeline::configurePreview(const gcap_preview_desc_t &desc)
         release_preview_swapchain();
 
     return true;
+}
+
+void SharedScenePipeline::set_source_bit_depth(int bits)
+{
+    if (bits != 8 && bits != 10 && bits != 12 && bits != 16)
+        bits = 0;
+
+    const int oldEffectiveMode = (preview_swapchain_mode_ == GCAP_PREVIEW_BITDEPTH_AUTO)
+                                     ? ((preview_source_bit_depth_ >= 10) ? GCAP_PREVIEW_BITDEPTH_10BIT : GCAP_PREVIEW_BITDEPTH_8BIT)
+                                     : preview_swapchain_mode_;
+    const int newEffectiveMode = (preview_swapchain_mode_ == GCAP_PREVIEW_BITDEPTH_AUTO)
+                                     ? ((bits >= 10) ? GCAP_PREVIEW_BITDEPTH_10BIT : GCAP_PREVIEW_BITDEPTH_8BIT)
+                                     : preview_swapchain_mode_;
+
+    preview_source_bit_depth_ = bits;
+    if (oldEffectiveMode != newEffectiveMode)
+        release_preview_swapchain();
 }
 
 bool SharedScenePipeline::create_shaders_and_states()
@@ -1592,6 +1609,15 @@ namespace
         return static_cast<uint16_t>((v10 << 6) | (v10 >> 4));
     }
 
+    static inline uint8_t ssp_float_to_8bit(float v)
+    {
+        if (v < 0.0f)
+            v = 0.0f;
+        if (v > 1.0f)
+            v = 1.0f;
+        return static_cast<uint8_t>(std::lround(v * 255.0f));
+    }
+
     static bool ssp_write_fp16_raw(const std::wstring &path, int w, int h, const std::vector<uint16_t> &rgba16f)
     {
         if (w <= 0 || h <= 0 || rgba16f.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 4u)
@@ -1615,6 +1641,37 @@ namespace
         if (!ofs)
             return false;
         ofs.write(reinterpret_cast<const char *>(rgb10.data()), static_cast<std::streamsize>(rgb10.size() * sizeof(uint16_t)));
+        return ofs.good();
+    }
+
+    static bool ssp_write_bgra8_raw_value(const std::wstring &path, int w, int h, const std::vector<uint8_t> &bgra8)
+    {
+        if (w <= 0 || h <= 0 || bgra8.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 4u)
+            return false;
+
+        // No header. Payload: B8 G8 R8 A8, 4 bytes per pixel.
+        // This matches DXGI_FORMAT_B8G8R8A8_UNORM preview backbuffer layout.
+        std::ofstream ofs(std::filesystem::path(path), std::ios::binary);
+        if (!ofs)
+            return false;
+        ofs.write(reinterpret_cast<const char *>(bgra8.data()), static_cast<std::streamsize>(bgra8.size()));
+        return ofs.good();
+    }
+
+    static bool ssp_write_abgr2101010_raw_value(const std::wstring &path, int w, int h, const std::vector<uint32_t> &abgr2101010)
+    {
+        if (w <= 0 || h <= 0 || abgr2101010.size() < static_cast<size_t>(w) * static_cast<size_t>(h))
+            return false;
+
+        // No header. Payload: 4 bytes per pixel, little-endian packed 10-bit RGB.
+        // This matches the preview backbuffer DXGI_FORMAT_R10G10B10A2_UNORM bit layout:
+        //   bits  0.. 9 = R, bits 10..19 = G, bits 20..29 = B, bits 30..31 = A.
+        // PixelViewer names the same low-to-high layout as ABGR_2101010 because
+        // reading the 32-bit word from high bits to low bits is A2 B10 G10 R10.
+        std::ofstream ofs(std::filesystem::path(path), std::ios::binary);
+        if (!ofs)
+            return false;
+        ofs.write(reinterpret_cast<const char *>(abgr2101010.data()), static_cast<std::streamsize>(abgr2101010.size() * sizeof(uint32_t)));
         return ofs.good();
     }
 
@@ -1673,11 +1730,54 @@ namespace
             return false;
         ofs << "Width=" << w << "\n";
         ofs << "Height=" << h << "\n";
-        ofs << "Format=Triple RAW export from FP16 scene: fp16.rgba16f.raw, rgb10.u16.raw, rgba16.expanded.raw\n";
+        ofs << "Format=10-bit RAW export from FP16 scene: fp16.rgba16f.raw, rgb10.u16.raw, abgr2101010.raw, rgba16.expanded.raw\n";
         ofs << "R min=" << minV[0] << " max=" << maxV[0] << " unique=" << unique[0] << "\n";
         ofs << "G min=" << minV[1] << " max=" << maxV[1] << " unique=" << unique[1] << "\n";
         ofs << "B min=" << minV[2] << " max=" << maxV[2] << " unique=" << unique[2] << "\n";
         ofs << "Any value > 255=" << (anyGt255 ? "YES" : "NO") << "\n";
+        ofs << "MatchesPreviewSwapchain=DXGI_FORMAT_R10G10B10A2_UNORM via _abgr2101010.raw\n";
+        ofs << "ABGR2101010 raw is for PixelViewer: choose ABGR_2101010 + Little-Endian\n";
+        ofs << "DXGI bit layout=bits 0-9 R, 10-19 G, 20-29 B, 30-31 A; alpha fixed to 3\n";
+        return ofs.good();
+    }
+
+    static bool ssp_write_bgra8_stats(const std::wstring &path, int w, int h, const std::vector<uint8_t> &bgra8)
+    {
+        if (bgra8.empty())
+            return false;
+        uint8_t minV[3] = {255, 255, 255};
+        uint8_t maxV[3] = {0, 0, 0};
+        bool bins[3][256] = {};
+        for (size_t i = 0; i + 3 < bgra8.size(); i += 4)
+        {
+            const uint8_t r = bgra8[i + 2u];
+            const uint8_t g = bgra8[i + 1u];
+            const uint8_t b = bgra8[i + 0u];
+            const uint8_t v[3] = {r, g, b};
+            for (int c = 0; c < 3; ++c)
+            {
+                minV[c] = (std::min)(minV[c], v[c]);
+                maxV[c] = (std::max)(maxV[c], v[c]);
+                bins[c][v[c]] = true;
+            }
+        }
+        int unique[3] = {0, 0, 0};
+        for (int c = 0; c < 3; ++c)
+            for (bool hit : bins[c])
+                if (hit)
+                    ++unique[c];
+        std::ofstream ofs{std::filesystem::path(path)};
+        if (!ofs)
+            return false;
+        ofs << "Width=" << w << "\n";
+        ofs << "Height=" << h << "\n";
+        ofs << "Format=BGRA8 raw export from FP16 scene: bgra8.raw, B8 G8 R8 A8, 4 bytes per pixel, no header\n";
+        ofs << "MatchesPreviewSwapchain=DXGI_FORMAT_B8G8R8A8_UNORM\n";
+        ofs << "SourceBitDepth=" << 8 << "\n";
+        ofs << "R min=" << static_cast<int>(minV[0]) << " max=" << static_cast<int>(maxV[0]) << " unique=" << unique[0] << "\n";
+        ofs << "G min=" << static_cast<int>(minV[1]) << " max=" << static_cast<int>(maxV[1]) << " unique=" << unique[1] << "\n";
+        ofs << "B min=" << static_cast<int>(minV[2]) << " max=" << static_cast<int>(maxV[2]) << " unique=" << unique[2] << "\n";
+        ofs << "Any value > 255=NO\n";
         return ofs.good();
     }
 
@@ -1797,8 +1897,13 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
     const size_t pixelCount = static_cast<size_t>(rt_w_) * static_cast<size_t>(rt_h_);
     std::vector<uint16_t> rgba16f;
     std::vector<uint16_t> rgb10;
+    std::vector<uint8_t> bgra8;
+    std::vector<uint32_t> abgr2101010;
+    const bool sourceIs10Bit = (preview_source_bit_depth_ >= 10);
     rgba16f.resize(pixelCount * 4u);
     rgb10.resize(pixelCount * 3u);
+    bgra8.resize(pixelCount * 4u);
+    abgr2101010.resize(pixelCount);
     for (int y = 0; y < rt_h_; ++y)
     {
         const uint8_t *srcRow = static_cast<const uint8_t *>(m.pData) + static_cast<size_t>(y) * static_cast<size_t>(m.RowPitch);
@@ -1809,6 +1914,7 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
             const size_t si = static_cast<size_t>(x) * 4u;
             const size_t fpi = pixelIndex * 4u;
             const size_t di = pixelIndex * 3u;
+            const size_t bi = pixelIndex * 4u;
 
             rgba16f[fpi + 0u] = src[si + 0u];
             rgba16f[fpi + 1u] = src[si + 1u];
@@ -1818,9 +1924,23 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
             const float r = DirectX::PackedVector::XMConvertHalfToFloat(src[si + 0u]);
             const float g = DirectX::PackedVector::XMConvertHalfToFloat(src[si + 1u]);
             const float b = DirectX::PackedVector::XMConvertHalfToFloat(src[si + 2u]);
-            rgb10[di + 0u] = ssp_float_to_10bit(r);
-            rgb10[di + 1u] = ssp_float_to_10bit(g);
-            rgb10[di + 2u] = ssp_float_to_10bit(b);
+            const uint16_t r10 = ssp_float_to_10bit(r);
+            const uint16_t g10 = ssp_float_to_10bit(g);
+            const uint16_t b10 = ssp_float_to_10bit(b);
+            rgb10[di + 0u] = r10;
+            rgb10[di + 1u] = g10;
+            rgb10[di + 2u] = b10;
+
+            bgra8[bi + 0u] = ssp_float_to_8bit(b);
+            bgra8[bi + 1u] = ssp_float_to_8bit(g);
+            bgra8[bi + 2u] = ssp_float_to_8bit(r);
+            bgra8[bi + 3u] = 255u;
+
+            abgr2101010[pixelIndex] =
+                ((static_cast<uint32_t>(r10) & 0x3FFu) << 0u) |
+                ((static_cast<uint32_t>(g10) & 0x3FFu) << 10u) |
+                ((static_cast<uint32_t>(b10) & 0x3FFu) << 20u) |
+                (3u << 30u);
         }
     }
     ctx_->Unmap(rt_scene_stage_fp16_.Get(), 0);
@@ -1829,19 +1949,29 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
     bool ok = true;
     if (export_raw)
     {
-        ok = ssp_write_fp16_raw(base + L"_fp16_rgba16f.raw", rt_w_, rt_h_, rgba16f) && ok;
-        ok = ssp_write_rgb10_raw_value(base + L"_rgb10_u16.raw", rt_w_, rt_h_, rgb10) && ok;
-        ok = ssp_write_rgba16_expanded_raw(base + L"_rgba16_expanded.raw", rt_w_, rt_h_, rgb10) && ok;
+        if (sourceIs10Bit)
+        {
+            ok = ssp_write_fp16_raw(base + L"_fp16_rgba16f.raw", rt_w_, rt_h_, rgba16f) && ok;
+            ok = ssp_write_rgb10_raw_value(base + L"_rgb10_u16.raw", rt_w_, rt_h_, rgb10) && ok;
+            ok = ssp_write_abgr2101010_raw_value(base + L"_abgr2101010.raw", rt_w_, rt_h_, abgr2101010) && ok;
+            ok = ssp_write_rgba16_expanded_raw(base + L"_rgba16_expanded.raw", rt_w_, rt_h_, rgb10) && ok;
+        }
+        else
+        {
+            ok = ssp_write_bgra8_raw_value(base + L"_bgra8.raw", rt_w_, rt_h_, bgra8) && ok;
+        }
     }
     if (export_tiff)
         ok = ssp_write_rgb16_tiff(base + L".tiff", rt_w_, rt_h_, rgb10) && ok;
     if (export_stats)
-        ok = ssp_write_rgb10_stats(base + L".stats.txt", rt_w_, rt_h_, rgb10) && ok;
+        ok = sourceIs10Bit
+                 ? (ssp_write_rgb10_stats(base + L".stats.txt", rt_w_, rt_h_, rgb10) && ok)
+                 : (ssp_write_bgra8_stats(base + L".stats.txt", rt_w_, rt_h_, bgra8) && ok);
 
     char msg[512] = {};
     std::snprintf(msg, sizeof(msg),
-                  "[SharedScene] export_scene_rgb10 base=%ls size=%dx%d raw=%d tiff=%d stats=%d ok=%d",
-                  base_path, rt_w_, rt_h_, export_raw ? 1 : 0, export_tiff ? 1 : 0, export_stats ? 1 : 0, ok ? 1 : 0);
+                  "[SharedScene] export_scene_rgb10 base=%ls size=%dx%d sourceBitDepth=%d exportAs=%s raw=%d tiff=%d stats=%d ok=%d",
+                  base_path, rt_w_, rt_h_, preview_source_bit_depth_, sourceIs10Bit ? "abgr2101010" : "bgra8", export_raw ? 1 : 0, export_tiff ? 1 : 0, export_stats ? 1 : 0, ok ? 1 : 0);
     ssp_log_text(msg);
     return ok;
 }
@@ -1892,14 +2022,29 @@ bool SharedScenePipeline::ensure_preview_swapchain(int w, int h)
         !factory)
         return false;
 
+    const int effectiveMode = (preview_swapchain_mode_ == GCAP_PREVIEW_BITDEPTH_AUTO)
+                                  ? ((preview_source_bit_depth_ >= 10) ? GCAP_PREVIEW_BITDEPTH_10BIT : GCAP_PREVIEW_BITDEPTH_8BIT)
+                                  : preview_swapchain_mode_;
+    const DXGI_FORMAT desiredFormat = (effectiveMode == GCAP_PREVIEW_BITDEPTH_8BIT)
+                                          ? DXGI_FORMAT_B8G8R8A8_UNORM
+                                          : DXGI_FORMAT_R10G10B10A2_UNORM;
+
+    if (preview_swapchain_ && preview_swapchain_format_ != DXGI_FORMAT_UNKNOWN && preview_swapchain_format_ != desiredFormat)
+    {
+        char msg[320] = {};
+        std::snprintf(msg, sizeof(msg),
+                      "[SharedScene] preview swapchain format change: mode=%d sourceBitDepth=%d old=%s desired=%s",
+                      preview_swapchain_mode_, preview_source_bit_depth_, ss_dxgi_format_name(preview_swapchain_format_), ss_dxgi_format_name(desiredFormat));
+        ssp_log_text(msg);
+        release_preview_swapchain();
+    }
+
     if (!preview_swapchain_)
     {
         DXGI_SWAP_CHAIN_DESC1 sd{};
         sd.Width = (UINT)clientW;
         sd.Height = (UINT)clientH;
-        sd.Format = (preview_swapchain_mode_ == GCAP_PREVIEW_BITDEPTH_8BIT)
-                        ? DXGI_FORMAT_B8G8R8A8_UNORM
-                        : DXGI_FORMAT_R10G10B10A2_UNORM;
+        sd.Format = desiredFormat;
         sd.SampleDesc.Count = 1;
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         sd.BufferCount = 2;
@@ -1943,8 +2088,8 @@ bool SharedScenePipeline::ensure_preview_swapchain(int w, int h)
         {
             char msg[320] = {};
             std::snprintf(msg, sizeof(msg),
-                          "[SharedScene] preview swapchain created: %dx%d requestedMode=%d actualFormat=%s actual10bit=%d",
-                          clientW, clientH, preview_swapchain_mode_, ss_dxgi_format_name(sd.Format), preview_swapchain_10bit_ ? 1 : 0);
+                          "[SharedScene] preview swapchain created: %dx%d requestedMode=%d sourceBitDepth=%d effectiveMode=%d actualFormat=%s actual10bit=%d",
+                          clientW, clientH, preview_swapchain_mode_, preview_source_bit_depth_, effectiveMode, ss_dxgi_format_name(sd.Format), preview_swapchain_10bit_ ? 1 : 0);
             ssp_log_text(msg);
         }
 

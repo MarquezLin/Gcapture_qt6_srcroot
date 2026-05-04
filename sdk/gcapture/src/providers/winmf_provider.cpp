@@ -3448,6 +3448,7 @@ void WinMFProvider::loop()
 
         if (pipeline_->preview_enabled_)
         {
+            pipeline_->set_source_bit_depth(pixfmt_bitdepth(mfsub_to_gcap(cur_subtype_)));
             if (ensure_preview_swapchain(cur_w_, cur_h_))
             {
                 present_preview();
@@ -3746,6 +3747,7 @@ bool WinMFProvider::setPreview(const gcap_preview_desc_t &desc)
 {
     if (!pipeline_)
         pipeline_ = std::make_unique<SharedScenePipeline>();
+    pipeline_->set_source_bit_depth(pixfmt_bitdepth(mfsub_to_gcap(cur_subtype_)));
     return pipeline_->configurePreview(desc);
 }
 

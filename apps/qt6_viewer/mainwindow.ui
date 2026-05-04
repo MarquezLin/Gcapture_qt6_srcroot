@@ -97,7 +97,11 @@
      </widget>
     </item>
     <item row="0" column="6">
-     <widget class="QComboBox" name="comboPreviewBitDepth"/>
+     <widget class="QComboBox" name="comboPreviewBitDepth">
+      <property name="enabled">
+       <bool>true</bool>
+      </property>
+     </widget>
     </item>
    </layout>
   </widget>

@@ -33,7 +33,30 @@ static const char *packetFmtNameFrame(int fmt)
 }
 } // namespace
 
-static bool savePngFromRgba10Raw(const QString &rawPath, const QString &pngPath, int width, int height)
+static bool currentSourceIs10Bit(gcap_handle h)
+{
+    if (!h)
+        return false;
+    gcap_runtime_info_t rt{};
+    if (gcap_get_runtime_info(h, &rt) == GCAP_OK)
+    {
+        if (rt.negotiated.bit_depth > 0)
+            return rt.negotiated.bit_depth >= 10;
+        switch (rt.negotiated.pixfmt)
+        {
+        case GCAP_FMT_P010:
+        case GCAP_FMT_Y210:
+        case GCAP_FMT_V210:
+        case GCAP_FMT_R210:
+            return true;
+        default:
+            break;
+        }
+    }
+    return false;
+}
+
+static bool savePngFromAbgr2101010Raw(const QString &rawPath, const QString &pngPath, int width, int height)
 {
     if (width <= 0 || height <= 0)
         return false;
@@ -43,8 +66,7 @@ static bool savePngFromRgba10Raw(const QString &rawPath, const QString &pngPath,
         return false;
 
     const qsizetype pixelCount = static_cast<qsizetype>(width) * static_cast<qsizetype>(height);
-    const qsizetype wordCount = pixelCount * 4;
-    const qint64 expectedBytes = static_cast<qint64>(wordCount) * static_cast<qint64>(sizeof(quint16));
+    const qint64 expectedBytes = static_cast<qint64>(pixelCount) * static_cast<qint64>(sizeof(quint32));
     if (f.size() < expectedBytes)
         return false;
 
@@ -56,20 +78,20 @@ static bool savePngFromRgba10Raw(const QString &rawPath, const QString &pngPath,
     if (img.isNull())
         return false;
 
-    const auto *src = reinterpret_cast<const quint16 *>(payload.constData());
+    const auto *src = reinterpret_cast<const quint32 *>(payload.constData());
     for (int y = 0; y < height; ++y)
     {
         uchar *dst = img.scanLine(y);
-        const qsizetype rowBase = static_cast<qsizetype>(y) * static_cast<qsizetype>(width) * 4;
+        const qsizetype rowBase = static_cast<qsizetype>(y) * static_cast<qsizetype>(width);
         for (int x = 0; x < width; ++x)
         {
-            const qsizetype si = rowBase + static_cast<qsizetype>(x) * 4;
-            const quint16 r16 = qFromLittleEndian(src[si + 0]);
-            const quint16 g16 = qFromLittleEndian(src[si + 1]);
-            const quint16 b16 = qFromLittleEndian(src[si + 2]);
-            dst[x * 3 + 0] = static_cast<uchar>((static_cast<unsigned>(r16) * 255u + 32767u) / 65535u);
-            dst[x * 3 + 1] = static_cast<uchar>((static_cast<unsigned>(g16) * 255u + 32767u) / 65535u);
-            dst[x * 3 + 2] = static_cast<uchar>((static_cast<unsigned>(b16) * 255u + 32767u) / 65535u);
+            const quint32 p = qFromLittleEndian(src[rowBase + x]);
+            const quint32 r10 = (p >> 0) & 0x3FFu;
+            const quint32 g10 = (p >> 10) & 0x3FFu;
+            const quint32 b10 = (p >> 20) & 0x3FFu;
+            dst[x * 3 + 0] = static_cast<uchar>((r10 * 255u + 511u) / 1023u);
+            dst[x * 3 + 1] = static_cast<uchar>((g10 * 255u + 511u) / 1023u);
+            dst[x * 3 + 2] = static_cast<uchar>((b10 * 255u + 511u) / 1023u);
         }
     }
     return img.save(pngPath, "PNG");
@@ -171,13 +193,15 @@ bool MainWindow::saveRgb10Exports(const QString &basePath, QString *rawPath, QSt
     if (!h_ || basePath.isEmpty())
         return false;
 
+    const bool source10Bit = currentSourceIs10Bit(h_);
     const QByteArray baseUtf8 = QDir::toNativeSeparators(basePath).toUtf8();
     const gcap_status_t st = gcap_export_preview_scene_rgb10(h_, baseUtf8.constData(), 1, 1, 1);
     if (st != GCAP_OK)
         return false;
 
     if (rawPath)
-        *rawPath = basePath + "_rgba16_expanded.raw";
+        *rawPath = source10Bit ? (basePath + "_abgr2101010.raw")
+                               : (basePath + "_bgra8.raw");
     if (tiffPath)
         *tiffPath = basePath + ".tiff";
     if (statsPath)
@@ -216,7 +240,8 @@ void MainWindow::onSnapshot()
     bool pngOk = false;
     if (rgb10Ok)
     {
-        pngOk = savePngFromRgba10Raw(rawPath, pngPath, lastFrameWidth_, lastFrameHeight_);
+        if (currentSourceIs10Bit(h_))
+            pngOk = savePngFromAbgr2101010Raw(rawPath, pngPath, lastFrameWidth_, lastFrameHeight_);
         if (!pngOk)
             pngOk = saveSnapshotImage(&pngPath, pngPath);
     }
@@ -237,19 +262,30 @@ void MainWindow::onSnapshot()
         saved << pngPath;
     if (rgb10Ok)
     {
-        const QString fp16RawPath = basePath + "_fp16_rgba16f.raw";
-        const QString rgb10RawPath = basePath + "_rgb10_u16.raw";
-        const QString rgba16RawPath = basePath + "_rgba16_expanded.raw";
-        saved << fp16RawPath << rgb10RawPath << rgba16RawPath << tiffPath << statsPath;
-        MainWindow::postLog(QStringLiteral("[SceneRawExport] PNG=%1 FP16=%2 RGB10=%3 RGBA16=%4 TIFF=%5 STATS=%6")
-                                .arg(pngPath, fp16RawPath, rgb10RawPath, rgba16RawPath, tiffPath, statsPath));
+        if (currentSourceIs10Bit(h_))
+        {
+            const QString fp16RawPath = basePath + "_fp16_rgba16f.raw";
+            const QString rgb10RawPath = basePath + "_rgb10_u16.raw";
+            const QString abgr2101010RawPath = basePath + "_abgr2101010.raw";
+            const QString rgba16RawPath = basePath + "_rgba16_expanded.raw";
+            saved << fp16RawPath << rgb10RawPath << abgr2101010RawPath << rgba16RawPath << tiffPath << statsPath;
+            MainWindow::postLog(QStringLiteral("[SceneRawExport] source=10-bit PNG=%1 FP16=%2 RGB10=%3 ABGR2101010=%4 RGBA16=%5 TIFF=%6 STATS=%7")
+                                    .arg(pngPath, fp16RawPath, rgb10RawPath, abgr2101010RawPath, rgba16RawPath, tiffPath, statsPath));
+        }
+        else
+        {
+            const QString bgra8RawPath = basePath + "_bgra8.raw";
+            saved << bgra8RawPath << tiffPath << statsPath;
+            MainWindow::postLog(QStringLiteral("[SceneRawExport] source=8-bit PNG=%1 BGRA8=%2 TIFF=%3 STATS=%4")
+                                    .arg(pngPath, bgra8RawPath, tiffPath, statsPath));
+        }
     }
 
     if (ui->statusbar)
     {
         ui->statusbar->showMessage(
             rgb10Ok
-                ? QStringLiteral("Snapshot + FP16/RGB10/RGBA16 RAW saved: %1").arg(QFileInfo(rawPath).fileName())
+                ? QStringLiteral("Snapshot + scene RAW saved: %1").arg(QFileInfo(rawPath).fileName())
                 : QStringLiteral("Snapshot saved: %1").arg(QFileInfo(pngPath).fileName()),
             6000);
     }

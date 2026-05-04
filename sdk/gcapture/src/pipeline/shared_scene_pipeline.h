@@ -23,6 +23,8 @@ public:
     void shutdown();
 
     bool configurePreview(const gcap_preview_desc_t &desc);
+    void set_source_bit_depth(int bits);
+    int source_bit_depth() const { return preview_source_bit_depth_; }
     void release_preview_swapchain();
 
     bool create_shaders_and_states();
@@ -105,6 +107,7 @@ public:
     bool preview_enabled_ = false;
     bool preview_use_fp16_ = false;
     int preview_swapchain_mode_ = GCAP_PREVIEW_BITDEPTH_10BIT;
+    int preview_source_bit_depth_ = 0;
     bool preview_swapchain_10bit_ = false;
     DXGI_FORMAT preview_swapchain_format_ = DXGI_FORMAT_UNKNOWN;
     int preview_w_ = 0;
