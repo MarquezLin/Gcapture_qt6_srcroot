@@ -133,7 +133,9 @@ private:
     bool suppressAuxDialogRefresh_ = false;
     bool openingTiffDialog_ = false;
     QString lastPixelFormatWarningKey_;
+    bool initialPreviewSizeApplied_ = false;
     void updateRuntimeStatusUi();
+    void applyInitialPreviewSizeFromSource(int width, int height);
     int currentDeviceIndex() const;
     QString currentDeviceText() const;
     QString currentAudioInfoText() const;

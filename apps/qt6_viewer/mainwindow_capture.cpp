@@ -92,6 +92,7 @@ void MainWindow::resetRuntimeTracking()
     framePacketLogCount_ = 0;
     ++framePacketSessionId_;
     lastPreviewPushMs_ = 0;
+    initialPreviewSizeApplied_ = false;
 }
 
 void MainWindow::clearPreviewSurface()
