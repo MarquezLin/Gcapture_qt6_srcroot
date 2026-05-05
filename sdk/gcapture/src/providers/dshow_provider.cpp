@@ -665,6 +665,28 @@ bool DShowProvider::exportPreviewSceneRgb10(const char *basePathUtf8, bool expor
     return pipeline_->export_scene_rgb10(wpath, exportRaw, exportTiff, exportStats);
 }
 
+
+bool DShowProvider::getRecordingStats(gcap_recording_stats_t &out)
+{
+    std::memset(&out, 0, sizeof(out));
+    std::lock_guard<std::mutex> lk(recordingQueueMutex_);
+    out.frames_written = recordingWrittenFrames_;
+    out.frames_dropped = recordingDroppedFrames_;
+    out.frames_duplicated = recordingDuplicatedFrames_;
+    out.input_frames = recordingInputFrames_;
+    out.unsupported_frames = recordingUnsupportedFrames_;
+    out.overwritten_frames = recordingOverwrittenFrames_;
+    out.width = width_;
+    out.height = height_;
+    out.fps_num = static_cast<int>(recordingFpsNum_ ? recordingFpsNum_ : 30);
+    out.fps_den = static_cast<int>(recordingFpsDen_ ? recordingFpsDen_ : 1);
+    out.input_pixfmt = gcapFmtFromDShowSubtype(subtype_);
+    out.output_bit_depth = ffmpegUseHevcMain10(out.input_pixfmt) ? 10 : 8;
+    strcpy_s(out.encoder_name, ffmpegUseHevcMain10(out.input_pixfmt) ? "FFmpeg HEVC / H.265 Main10" : "FFmpeg H.264 / AVC");
+    strcpy_s(out.muxer_name, "MP4 / FFmpeg");
+    return true;
+}
+
 bool DShowProvider::enumerate(std::vector<gcap_device_info_t> &list)
 {
     ensure_com();

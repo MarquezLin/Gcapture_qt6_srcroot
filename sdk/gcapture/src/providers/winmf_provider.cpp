@@ -3764,6 +3764,27 @@ bool WinMFProvider::exportPreviewSceneRgb10(const char *basePathUtf8, bool expor
     return pipeline_->export_scene_rgb10(wpath, exportRaw, exportTiff, exportStats);
 }
 
+
+bool WinMFProvider::getRecordingStats(gcap_recording_stats_t &out)
+{
+    std::memset(&out, 0, sizeof(out));
+    std::lock_guard<std::mutex> lock(recorderMutex_);
+    out.width = cur_w_;
+    out.height = cur_h_;
+    out.fps_num = cur_fps_num_ > 0 ? cur_fps_num_ : (profile_.fps_num > 0 ? profile_.fps_num : 30);
+    out.fps_den = cur_fps_den_ > 0 ? cur_fps_den_ : (profile_.fps_den > 0 ? profile_.fps_den : 1);
+    out.input_pixfmt = mfsub_to_gcap(cur_subtype_);
+    out.output_bit_depth = (out.input_pixfmt == GCAP_FMT_P010) ? 10 : 8;
+    strcpy_s(out.encoder_name, (out.output_bit_depth >= 10) ? "Media Foundation HEVC / H.265" : "Media Foundation H.264 / AVC");
+    strcpy_s(out.muxer_name, "MP4 / Media Foundation Sink Writer");
+    if (recorder_)
+    {
+        out.frames_written = recorder_->videoWritten;
+        out.frames_dropped = recorder_->videoDropped;
+    }
+    return true;
+}
+
 void WinMFProvider::release_preview_swapchain()
 {
     if (pipeline_)

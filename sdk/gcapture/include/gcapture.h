@@ -152,6 +152,58 @@ extern "C"
         int video_only;           // 1 = SDK recorder currently writes video only
     } gcap_recording_info_t;
 
+
+    typedef enum
+    {
+        GCAP_EXPORT_RAW_NATIVE      = 1 << 0,
+        GCAP_EXPORT_RAW_RGB10_U16   = 1 << 1,
+        GCAP_EXPORT_RAW_RGBA16      = 1 << 2,
+        GCAP_EXPORT_TIFF            = 1 << 3,
+        GCAP_EXPORT_STATS           = 1 << 4,
+        GCAP_EXPORT_RAW_ALL         = GCAP_EXPORT_RAW_NATIVE | GCAP_EXPORT_RAW_RGB10_U16 | GCAP_EXPORT_RAW_RGBA16
+    } gcap_export_flags_t;
+
+    typedef struct
+    {
+        const char *base_path_utf8;
+        int flags;
+    } gcap_snapshot_export_desc_t;
+
+    typedef struct
+    {
+        char native_raw_path[512];
+        char fp16_raw_path[512];
+        char rgb10_u16_path[512];
+        char rgba16_path[512];
+        char tiff_path[512];
+        char stats_path[512];
+        int width;
+        int height;
+        gcap_pixfmt_t source_format;
+        int source_bit_depth;
+        int generated_flags;
+    } gcap_snapshot_export_result_t;
+
+    typedef struct
+    {
+        uint64_t frames_written;
+        uint64_t frames_dropped;
+        uint64_t frames_duplicated;
+        uint64_t input_frames;
+        uint64_t unsupported_frames;
+        uint64_t overwritten_frames;
+        int width;
+        int height;
+        int fps_num;
+        int fps_den;
+        gcap_pixfmt_t input_pixfmt;
+        int output_bit_depth;
+        char encoder_name[128];
+        char muxer_name[64];
+        double avg_encode_fps;
+        double avg_bitrate_kbps;
+    } gcap_recording_stats_t;
+
     typedef enum
     {
         GCAP_DEINT_AUTO = 0,
@@ -272,6 +324,9 @@ extern "C"
     GCAP_API int gcap_get_active_backend(gcap_handle h);
     GCAP_API gcap_status_t gcap_export_preview_scene_rgb10(gcap_handle h, const char *base_path_utf8,
                                                            int export_raw, int export_tiff, int export_stats);
+    // Formal snapshot export API. Prefer this over gcap_export_preview_scene_rgb10() for SDK clients.
+    GCAP_API gcap_status_t gcap_export_snapshot(gcap_handle h, const gcap_snapshot_export_desc_t *desc,
+                                                gcap_snapshot_export_result_t *out);
 
     // --- OBS-like "Properties" ---
     GCAP_API gcap_status_t gcap_get_device_props(gcap_handle h, gcap_device_props_t *out);
@@ -289,6 +344,9 @@ extern "C"
     // 列舉 audio capture devices
     // 回傳實際寫入的數量
     GCAP_API int gcap_enum_audio_devices(gcap_audio_device_t *out_devices, int max_devices);
+    // Canonical audio API names for new SDK clients. Old names are kept for compatibility.
+    GCAP_API int gcap_audio_device_count(void);
+    GCAP_API int gcap_audio_enum_devices(gcap_audio_device_t *out_devices, int max_devices);
     // SDK helper functions for clients. These keep format/backend/recording display logic out of the demo app.
     GCAP_API const char *gcap_pixfmt_name(gcap_pixfmt_t fmt);
     GCAP_API int gcap_pixfmt_bit_depth(gcap_pixfmt_t fmt);
@@ -300,6 +358,7 @@ extern "C"
     GCAP_API int gcap_recording_uses_hevc_main10(gcap_pixfmt_t fmt);
     GCAP_API const char *gcap_recording_mode_name(int backend);
     GCAP_API gcap_status_t gcap_get_recording_info(gcap_handle h, gcap_recording_info_t *out);
+    GCAP_API gcap_status_t gcap_get_recording_stats(gcap_handle h, gcap_recording_stats_t *out);
 
     // Convert a frame packet callback buffer into packed BGRA8. dst_stride is bytes per row.
     // Supports ARGB/RGB32, NV12, YUY2 and Y210. Returns GCAP_ENOTSUP for unsupported formats.
@@ -310,6 +369,10 @@ extern "C"
     // Enumerate DirectShow video format capabilities for a device index.
     // Returns actual written count. Pass nullptr or max_caps<=0 to query supported count only.
     GCAP_API int gcap_enum_video_caps(int device_index, gcap_video_cap_t *out_caps, int max_caps);
+    // Backend-aware capability enumeration helper.
+    GCAP_API int gcap_enum_video_caps_ex(int backend, int device_index, gcap_video_cap_t *out_caps, int max_caps);
+    // Return SDK recommended profile based on backend format priority and capabilities.
+    GCAP_API gcap_status_t gcap_get_recommended_profile(int backend, int device_index, gcap_profile_t *out_profile);
     // Enumerate unique pixel formats supported by a device for the requested backend.
     // backend: GCAP_BACKEND_WINMF_CPU / GCAP_BACKEND_WINMF_GPU / GCAP_BACKEND_DSHOW
     // Returns actual written count. Pass nullptr or max_formats<=0 to query supported count only.

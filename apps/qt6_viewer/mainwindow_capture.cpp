@@ -138,6 +138,8 @@ void MainWindow::stopRecordingSession(bool showSummary)
         const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
         gcap_recording_info_t sdkRecInfo{};
         const bool hasSdkRecInfo = (h_ && gcap_get_recording_info(h_, &sdkRecInfo) == GCAP_OK);
+        gcap_recording_stats_t sdkRecStats{};
+        const bool hasSdkRecStats = (h_ && gcap_get_recording_stats(h_, &sdkRecStats) == GCAP_OK);
         const QString modeLabel = (hasSdkRecInfo && sdkRecInfo.mode_name[0])
                                     ? QString::fromUtf8(sdkRecInfo.mode_name)
                                     : buildRecordModeLabel(h_, backend);
@@ -153,25 +155,33 @@ void MainWindow::stopRecordingSession(bool showSummary)
         if (hasSdkRecInfo && sdkRecInfo.output_fps_num > 0 && sdkRecInfo.output_fps_den > 0)
             recordOutputFps = static_cast<double>(sdkRecInfo.output_fps_num) / sdkRecInfo.output_fps_den;
 
-        const QString info = QStringLiteral(
-                                 "Record done\n"
-                                 "file:%1\n"
-                                 "size:%2 MB\n"
-                                 "Actual resolution:%3 x %4\n"
-                                 "Capture FPS:%5\n"
-                                 "Record output FPS:%6\n"
-                                 "record mode:%7\n"
-                                 "encoder:%8\n"
-                                 "file avg bit rate:%9 kbps")
-                                 .arg(recordPath_)
-                                 .arg(QString::number(sizeBytes / (1024.0 * 1024.0), 'f', 2))
-                                 .arg(srcW)
-                                 .arg(srcH)
-                                 .arg(QString::number(captureFps, 'f', 2))
-                                 .arg(QString::number(recordOutputFps, 'f', 2))
-                                 .arg(modeLabel)
-                                 .arg(codecLabel)
-                                 .arg(QString::number(bitrateKbps, 'f', 1));
+        QString info = QStringLiteral(
+                           "Record done\n"
+                           "file:%1\n"
+                           "size:%2 MB\n"
+                           "Actual resolution:%3 x %4\n"
+                           "Capture FPS:%5\n"
+                           "Record output FPS:%6\n"
+                           "record mode:%7\n"
+                           "encoder:%8\n"
+                           "file avg bit rate:%9 kbps")
+                           .arg(recordPath_)
+                           .arg(QString::number(sizeBytes / (1024.0 * 1024.0), 'f', 2))
+                           .arg(srcW)
+                           .arg(srcH)
+                           .arg(QString::number(captureFps, 'f', 2))
+                           .arg(QString::number(recordOutputFps, 'f', 2))
+                           .arg(modeLabel)
+                           .arg(codecLabel)
+                           .arg(QString::number(bitrateKbps, 'f', 1));
+
+        if (hasSdkRecStats)
+        {
+            info += QStringLiteral("\nframes written:%1\nframes dropped:%2\ninput frames:%3")
+                        .arg(QString::number(static_cast<qulonglong>(sdkRecStats.frames_written)))
+                        .arg(QString::number(static_cast<qulonglong>(sdkRecStats.frames_dropped)))
+                        .arg(QString::number(static_cast<qulonglong>(sdkRecStats.input_frames)));
+        }
 
         QMessageBox::information(this, QStringLiteral("Record"), info);
 

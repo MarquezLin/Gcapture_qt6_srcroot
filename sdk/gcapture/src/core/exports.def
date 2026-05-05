@@ -44,3 +44,11 @@ EXPORTS
     gcap_recording_mode_name
     gcap_get_recording_info
     gcap_frame_to_bgra8
+    gcap_export_snapshot
+    gcap_get_recording_stats
+    gcap_enum_video_caps_ex
+    gcap_get_recommended_profile
+    gcap_audio_device_count
+    gcap_audio_enum_devices
+    gcap_start_audio_capture
+    gcap_stop_audio_capture

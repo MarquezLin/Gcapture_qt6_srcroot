@@ -118,6 +118,11 @@ struct ICaptureProvider
         (void)exportStats;
         return false;
     }
+    virtual bool getRecordingStats(gcap_recording_stats_t &out)
+    {
+        (void)out;
+        return false;
+    }
 };
 
 /**
@@ -152,6 +157,7 @@ public:
     gcap_status_t setProcAmp(const gcap_procamp_t &p);
     gcap_status_t setPreview(const gcap_preview_desc_t &desc);
     gcap_status_t exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats);
+    gcap_status_t getRecordingStats(gcap_recording_stats_t &out);
     int getActiveBackendInt() const;
 
     static void setBackendInt(int v);

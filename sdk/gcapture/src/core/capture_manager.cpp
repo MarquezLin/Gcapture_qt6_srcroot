@@ -419,6 +419,13 @@ gcap_status_t CaptureManager::exportPreviewSceneRgb10(const char *basePathUtf8, 
     return provider_->exportPreviewSceneRgb10(basePathUtf8, exportRaw, exportTiff, exportStats) ? GCAP_OK : GCAP_ENOTSUP;
 }
 
+gcap_status_t CaptureManager::getRecordingStats(gcap_recording_stats_t &out)
+{
+    if (!provider_)
+        return GCAP_ENOTSUP;
+    return provider_->getRecordingStats(out) ? GCAP_OK : GCAP_ENOTSUP;
+}
+
 int CaptureManager::getActiveBackendInt() const
 {
     return activeBackendInt_;

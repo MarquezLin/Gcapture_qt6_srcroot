@@ -53,6 +53,42 @@ extern "C"
         std::snprintf(dst, dstSize, "%s", src);
     }
 
+    static void copy_path(char *dst, size_t dstSize, const char *base, const char *suffix)
+    {
+        if (!dst || dstSize == 0)
+            return;
+        if (!base)
+            base = "";
+        if (!suffix)
+            suffix = "";
+        std::snprintf(dst, dstSize, "%s%s", base, suffix);
+    }
+
+    static int format_rank_for_backend(int backend, gcap_pixfmt_t fmt)
+    {
+        if (backend == GCAP_BACKEND_DSHOW)
+        {
+            switch (fmt)
+            {
+            case GCAP_FMT_Y210: return 500;
+            case GCAP_FMT_YUY2: return 400;
+            case GCAP_FMT_NV12: return 300;
+            case GCAP_FMT_ARGB: return 200;
+            case GCAP_FMT_P010: return 100;
+            default: return 0;
+            }
+        }
+        switch (fmt)
+        {
+        case GCAP_FMT_P010: return 500;
+        case GCAP_FMT_Y210: return 450;
+        case GCAP_FMT_YUY2: return 400;
+        case GCAP_FMT_NV12: return 300;
+        case GCAP_FMT_ARGB: return 200;
+        default: return 0;
+        }
+    }
+
     const char *gcap_pixfmt_name(gcap_pixfmt_t fmt)
     {
         switch (fmt)
@@ -274,6 +310,94 @@ extern "C"
 #endif
     }
 
+    int gcap_enum_video_caps_ex(int backend, int device_index, gcap_video_cap_t *out_caps, int max_caps)
+    {
+#ifdef _WIN32
+        if (backend == GCAP_BACKEND_DSHOW)
+            return dshow_enum_video_caps_by_index(device_index, out_caps, max_caps);
+        // Current WinMF helper exposes unique pixel formats only. Keep this API backend-aware and conservative.
+        if (backend == GCAP_BACKEND_WINMF_CPU || backend == GCAP_BACKEND_WINMF_GPU || backend == GCAP_BACKEND_AUTO)
+            return 0;
+        return 0;
+#else
+        (void)backend; (void)device_index; (void)out_caps; (void)max_caps;
+        return 0;
+#endif
+    }
+
+    gcap_status_t gcap_get_recommended_profile(int backend, int device_index, gcap_profile_t *out_profile)
+    {
+        if (!out_profile)
+            return GCAP_EINVAL;
+        std::memset(out_profile, 0, sizeof(*out_profile));
+        out_profile->mode = GCAP_PROFILE_DEVICE_DEFAULT;
+
+#ifdef _WIN32
+        if (backend == GCAP_BACKEND_DSHOW)
+        {
+            const int count = dshow_enum_video_caps_by_index(device_index, nullptr, 0);
+            if (count <= 0)
+                return GCAP_ENOTSUP;
+            std::vector<gcap_video_cap_t> caps(static_cast<size_t>(count));
+            const int n = dshow_enum_video_caps_by_index(device_index, caps.data(), count);
+            if (n <= 0)
+                return GCAP_ENOTSUP;
+            int best = -1;
+            long long bestScore = -1;
+            for (int i = 0; i < n; ++i)
+            {
+                const auto &c = caps[static_cast<size_t>(i)];
+                const int fps = c.fps_den > 0 ? (c.fps_num / c.fps_den) : c.fps_num;
+                const long long score = static_cast<long long>(format_rank_for_backend(backend, c.pixfmt)) * 100000000LL
+                                      + static_cast<long long>(c.width) * static_cast<long long>(c.height)
+                                      + fps;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = i;
+                }
+            }
+            if (best < 0)
+                return GCAP_ENOTSUP;
+            const auto &c = caps[static_cast<size_t>(best)];
+            out_profile->width = c.width;
+            out_profile->height = c.height;
+            out_profile->fps_num = c.fps_num;
+            out_profile->fps_den = c.fps_den > 0 ? c.fps_den : 1;
+            out_profile->format = c.pixfmt;
+            out_profile->mode = GCAP_PROFILE_CUSTOM;
+            return GCAP_OK;
+        }
+
+        if (backend == GCAP_BACKEND_WINMF_CPU || backend == GCAP_BACKEND_WINMF_GPU || backend == GCAP_BACKEND_AUTO)
+        {
+            gcap_pixfmt_t formats[16] = {};
+            const int n = winmf_enum_supported_pixel_formats_by_index(device_index, formats, 16);
+            if (n <= 0)
+                return GCAP_ENOTSUP;
+            int best = -1;
+            int bestScore = -1;
+            for (int i = 0; i < n; ++i)
+            {
+                const int score = format_rank_for_backend(backend, formats[i]);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = i;
+                }
+            }
+            if (best < 0)
+                return GCAP_ENOTSUP;
+            out_profile->format = formats[best];
+            out_profile->mode = GCAP_PROFILE_DEVICE_DEFAULT;
+            return GCAP_OK;
+        }
+#else
+        (void)backend; (void)device_index;
+#endif
+        return GCAP_ENOTSUP;
+    }
+
     int gcap_enum_supported_pixel_formats(int backend, int device_index, gcap_pixfmt_t *out_formats, int max_formats)
     {
 #ifdef _WIN32
@@ -441,6 +565,27 @@ extern "C"
             copy_cstr(out->encoder_name, sizeof(out->encoder_name), label);
             copy_cstr(out->output_format, sizeof(out->output_format), "H.264 8-bit");
             out->output_bit_depth = 8;
+        }
+        return GCAP_OK;
+    }
+
+    GCAP_API gcap_status_t gcap_get_recording_stats(gcap_handle h, gcap_recording_stats_t *out)
+    {
+        if (!h || !out)
+            return GCAP_EINVAL;
+        std::memset(out, 0, sizeof(*out));
+        const gcap_status_t st = h->mgr.getRecordingStats(*out);
+        if (st != GCAP_OK)
+            return st;
+
+        if (out->encoder_name[0] == 0)
+        {
+            gcap_recording_info_t info{};
+            if (gcap_get_recording_info(h, &info) == GCAP_OK)
+            {
+                copy_cstr(out->encoder_name, sizeof(out->encoder_name), info.encoder_name);
+                out->output_bit_depth = info.output_bit_depth;
+            }
         }
         return GCAP_OK;
     }
@@ -706,6 +851,66 @@ extern "C"
                                               export_stats != 0);
     }
 
+    GCAP_API gcap_status_t gcap_export_snapshot(gcap_handle h, const gcap_snapshot_export_desc_t *desc,
+                                                gcap_snapshot_export_result_t *out)
+    {
+        if (!h || !desc || !desc->base_path_utf8 || !*desc->base_path_utf8)
+            return GCAP_EINVAL;
+
+        gcap_snapshot_export_result_t local{};
+        gcap_snapshot_export_result_t *r = out ? out : &local;
+        std::memset(r, 0, sizeof(*r));
+
+        gcap_runtime_info_t rt{};
+        h->mgr.getRuntimeInfo(rt);
+        r->width = rt.negotiated.width > 0 ? rt.negotiated.width : rt.signal.width;
+        r->height = rt.negotiated.height > 0 ? rt.negotiated.height : rt.signal.height;
+        r->source_format = rt.negotiated.pixfmt;
+        if (gcap_pixfmt_bit_depth(r->source_format) == 0)
+            r->source_format = rt.signal.pixfmt;
+        r->source_bit_depth = gcap_pixfmt_bit_depth(r->source_format);
+        if (r->source_bit_depth <= 0)
+            r->source_bit_depth = rt.negotiated.bit_depth > 0 ? rt.negotiated.bit_depth : rt.signal.bit_depth;
+
+        const int flags = desc->flags != 0 ? desc->flags : (GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS);
+        const bool wantRaw = (flags & GCAP_EXPORT_RAW_ALL) != 0;
+        const bool wantTiff = (flags & GCAP_EXPORT_TIFF) != 0;
+        const bool wantStats = (flags & GCAP_EXPORT_STATS) != 0;
+
+        const gcap_status_t st = h->mgr.exportPreviewSceneRgb10(desc->base_path_utf8, wantRaw, wantTiff, wantStats);
+        if (st != GCAP_OK)
+            return st;
+
+        const bool sourceIs10Bit = r->source_bit_depth >= 10;
+        if (wantRaw)
+        {
+            if (sourceIs10Bit)
+            {
+                copy_path(r->native_raw_path, sizeof(r->native_raw_path), desc->base_path_utf8, "_abgr2101010.raw");
+                copy_path(r->fp16_raw_path, sizeof(r->fp16_raw_path), desc->base_path_utf8, "_fp16_rgba16f.raw");
+                copy_path(r->rgb10_u16_path, sizeof(r->rgb10_u16_path), desc->base_path_utf8, "_rgb10_u16.raw");
+                copy_path(r->rgba16_path, sizeof(r->rgba16_path), desc->base_path_utf8, "_rgba16_expanded.raw");
+                r->generated_flags |= GCAP_EXPORT_RAW_NATIVE | GCAP_EXPORT_RAW_RGB10_U16 | GCAP_EXPORT_RAW_RGBA16;
+            }
+            else
+            {
+                copy_path(r->native_raw_path, sizeof(r->native_raw_path), desc->base_path_utf8, "_bgra8.raw");
+                r->generated_flags |= GCAP_EXPORT_RAW_NATIVE;
+            }
+        }
+        if (wantTiff)
+        {
+            copy_path(r->tiff_path, sizeof(r->tiff_path), desc->base_path_utf8, ".tiff");
+            r->generated_flags |= GCAP_EXPORT_TIFF;
+        }
+        if (wantStats)
+        {
+            copy_path(r->stats_path, sizeof(r->stats_path), desc->base_path_utf8, ".stats.txt");
+            r->generated_flags |= GCAP_EXPORT_STATS;
+        }
+        return GCAP_OK;
+    }
+
     extern "C" GCAP_API int gcap_get_audio_device_count(void)
     {
         auto list = gcap::audio::enumerate_devices();
@@ -738,6 +943,26 @@ extern "C"
         }
 
         return n;
+    }
+
+    extern "C" GCAP_API int gcap_audio_device_count(void)
+    {
+        return gcap_get_audio_device_count();
+    }
+
+    extern "C" GCAP_API int gcap_audio_enum_devices(gcap_audio_device_t *out_devices, int max_devices)
+    {
+        return gcap_enum_audio_devices(out_devices, max_devices);
+    }
+
+    extern "C" GCAP_API int gcap_start_audio_capture(const gcap_audio_capture_config_t *cfg)
+    {
+        (void)cfg;
+        return GCAP_ENOTSUP;
+    }
+
+    extern "C" GCAP_API void gcap_stop_audio_capture(void)
+    {
     }
 
 } // extern "C"

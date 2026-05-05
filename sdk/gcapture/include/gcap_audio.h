@@ -30,11 +30,16 @@ extern "C"
         int is_default;
     } gcap_audio_device_t;
 
-    // number of active capture audio devices
-    GCAP_API int gcap_get_audio_device_count(void);
+    // Canonical audio API names for new SDK clients.
+    GCAP_API int gcap_audio_device_count(void);
 
-    // enumerate capture audio devices
     // return: number written (or total count if out == NULL)
+    GCAP_API int gcap_audio_enum_devices(
+        gcap_audio_device_t *out,
+        int max_count);
+
+    // Legacy aliases kept for source/binary compatibility.
+    GCAP_API int gcap_get_audio_device_count(void);
     GCAP_API int gcap_enum_audio_devices(
         gcap_audio_device_t *out,
         int max_count);
@@ -46,7 +51,7 @@ extern "C"
         int channels;          // 1 or 2
     } gcap_audio_capture_config_t;
 
-    // 開始 audio capture（for recording）
+    // Experimental low-level audio capture API. Prefer gcap_set_recording_audio_device() for normal recording.
     GCAP_API int gcap_start_audio_capture(
         const gcap_audio_capture_config_t *cfg);
 

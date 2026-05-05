@@ -213,19 +213,25 @@ bool MainWindow::saveRgb10Exports(const QString &basePath, QString *rawPath, QSt
     if (!h_ || basePath.isEmpty())
         return false;
 
-    const bool source10Bit = currentSourceIs10Bit(h_);
     const QByteArray baseUtf8 = QDir::toNativeSeparators(basePath).toUtf8();
-    const gcap_status_t st = gcap_export_preview_scene_rgb10(h_, baseUtf8.constData(), 1, 1, 1);
+    gcap_snapshot_export_desc_t desc{};
+    desc.base_path_utf8 = baseUtf8.constData();
+    desc.flags = GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS;
+
+    gcap_snapshot_export_result_t result{};
+    const gcap_status_t st = gcap_export_snapshot(h_, &desc, &result);
     if (st != GCAP_OK)
         return false;
 
     if (rawPath)
-        *rawPath = source10Bit ? (basePath + "_abgr2101010.raw")
-                               : (basePath + "_bgra8.raw");
+        *rawPath = result.native_raw_path[0] ? QString::fromUtf8(result.native_raw_path)
+                                            : QString();
     if (tiffPath)
-        *tiffPath = basePath + ".tiff";
+        *tiffPath = result.tiff_path[0] ? QString::fromUtf8(result.tiff_path)
+                                        : QString();
     if (statsPath)
-        *statsPath = basePath + ".stats.txt";
+        *statsPath = result.stats_path[0] ? QString::fromUtf8(result.stats_path)
+                                          : QString();
     return true;
 }
 
