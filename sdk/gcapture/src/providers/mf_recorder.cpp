@@ -28,32 +28,33 @@ using Microsoft::WRL::ComPtr;
 
 static std::string hr_msg(HRESULT hr)
 {
-    _com_error ce(hr);
+    wchar_t *wmsg = nullptr;
+    DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+    DWORD lenW = FormatMessageW(flags, nullptr, static_cast<DWORD>(hr),
+                                MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                                reinterpret_cast<LPWSTR>(&wmsg), 0, nullptr);
 
-    const wchar_t* wmsg =
-        ce.ErrorMessage() ? ce.ErrorMessage() : L"unknown";
+    if (lenW == 0 || !wmsg)
+    {
+        char buf[32];
+        sprintf_s(buf, "0x%08X", static_cast<unsigned int>(hr));
+        return std::string(buf);
+    }
 
-    // wchar_t → UTF-8 std::string
-    int len = WideCharToMultiByte(
-        CP_UTF8, 0,
-        wmsg, -1,
-        nullptr, 0,
-        nullptr, nullptr
-        );
+    while (lenW > 0 && (wmsg[lenW - 1] == L'\r' || wmsg[lenW - 1] == L'\n' || wmsg[lenW - 1] == L' '))
+        --lenW;
+    wmsg[lenW] = L'\0';
 
-    std::string msg(len - 1, '\0');
-    WideCharToMultiByte(
-        CP_UTF8, 0,
-        wmsg, -1,
-        msg.data(), len,
-        nullptr, nullptr
-        );
+    int len = WideCharToMultiByte(CP_UTF8, 0, wmsg, -1, nullptr, 0, nullptr, nullptr);
+    std::string out;
+    if (len > 0)
+    {
+        out.resize(static_cast<size_t>(len - 1));
+        WideCharToMultiByte(CP_UTF8, 0, wmsg, -1, out.data(), len, nullptr, nullptr);
+    }
 
-    std::ostringstream oss;
-    oss << "hr=0x"
-        << std::hex << std::uppercase << (unsigned long)hr
-        << " (" << msg << ")";
-    return oss.str();
+    LocalFree(wmsg);
+    return out.empty() ? std::string("unknown") : out;
 }
 
 

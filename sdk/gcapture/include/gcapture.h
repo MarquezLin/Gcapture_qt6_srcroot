@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 #include "gcap_audio.h"
 
 #ifdef _WIN32
@@ -138,6 +139,19 @@ extern "C"
         char negotiated_desc[32];         // e.g. RGB24 / NV12 / YUY2 / ARGB32
     } gcap_runtime_info_t;
 
+    typedef struct
+    {
+        char mode_name[64];       // e.g. DShow + FFmpeg MP4 / Media Foundation Sink Writer
+        char encoder_name[160];   // e.g. FFmpeg HEVC / H.265 Main10
+        char input_format[32];
+        char output_format[32];
+        int input_bit_depth;
+        int output_bit_depth;
+        int output_fps_num;
+        int output_fps_den;
+        int video_only;           // 1 = SDK recorder currently writes video only
+    } gcap_recording_info_t;
+
     typedef enum
     {
         GCAP_DEINT_AUTO = 0,
@@ -191,7 +205,7 @@ extern "C"
         GCAP_SOURCE_WINMF_GPU = 1,
         GCAP_SOURCE_WINMF_CPU = 2,
         GCAP_SOURCE_DSHOW_RAWSINK = 3,
-        GCAP_SOURCE_DSHOW_RENDERER = 4
+        GCAP_SOURCE_DSHOW_RENDERER = 4 // Legacy/debug renderer path. Prefer GCAP_SOURCE_DSHOW_RAWSINK for SDK clients.
     } gcap_frame_source_kind_t;
 
     typedef struct
@@ -230,24 +244,24 @@ extern "C"
 
     typedef struct gcap_handle_t *gcap_handle;
 
-    gcap_status_t gcap_enumerate(gcap_device_info_t *out, int max, int *count);
+    GCAP_API gcap_status_t gcap_enumerate(gcap_device_info_t *out, int max, int *count);
     GCAP_API gcap_status_t gcap_create(gcap_handle *out);
-    gcap_status_t gcap_open(int device_index, gcap_handle *out);
+    GCAP_API gcap_status_t gcap_open(int device_index, gcap_handle *out);
     GCAP_API gcap_status_t gcap_open2(gcap_handle h, int device_index);
-    gcap_status_t gcap_set_profile(gcap_handle h, const gcap_profile_t *prof);
-    gcap_status_t gcap_set_buffers(gcap_handle h, int count, size_t bytes_hint);
-    gcap_status_t gcap_set_callbacks(gcap_handle h, gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user);
+    GCAP_API gcap_status_t gcap_set_profile(gcap_handle h, const gcap_profile_t *prof);
+    GCAP_API gcap_status_t gcap_set_buffers(gcap_handle h, int count, size_t bytes_hint);
+    GCAP_API gcap_status_t gcap_set_callbacks(gcap_handle h, gcap_on_video_cb vcb, gcap_on_error_cb ecb, void *user);
     GCAP_API gcap_status_t gcap_set_frame_packet_callback(gcap_handle h, gcap_on_frame_packet_cb cb, void *user);
-    gcap_status_t gcap_start(gcap_handle h);
-    gcap_status_t gcap_start_recording(gcap_handle h, const char *path_utf8);
-    gcap_status_t gcap_stop_recording(gcap_handle h);
-    gcap_status_t gcap_stop(gcap_handle h);
+    GCAP_API gcap_status_t gcap_start(gcap_handle h);
+    GCAP_API gcap_status_t gcap_start_recording(gcap_handle h, const char *path_utf8);
+    GCAP_API gcap_status_t gcap_stop_recording(gcap_handle h);
+    GCAP_API gcap_status_t gcap_stop(gcap_handle h);
     // Enumerate WASAPI capture endpoints (microphones / capture devices)
     GCAP_API gcap_status_t gcap_enumerate_audio_devices(gcap_audio_device_t *out, int max, int *count);
     // Select which WASAPI capture endpoint to use for recording.
     // device_id_utf8 = endpoint id from gcap_enumerate_audio_devices; nullptr/"" => use system default
     GCAP_API gcap_status_t gcap_set_recording_audio_device(gcap_handle h, const char *device_id_utf8);
-    gcap_status_t gcap_close(gcap_handle h);
+    GCAP_API gcap_status_t gcap_close(gcap_handle h);
     GCAP_API void gcap_set_backend(int backend);
     // 選擇要用哪一張 D3D11 Adapter 來做 NV12→RGBA / DXGI 管線
     // adapter_index = -1 表示使用系統預設（原本的 nullptr / default adapter）
@@ -260,10 +274,10 @@ extern "C"
                                                            int export_raw, int export_tiff, int export_stats);
 
     // --- OBS-like "Properties" ---
-    gcap_status_t gcap_get_device_props(gcap_handle h, gcap_device_props_t *out);
-    gcap_status_t gcap_get_signal_status(gcap_handle h, gcap_signal_status_t *out);
+    GCAP_API gcap_status_t gcap_get_device_props(gcap_handle h, gcap_device_props_t *out);
+    GCAP_API gcap_status_t gcap_get_signal_status(gcap_handle h, gcap_signal_status_t *out);
     GCAP_API gcap_status_t gcap_get_runtime_info(gcap_handle h, gcap_runtime_info_t *out);
-    gcap_status_t gcap_set_processing(gcap_handle h, const gcap_processing_opts_t *opts);
+    GCAP_API gcap_status_t gcap_set_processing(gcap_handle h, const gcap_processing_opts_t *opts);
 
     // Apply ProcAmp on CPU conversion path (NV12/YUY2->ARGB).
     // Passing nullptr resets to neutral.
@@ -275,8 +289,23 @@ extern "C"
     // 列舉 audio capture devices
     // 回傳實際寫入的數量
     GCAP_API int gcap_enum_audio_devices(gcap_audio_device_t *out_devices, int max_devices);
+    // SDK helper functions for clients. These keep format/backend/recording display logic out of the demo app.
+    GCAP_API const char *gcap_pixfmt_name(gcap_pixfmt_t fmt);
+    GCAP_API int gcap_pixfmt_bit_depth(gcap_pixfmt_t fmt);
+    GCAP_API int gcap_pixfmt_is_10bit(gcap_pixfmt_t fmt);
+    GCAP_API int gcap_pixfmt_is_yuv(gcap_pixfmt_t fmt);
+    GCAP_API int gcap_pixfmt_default_stride(int width, gcap_pixfmt_t fmt);
+    GCAP_API const char *gcap_backend_name(int backend);
+    GCAP_API const char *gcap_source_kind_name(int source_kind);
+    GCAP_API int gcap_recording_uses_hevc_main10(gcap_pixfmt_t fmt);
+    GCAP_API const char *gcap_recording_mode_name(int backend);
+    GCAP_API gcap_status_t gcap_get_recording_info(gcap_handle h, gcap_recording_info_t *out);
 
-    const char *gcap_strerror(gcap_status_t);
+    // Convert a frame packet callback buffer into packed BGRA8. dst_stride is bytes per row.
+    // Supports ARGB/RGB32, NV12, YUY2 and Y210. Returns GCAP_ENOTSUP for unsupported formats.
+    GCAP_API gcap_status_t gcap_frame_to_bgra8(const gcap_frame_packet_t *src, void *dst, int dst_stride);
+
+    GCAP_API const char *gcap_strerror(gcap_status_t);
     GCAP_API gcap_status_t gcap_set_preview(gcap_handle h, const gcap_preview_desc_t *desc);
     // Enumerate DirectShow video format capabilities for a device index.
     // Returns actual written count. Pass nullptr or max_caps<=0 to query supported count only.

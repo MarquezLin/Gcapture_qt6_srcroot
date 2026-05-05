@@ -35,52 +35,9 @@ static MainWindow *g_mainWindow = nullptr;
 
 namespace
 {
-    static inline uint8_t clampByteLocal(int v)
-    {
-        if (v < 0)
-            return 0;
-        if (v > 255)
-            return 255;
-        return static_cast<uint8_t>(v);
-    }
-
-    static inline uint16_t normalizeY210WordLocal(uint16_t v)
-    {
-        // Y210 stores each 10-bit component left-aligned in a 16-bit WORD.
-        // Bits [15:6] are valid, bits [5:0] are padding.
-        return static_cast<uint16_t>((v >> 6) & 0x03FFu);
-    }
-
-    static inline void yuvToRgbLocal(int y, int u, int v, uint8_t &b, uint8_t &g, uint8_t &r)
-    {
-        const int c = y - 16;
-        const int d = u - 128;
-        const int e = v - 128;
-        const int rr = (298 * c + 409 * e + 128) >> 8;
-        const int gg = (298 * c - 100 * d - 208 * e + 128) >> 8;
-        const int bb = (298 * c + 516 * d + 128) >> 8;
-        r = clampByteLocal(rr);
-        g = clampByteLocal(gg);
-        b = clampByteLocal(bb);
-    }
-
     static const char *packetFmtName(int fmt)
     {
-        switch (fmt)
-        {
-        case GCAP_FMT_NV12:
-            return "NV12";
-        case GCAP_FMT_P010:
-            return "P010";
-        case GCAP_FMT_YUY2:
-            return "YUY2";
-        case GCAP_FMT_Y210:
-            return "Y210";
-        case GCAP_FMT_ARGB:
-            return "ARGB";
-        default:
-            return "UNKNOWN";
-        }
+        return gcap_pixfmt_name(static_cast<gcap_pixfmt_t>(fmt));
     }
 
     static QString formatVideoCapDisplay(const gcap_video_cap_t &cap)
@@ -99,21 +56,9 @@ namespace
 
     static QString pixelFormatComboLabel(gcap_pixfmt_t fmt)
     {
-        switch (fmt)
-        {
-        case GCAP_FMT_NV12:
-            return QStringLiteral("Format: NV12");
-        case GCAP_FMT_YUY2:
-            return QStringLiteral("Format: YUY2");
-        case GCAP_FMT_Y210:
-            return QStringLiteral("Format: Y210");
-        case GCAP_FMT_P010:
-            return QStringLiteral("Format: P010");
-        case GCAP_FMT_ARGB:
-            return QStringLiteral("Format: ARGB32");
-        default:
+        if (gcap_pixfmt_bit_depth(fmt) <= 0)
             return QString();
-        }
+        return QStringLiteral("Format: %1").arg(QString::fromUtf8(gcap_pixfmt_name(fmt)));
     }
 
     static std::vector<gcap_pixfmt_t> enumerateSupportedPixelFormats(int backend, int deviceIndex)
@@ -182,96 +127,14 @@ namespace
         if (pkt.width <= 0 || pkt.height <= 0 || pkt.plane_count <= 0 || !pkt.data[0])
             return {};
 
-        if (pkt.format == GCAP_FMT_ARGB)
-        {
-            QImage img(reinterpret_cast<const uchar *>(pkt.data[0]), pkt.width, pkt.height, pkt.stride[0], QImage::Format_ARGB32);
-            return img.copy();
-        }
-
         QImage img(pkt.width, pkt.height, QImage::Format_ARGB32);
         if (img.isNull())
             return {};
 
-        if (pkt.format == GCAP_FMT_NV12 && pkt.plane_count >= 2 && pkt.data[1])
-        {
-            const uint8_t *yPlane = reinterpret_cast<const uint8_t *>(pkt.data[0]);
-            const uint8_t *uvPlane = reinterpret_cast<const uint8_t *>(pkt.data[1]);
-            const int yStride = pkt.stride[0] > 0 ? pkt.stride[0] : pkt.width;
-            const int uvStride = pkt.stride[1] > 0 ? pkt.stride[1] : pkt.width;
-            for (int y = 0; y < pkt.height; ++y)
-            {
-                const uint8_t *yRow = yPlane + static_cast<size_t>(y) * yStride;
-                const uint8_t *uvRow = uvPlane + static_cast<size_t>(y / 2) * uvStride;
-                QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
-                for (int x = 0; x < pkt.width; ++x)
-                {
-                    const int Y = yRow[x];
-                    const int U = uvRow[(x & ~1) + 0];
-                    const int V = uvRow[(x & ~1) + 1];
-                    uint8_t b = 0, g = 0, r = 0;
-                    yuvToRgbLocal(Y, U, V, b, g, r);
-                    dst[x] = qRgba(r, g, b, 255);
-                }
-            }
-            return img;
-        }
-
-        if (pkt.format == GCAP_FMT_YUY2)
-        {
-            const uint8_t *src = reinterpret_cast<const uint8_t *>(pkt.data[0]);
-            const int srcStride = pkt.stride[0] > 0 ? pkt.stride[0] : (pkt.width * 2);
-            for (int y = 0; y < pkt.height; ++y)
-            {
-                const uint8_t *srcRow = src + static_cast<size_t>(y) * srcStride;
-                QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
-                for (int x = 0; x < pkt.width; x += 2)
-                {
-                    const uint8_t y0 = srcRow[x * 2 + 0];
-                    const uint8_t u = srcRow[x * 2 + 1];
-                    const uint8_t y1 = srcRow[x * 2 + 2];
-                    const uint8_t v = srcRow[x * 2 + 3];
-                    uint8_t b = 0, g = 0, r = 0;
-                    yuvToRgbLocal(y0, u, v, b, g, r);
-                    dst[x] = qRgba(r, g, b, 255);
-                    if (x + 1 < pkt.width)
-                    {
-                        yuvToRgbLocal(y1, u, v, b, g, r);
-                        dst[x + 1] = qRgba(r, g, b, 255);
-                    }
-                }
-            }
-            return img;
-        }
-
-        if (pkt.format == GCAP_FMT_Y210)
-        {
-            const uint16_t *src = reinterpret_cast<const uint16_t *>(pkt.data[0]);
-            const int srcStride = pkt.stride[0] > 0 ? pkt.stride[0] : (pkt.width * 4);
-            for (int y = 0; y < pkt.height; ++y)
-            {
-                const uint16_t *srcRow = reinterpret_cast<const uint16_t *>(reinterpret_cast<const uint8_t *>(src) + static_cast<size_t>(y) * static_cast<size_t>(srcStride));
-                QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
-                for (int x = 0; x < pkt.width; x += 2)
-                {
-                    const int base = x * 2;
-                    const int Y0 = (int(normalizeY210WordLocal(srcRow[base + 0])) * 255 + 511) / 1023;
-                    const int U = (int(normalizeY210WordLocal(srcRow[base + 1])) * 255 + 511) / 1023;
-                    const int Y1 = (x + 1 < pkt.width) ? ((int(normalizeY210WordLocal(srcRow[base + 2])) * 255 + 511) / 1023) : Y0;
-                    const int V = (x + 1 < pkt.width) ? ((int(normalizeY210WordLocal(srcRow[base + 3])) * 255 + 511) / 1023) : U;
-                    uint8_t b = 0, g = 0, r = 0;
-                    yuvToRgbLocal(Y0, U, V, b, g, r);
-                    dst[x] = qRgba(r, g, b, 255);
-                    if (x + 1 < pkt.width)
-                    {
-                        yuvToRgbLocal(Y1, U, V, b, g, r);
-                        dst[x + 1] = qRgba(r, g, b, 255);
-                    }
-                }
-            }
-            return img;
-        }
-
-        return {};
+        const gcap_status_t st = gcap_frame_to_bgra8(&pkt, img.bits(), img.bytesPerLine());
+        if (st != GCAP_OK)
+            return {};
+        return img;
     }
 }
 

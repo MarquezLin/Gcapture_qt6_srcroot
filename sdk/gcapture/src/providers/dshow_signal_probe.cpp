@@ -453,7 +453,7 @@ namespace
             WNDCLASSW wc = {};
             wc.lpfnWndProc = DefWindowProcW;
             wc.hInstance = GetModuleHandleW(NULL);
-            wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+            wc.hCursor = LoadCursorW(NULL, MAKEINTRESOURCEW(32512));
             wc.lpszClassName = kClassName;
             ATOM atom = RegisterClassW(&wc);
             if (atom)
@@ -1132,26 +1132,6 @@ int gcap_pixfmt_bitdepth(gcap_pixfmt_t f)
         return 8;
     }
 }
-
-const char *gcap_pixfmt_name(gcap_pixfmt_t f)
-{
-    switch (f)
-    {
-    case GCAP_FMT_NV12:
-        return "NV12";
-    case GCAP_FMT_YUY2:
-        return "YUY2";
-    case GCAP_FMT_P010:
-        return "P010";
-    case GCAP_FMT_Y210:
-        return "Y210";
-    case GCAP_FMT_ARGB:
-        return "ARGB";
-    default:
-        return "Unknown";
-    }
-}
-
 
 const char *gcap_subtype_name(const GUID &sub)
 {

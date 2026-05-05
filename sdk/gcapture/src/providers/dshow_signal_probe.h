@@ -40,7 +40,7 @@ bool dshow_probe_current_signal_by_index(int devIndex, DShowSignalProbeResult &o
 void dshow_dump_signal_diagnostics_by_index(int devIndex);
 gcap_pixfmt_t gcap_subtype_to_pixfmt(const GUID &sub);
 int gcap_pixfmt_bitdepth(gcap_pixfmt_t f);
-const char *gcap_pixfmt_name(gcap_pixfmt_t f);
+// gcap_pixfmt_name() is now the public SDK helper declared in gcapture.h.
 const char *gcap_subtype_name(const GUID &sub);
 
 // Optional debug helper for device/vendor-specific property pages.

@@ -12,22 +12,7 @@ namespace
 {
 QString recordInputFormatName(gcap_pixfmt_t fmt)
 {
-    switch (fmt)
-    {
-    case GCAP_FMT_NV12: return QStringLiteral("NV12");
-    case GCAP_FMT_YUY2: return QStringLiteral("YUY2");
-    case GCAP_FMT_ARGB: return QStringLiteral("ARGB/RGB32");
-    case GCAP_FMT_P010: return QStringLiteral("P010");
-    case GCAP_FMT_Y210: return QStringLiteral("Y210");
-    case GCAP_FMT_V210: return QStringLiteral("V210");
-    case GCAP_FMT_R210: return QStringLiteral("R210");
-    default: return QStringLiteral("UNKNOWN");
-    }
-}
-
-bool recordFormatUsesHevcMain10(gcap_pixfmt_t fmt)
-{
-    return fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
+    return QString::fromUtf8(gcap_pixfmt_name(fmt));
 }
 
 gcap_pixfmt_t effectiveRecordingFormat(gcap_handle h, gcap_pixfmt_t fallback)
@@ -35,27 +20,18 @@ gcap_pixfmt_t effectiveRecordingFormat(gcap_handle h, gcap_pixfmt_t fallback)
     if (!h)
         return fallback;
     gcap_runtime_info_t rt{};
-    if (gcap_get_runtime_info(h, &rt) == GCAP_OK)
-    {
-        switch (rt.negotiated.pixfmt)
-        {
-        case GCAP_FMT_NV12:
-        case GCAP_FMT_YUY2:
-        case GCAP_FMT_ARGB:
-        case GCAP_FMT_P010:
-        case GCAP_FMT_Y210:
-        case GCAP_FMT_V210:
-        case GCAP_FMT_R210:
-            return rt.negotiated.pixfmt;
-        default:
-            break;
-        }
-    }
+    if (gcap_get_runtime_info(h, &rt) == GCAP_OK && gcap_pixfmt_bit_depth(rt.negotiated.pixfmt) > 0)
+        return rt.negotiated.pixfmt;
     return fallback;
 }
 
-QString buildRecordEncoderLabel(int backend, gcap_pixfmt_t fmt)
+QString buildRecordEncoderLabel(gcap_handle h, int backend, gcap_pixfmt_t fallbackFmt)
 {
+    gcap_recording_info_t info{};
+    if (h && gcap_get_recording_info(h, &info) == GCAP_OK && info.encoder_name[0])
+        return QString::fromUtf8(info.encoder_name);
+
+    const gcap_pixfmt_t fmt = fallbackFmt;
     const QString inFmt = recordInputFormatName(fmt);
     if (backend == GCAP_BACKEND_DSHOW)
     {
@@ -65,18 +41,17 @@ QString buildRecordEncoderLabel(int backend, gcap_pixfmt_t fmt)
             return QStringLiteral("FFmpeg HEVC / H.265 Main10 (input Y210 10-bit 4:2:2, output yuv420p10le 10-bit 4:2:0, video-only)");
         return QStringLiteral("FFmpeg H.264 / AVC (input %1, output yuv420p 8-bit, video-only)").arg(inFmt);
     }
-    if (recordFormatUsesHevcMain10(fmt))
+    if (gcap_recording_uses_hevc_main10(fmt))
         return QStringLiteral("Media Foundation HEVC / H.265 Encoder (Sink Writer, input %1 / 10-bit)").arg(inFmt);
     return QStringLiteral("Media Foundation H.264 / AVC Encoder (Sink Writer, input %1 / 8-bit)").arg(inFmt);
 }
 
-QString buildRecordModeLabel(int backend)
+QString buildRecordModeLabel(gcap_handle h, int backend)
 {
-    if (backend == GCAP_BACKEND_DSHOW)
-        return QStringLiteral("DShow + FFmpeg MP4");
-    if (backend == GCAP_BACKEND_WINMF_CPU || backend == GCAP_BACKEND_WINMF_GPU)
-        return QStringLiteral("Media Foundation Sink Writer");
-    return QStringLiteral("Recorder");
+    gcap_recording_info_t info{};
+    if (h && gcap_get_recording_info(h, &info) == GCAP_OK && info.mode_name[0])
+        return QString::fromUtf8(info.mode_name);
+    return QString::fromUtf8(gcap_recording_mode_name(backend));
 }
 }
 
@@ -161,16 +136,22 @@ void MainWindow::stopRecordingSession(bool showSummary)
         const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
         const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
         const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
-        const QString modeLabel = buildRecordModeLabel(backend);
+        gcap_recording_info_t sdkRecInfo{};
+        const bool hasSdkRecInfo = (h_ && gcap_get_recording_info(h_, &sdkRecInfo) == GCAP_OK);
+        const QString modeLabel = (hasSdkRecInfo && sdkRecInfo.mode_name[0])
+                                    ? QString::fromUtf8(sdkRecInfo.mode_name)
+                                    : buildRecordModeLabel(h_, backend);
         const QString codecLabel = recordEncoderName_.isEmpty()
-                                     ? buildRecordEncoderLabel(backend, effectiveRecordingFormat(h_, currentProfile_.format))
+                                     ? ((hasSdkRecInfo && sdkRecInfo.encoder_name[0])
+                                           ? QString::fromUtf8(sdkRecInfo.encoder_name)
+                                           : buildRecordEncoderLabel(h_, backend, effectiveRecordingFormat(h_, currentProfile_.format)))
                                      : recordEncoderName_;
 
-        const double recordOutputFps = (backend == GCAP_BACKEND_DSHOW)
-                                           ? 30.0
-                                           : (currentProfile_.fps_den
-                                                  ? static_cast<double>(currentProfile_.fps_num) / currentProfile_.fps_den
-                                                  : static_cast<double>(currentProfile_.fps_num));
+        double recordOutputFps = currentProfile_.fps_den
+                                     ? static_cast<double>(currentProfile_.fps_num) / currentProfile_.fps_den
+                                     : static_cast<double>(currentProfile_.fps_num);
+        if (hasSdkRecInfo && sdkRecInfo.output_fps_num > 0 && sdkRecInfo.output_fps_den > 0)
+            recordOutputFps = static_cast<double>(sdkRecInfo.output_fps_num) / sdkRecInfo.output_fps_den;
 
         const QString info = QStringLiteral(
                                  "Record done\n"
@@ -489,8 +470,8 @@ void MainWindow::onRecord()
 
     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
     const gcap_pixfmt_t recFmt = effectiveRecordingFormat(h_, currentProfile_.format);
-    const QString modeLabel = buildRecordModeLabel(backend);
-    recordEncoderName_ = buildRecordEncoderLabel(backend, recFmt);
+    const QString modeLabel = buildRecordModeLabel(h_, backend);
+    recordEncoderName_ = buildRecordEncoderLabel(h_, backend, recFmt);
 
     if (ui->statusbar)
     {

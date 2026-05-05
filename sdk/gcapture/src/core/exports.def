@@ -29,3 +29,18 @@ EXPORTS
     gcap_enum_property_pages
     gcap_open_vendor_property_page
     gcap_open_named_property_page
+    gcap_create
+    gcap_open2
+    gcap_set_frame_packet_callback
+    gcap_set_preview
+    gcap_pixfmt_name
+    gcap_pixfmt_bit_depth
+    gcap_pixfmt_is_10bit
+    gcap_pixfmt_is_yuv
+    gcap_pixfmt_default_stride
+    gcap_backend_name
+    gcap_source_kind_name
+    gcap_recording_uses_hevc_main10
+    gcap_recording_mode_name
+    gcap_get_recording_info
+    gcap_frame_to_bgra8

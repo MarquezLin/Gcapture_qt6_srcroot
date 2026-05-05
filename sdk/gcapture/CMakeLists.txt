@@ -1,9 +1,5 @@
 project(gcapture LANGUAGES CXX)
 
-# Use Widgets because the original codebase already depends on Qt (e.g., QString)
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
-
 add_library(gcapture SHARED
     src/core/capture_manager.cpp
     src/core/frame_converter.cpp
@@ -57,7 +53,6 @@ if (WIN32)
   target_compile_definitions(gcapture PRIVATE GCAPTURE_BUILD)
 
   target_link_libraries(gcapture PRIVATE
-      Qt${QT_VERSION_MAJOR}::Widgets
       # Media Foundation
       mfplat mf mfuuid mfreadwrite
       # COM / system

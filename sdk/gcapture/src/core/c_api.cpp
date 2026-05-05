@@ -1,11 +1,15 @@
 // src/core/c_api.cpp
 #include "capture_manager.h"
+#include "frame_converter.h"
 #ifndef GCAPTURE_BUILD
 #error not exporting
 #endif
 #include "gcapture.h"
 #include <memory>
 #include <vector>
+#include <cstring>
+#include <cstdio>
+#include <algorithm>
 #include "../audio/audio_manager.h"
 #include "gcap_audio.h"
 #include "../providers/dshow_signal_probe.h"
@@ -39,6 +43,127 @@ extern "C"
     {
         CaptureManager mgr;
     };
+
+    static void copy_cstr(char *dst, size_t dstSize, const char *src)
+    {
+        if (!dst || dstSize == 0)
+            return;
+        if (!src)
+            src = "";
+        std::snprintf(dst, dstSize, "%s", src);
+    }
+
+    const char *gcap_pixfmt_name(gcap_pixfmt_t fmt)
+    {
+        switch (fmt)
+        {
+        case GCAP_FMT_NV12: return "NV12";
+        case GCAP_FMT_YUY2: return "YUY2";
+        case GCAP_FMT_ARGB: return "ARGB/RGB32";
+        case GCAP_FMT_P010: return "P010";
+        case GCAP_FMT_Y210: return "Y210";
+        case GCAP_FMT_V210: return "V210";
+        case GCAP_FMT_R210: return "R210";
+        default: return "UNKNOWN";
+        }
+    }
+
+    int gcap_pixfmt_bit_depth(gcap_pixfmt_t fmt)
+    {
+        switch (fmt)
+        {
+        case GCAP_FMT_P010:
+        case GCAP_FMT_Y210:
+        case GCAP_FMT_V210:
+        case GCAP_FMT_R210:
+            return 10;
+        case GCAP_FMT_NV12:
+        case GCAP_FMT_YUY2:
+        case GCAP_FMT_ARGB:
+            return 8;
+        default:
+            return 0;
+        }
+    }
+
+    int gcap_pixfmt_is_10bit(gcap_pixfmt_t fmt)
+    {
+        return gcap_pixfmt_bit_depth(fmt) == 10 ? 1 : 0;
+    }
+
+    int gcap_pixfmt_is_yuv(gcap_pixfmt_t fmt)
+    {
+        switch (fmt)
+        {
+        case GCAP_FMT_NV12:
+        case GCAP_FMT_YUY2:
+        case GCAP_FMT_P010:
+        case GCAP_FMT_Y210:
+        case GCAP_FMT_V210:
+            return 1;
+        default:
+            return 0;
+        }
+    }
+
+    int gcap_pixfmt_default_stride(int width, gcap_pixfmt_t fmt)
+    {
+        if (width <= 0)
+            return 0;
+        switch (fmt)
+        {
+        case GCAP_FMT_NV12: return width;
+        case GCAP_FMT_P010: return width * 2;
+        case GCAP_FMT_YUY2: return width * 2;
+        case GCAP_FMT_Y210: return width * 4;
+        case GCAP_FMT_ARGB: return width * 4;
+        case GCAP_FMT_R210: return width * 4;
+        case GCAP_FMT_V210: return ((width + 5) / 6) * 16;
+        default: return 0;
+        }
+    }
+
+    const char *gcap_backend_name(int backend)
+    {
+        switch (backend)
+        {
+        case GCAP_BACKEND_WINMF_CPU: return "WinMF CPU";
+        case GCAP_BACKEND_WINMF_GPU: return "WinMF GPU";
+        case GCAP_BACKEND_DSHOW: return "DirectShow";
+        case GCAP_BACKEND_AUTO: return "Auto";
+        default: return "Unknown";
+        }
+    }
+
+    const char *gcap_source_kind_name(int source_kind)
+    {
+        switch (source_kind)
+        {
+        case GCAP_SOURCE_WINMF_GPU: return "WinMF GPU";
+        case GCAP_SOURCE_WINMF_CPU: return "WinMF CPU";
+        case GCAP_SOURCE_DSHOW_RAWSINK: return "DShow RawSink";
+        case GCAP_SOURCE_DSHOW_RENDERER: return "DShow Renderer (legacy)";
+        case GCAP_SOURCE_UNKNOWN:
+        default: return "Unknown";
+        }
+    }
+
+    int gcap_recording_uses_hevc_main10(gcap_pixfmt_t fmt)
+    {
+        return (fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210) ? 1 : 0;
+    }
+
+    const char *gcap_recording_mode_name(int backend)
+    {
+        switch (backend)
+        {
+        case GCAP_BACKEND_DSHOW: return "DShow + FFmpeg MP4";
+        case GCAP_BACKEND_WINMF_CPU:
+        case GCAP_BACKEND_WINMF_GPU: return "Media Foundation Sink Writer";
+        case GCAP_BACKEND_AUTO: return "Auto Recorder";
+        default: return "Recorder";
+        }
+    }
 
     // 錯誤字串
     const char *gcap_strerror(gcap_status_t s)
@@ -235,6 +360,139 @@ extern "C"
         if (!h)
             return GCAP_EINVAL;
         return h->mgr.stopRecording();
+    }
+
+    gcap_status_t gcap_get_recording_info(gcap_handle h, gcap_recording_info_t *out)
+    {
+        if (!h || !out)
+            return GCAP_EINVAL;
+
+        std::memset(out, 0, sizeof(*out));
+
+        gcap_runtime_info_t rt{};
+        const gcap_status_t st = h->mgr.getRuntimeInfo(rt);
+        if (st != GCAP_OK)
+            return st;
+
+        const int backend = (rt.active_backend >= 0) ? rt.active_backend : h->mgr.getActiveBackendInt();
+        gcap_pixfmt_t fmt = rt.negotiated.pixfmt;
+        if (gcap_pixfmt_bit_depth(fmt) == 0)
+            fmt = rt.signal.pixfmt;
+
+        const char *fmtName = gcap_pixfmt_name(fmt);
+        const int inputDepth = gcap_pixfmt_bit_depth(fmt);
+        const int hevcMain10 = gcap_recording_uses_hevc_main10(fmt);
+
+        copy_cstr(out->mode_name, sizeof(out->mode_name), gcap_recording_mode_name(backend));
+        copy_cstr(out->input_format, sizeof(out->input_format), fmtName);
+        out->input_bit_depth = inputDepth;
+        out->output_fps_num = rt.negotiated.fps_num > 0 ? rt.negotiated.fps_num : rt.signal.fps_num;
+        out->output_fps_den = rt.negotiated.fps_den > 0 ? rt.negotiated.fps_den : rt.signal.fps_den;
+        if (out->output_fps_num <= 0) out->output_fps_num = 30;
+        if (out->output_fps_den <= 0) out->output_fps_den = 1;
+
+        if (backend == GCAP_BACKEND_DSHOW)
+        {
+            out->video_only = 1;
+            if (fmt == GCAP_FMT_P010)
+            {
+                copy_cstr(out->encoder_name, sizeof(out->encoder_name),
+                          "FFmpeg HEVC / H.265 Main10 (input P010 10-bit, output yuv420p10le, video-only)");
+                copy_cstr(out->output_format, sizeof(out->output_format), "yuv420p10le");
+                out->output_bit_depth = 10;
+            }
+            else if (fmt == GCAP_FMT_Y210)
+            {
+                copy_cstr(out->encoder_name, sizeof(out->encoder_name),
+                          "FFmpeg HEVC / H.265 Main10 (input Y210 10-bit 4:2:2, output yuv420p10le 10-bit 4:2:0, video-only)");
+                copy_cstr(out->output_format, sizeof(out->output_format), "yuv420p10le");
+                out->output_bit_depth = 10;
+            }
+            else
+            {
+                char label[160] = {};
+                std::snprintf(label, sizeof(label),
+                              "FFmpeg H.264 / AVC (input %s, output yuv420p 8-bit, video-only)", fmtName);
+                copy_cstr(out->encoder_name, sizeof(out->encoder_name), label);
+                copy_cstr(out->output_format, sizeof(out->output_format), "yuv420p");
+                out->output_bit_depth = 8;
+            }
+            // Current DShow FFmpeg recorder writes fixed output cadence.
+            out->output_fps_num = 30;
+            out->output_fps_den = 1;
+            return GCAP_OK;
+        }
+
+        out->video_only = 0;
+        if (hevcMain10)
+        {
+            char label[160] = {};
+            std::snprintf(label, sizeof(label),
+                          "Media Foundation HEVC / H.265 Encoder (Sink Writer, input %s / 10-bit)", fmtName);
+            copy_cstr(out->encoder_name, sizeof(out->encoder_name), label);
+            copy_cstr(out->output_format, sizeof(out->output_format), "HEVC Main10");
+            out->output_bit_depth = 10;
+        }
+        else
+        {
+            char label[160] = {};
+            std::snprintf(label, sizeof(label),
+                          "Media Foundation H.264 / AVC Encoder (Sink Writer, input %s / 8-bit)", fmtName);
+            copy_cstr(out->encoder_name, sizeof(out->encoder_name), label);
+            copy_cstr(out->output_format, sizeof(out->output_format), "H.264 8-bit");
+            out->output_bit_depth = 8;
+        }
+        return GCAP_OK;
+    }
+
+    gcap_status_t gcap_frame_to_bgra8(const gcap_frame_packet_t *src, void *dst, int dst_stride)
+    {
+        if (!src || !dst || dst_stride <= 0 || src->width <= 0 || src->height <= 0 || !src->data[0])
+            return GCAP_EINVAL;
+        if (dst_stride < src->width * 4)
+            return GCAP_EINVAL;
+
+        auto *out = static_cast<uint8_t *>(dst);
+        switch (src->format)
+        {
+        case GCAP_FMT_ARGB:
+        {
+            const int srcStride = src->stride[0] > 0 ? src->stride[0] : src->width * 4;
+            const auto *in = static_cast<const uint8_t *>(src->data[0]);
+            for (int y = 0; y < src->height; ++y)
+                std::memcpy(out + static_cast<size_t>(y) * dst_stride,
+                            in + static_cast<size_t>(y) * srcStride,
+                            static_cast<size_t>(src->width) * 4);
+            return GCAP_OK;
+        }
+        case GCAP_FMT_NV12:
+        {
+            if (src->plane_count < 2 || !src->data[1])
+                return GCAP_EINVAL;
+            const int yStride = src->stride[0] > 0 ? src->stride[0] : src->width;
+            const int uvStride = src->stride[1] > 0 ? src->stride[1] : src->width;
+            gcap::nv12_to_argb(static_cast<const uint8_t *>(src->data[0]),
+                               static_cast<const uint8_t *>(src->data[1]),
+                               src->width, src->height, yStride, uvStride, out, dst_stride);
+            return GCAP_OK;
+        }
+        case GCAP_FMT_YUY2:
+        {
+            const int srcStride = src->stride[0] > 0 ? src->stride[0] : src->width * 2;
+            gcap::yuy2_to_argb(static_cast<const uint8_t *>(src->data[0]),
+                               src->width, src->height, srcStride, out, dst_stride);
+            return GCAP_OK;
+        }
+        case GCAP_FMT_Y210:
+        {
+            const int srcStride = src->stride[0] > 0 ? src->stride[0] : src->width * 4;
+            gcap::y210_to_argb(static_cast<const uint8_t *>(src->data[0]),
+                               src->width, src->height, srcStride, out, dst_stride);
+            return GCAP_OK;
+        }
+        default:
+            return GCAP_ENOTSUP;
+        }
     }
 
     GCAP_API gcap_status_t gcap_enumerate_audio_devices(gcap_audio_device_t *out, int max, int *count)
