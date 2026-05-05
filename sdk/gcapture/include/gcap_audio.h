@@ -1,5 +1,18 @@
 #pragma once
 
+/*
+    gcapture audio helper API
+
+    Normal recording users should use:
+      - gcap_audio_device_count()
+      - gcap_audio_enum_devices()
+      - gcap_set_recording_audio_device() from gcapture.h
+
+    The low-level gcap_start_audio_capture()/gcap_stop_audio_capture() APIs are
+    experimental compatibility stubs in the current SDK and are not the
+    recommended recording path.
+*/
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -18,44 +31,57 @@ extern "C"
 #define GCAP_AUDIO_ID_MAX 256
 #define GCAP_AUDIO_NAME_MAX 256
 
+    /** WASAPI capture endpoint information. */
     typedef struct gcap_audio_device_t
     {
-        char id[GCAP_AUDIO_ID_MAX];     // opaque WASAPI device id
-        char name[GCAP_AUDIO_NAME_MAX]; // friendly name
+        char id[GCAP_AUDIO_ID_MAX];       /** Opaque WASAPI endpoint id, UTF-8. Use with gcap_set_recording_audio_device(). */
+        char name[GCAP_AUDIO_NAME_MAX];   /** Friendly endpoint name, UTF-8. */
 
-        int channels;        // 1, 2, 6...
-        int sample_rate;     // 44100, 48000...
-        int bits_per_sample; // 16 / 24 / 32
-        int is_float;        // 1 = IEEE float, 0 = PCM
-        int is_default;
+        int channels;                     /** Channel count when known: 1, 2, 6, etc. 0 means unknown. */
+        int sample_rate;                  /** Preferred/current sample rate when known, e.g. 48000. 0 means unknown. */
+        int bits_per_sample;              /** 16 / 24 / 32 when known. 0 means unknown. */
+        int is_float;                     /** 1 = IEEE float, 0 = PCM or unknown. */
+        int is_default;                   /** 1 = system default capture endpoint. */
     } gcap_audio_device_t;
 
-    // Canonical audio API names for new SDK clients.
+    /** Return number of active WASAPI capture endpoints. */
     GCAP_API int gcap_audio_device_count(void);
 
-    // return: number written (or total count if out == NULL)
+    /**
+     * Enumerate active WASAPI capture endpoints.
+     *
+     * Parameters:
+     *   out       - Output array. If null, the function returns total count.
+     *   max_count - Number of entries available in out.
+     *
+     * Return:
+     *   Number of entries written, or total count when out is null/max_count <= 0.
+     */
     GCAP_API int gcap_audio_enum_devices(
         gcap_audio_device_t *out,
         int max_count);
 
-    // Legacy aliases kept for source/binary compatibility.
+    /** Legacy alias for gcap_audio_device_count(). Kept for source/binary compatibility. */
     GCAP_API int gcap_get_audio_device_count(void);
+
+    /** Legacy alias for gcap_audio_enum_devices(). Kept for source/binary compatibility. */
     GCAP_API int gcap_enum_audio_devices(
         gcap_audio_device_t *out,
         int max_count);
 
+    /** Experimental low-level audio capture configuration. Prefer gcap_set_recording_audio_device() for recording. */
     typedef struct gcap_audio_capture_config_t
     {
-        const char *device_id; // 來自 Step 2 選到的 id
-        int sample_rate;       // 建議 48000
-        int channels;          // 1 or 2
+        const char *device_id;            /** Endpoint id from gcap_audio_enum_devices(). null/empty may mean default. */
+        int sample_rate;                  /** Requested sample rate, commonly 48000. */
+        int channels;                     /** Requested channels, commonly 1 or 2. */
     } gcap_audio_capture_config_t;
 
-    // Experimental low-level audio capture API. Prefer gcap_set_recording_audio_device() for normal recording.
+    /** Experimental low-level audio capture API. Current SDK may return GCAP_ENOTSUP. */
     GCAP_API int gcap_start_audio_capture(
         const gcap_audio_capture_config_t *cfg);
 
-    // 停止 audio capture
+    /** Stop experimental low-level audio capture if it was started. */
     GCAP_API void gcap_stop_audio_capture(void);
 
 #ifdef __cplusplus
