@@ -4,6 +4,7 @@ add_library(gcapture SHARED
     src/core/capture_manager.cpp
     src/core/frame_converter.cpp
     src/core/logging.cpp
+    src/core/tiff_analysis.cpp
     src/core/c_api.cpp
     src/pipeline/shared_scene_pipeline.cpp
     src/providers/winmf_provider.cpp
@@ -15,6 +16,15 @@ add_library(gcapture SHARED
     src/providers/dshow_custom_sink.cpp
     src/audio/audio_manager.cpp
     src/core/exports.def
+)
+
+# gcapture is a plain SDK DLL and intentionally does not use Qt.
+# The top-level project enables AUTOMOC/AUTOUIC/AUTORCC for Qt apps; disable
+# them here to avoid CMake dev warnings after removing the Qt dependency.
+set_target_properties(gcapture PROPERTIES
+    AUTOMOC OFF
+    AUTOUIC OFF
+    AUTORCC OFF
 )
 
 target_include_directories(gcapture

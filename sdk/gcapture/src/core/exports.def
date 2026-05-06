@@ -56,3 +56,5 @@ EXPORTS
     gcap_start_audio_capture
     gcap_stop_audio_capture
     gcap_set_log_callback
+    gcap_analyze_tiff
+    gcap_read_tiff_preview_rgba64

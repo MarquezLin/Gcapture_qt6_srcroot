@@ -286,6 +286,50 @@ extern "C"
         double avg_bitrate_kbps;
     } gcap_recording_stats_t;
 
+
+    /** TIFF bit-depth / ramp analysis result. Fixed-size C struct for SDK clients. */
+    typedef struct
+    {
+        int ok;                         /** 1 = analysis succeeded, 0 = failed. */
+        char path[512];                 /** Input TIFF path, UTF-8 when available. */
+        char error[512];                /** Failure reason, UTF-8. Empty on success. */
+
+        int width;
+        int height;
+        int channels;
+        int bits_per_sample;
+        int samples_per_pixel;
+        int stored_bit_depth;
+        int effective_bit_depth;
+
+        char pixel_format_name[96];
+        char photometric[64];
+
+        uint64_t min_value;
+        uint64_t max_value;
+        uint64_t unique_value_count;
+
+        int likely_ten_bit_ramp;
+        int strict_ten_bit_ramp;
+        int visual_ten_bit_ramp_candidate;
+        int likely_ten_bit_content;
+        int values_look_shifted_10bit;
+        int values_look_8bit_expanded;
+
+        char ramp_reason[512];
+        char strict_ramp_reason[512];
+        char visual_ramp_reason[512];
+
+        int sampled_row_y;
+        char sampled_row_source[96];
+        char sampled_row_logical10_rule[192];
+        char sampled_row_raw16_csv[4096];
+        char sampled_row_logical10_csv[4096];
+
+        int preview_stride_bytes;        /** RGBA64 preview stride. Use gcap_read_tiff_preview_rgba64() to read data. */
+        size_t preview_size_bytes;       /** Required RGBA64 preview buffer size. */
+    } gcap_tiff_analysis_t;
+
     typedef enum
     {
         GCAP_DEINT_AUTO = 0,
@@ -698,6 +742,30 @@ extern "C"
      *   destination buffer is caller-owned and conversion cost is acceptable.
      */
     GCAP_API gcap_status_t gcap_frame_to_bgra8(const gcap_frame_packet_t *src, void *dst, int dst_stride);
+
+
+    /**
+     * Analyze a TIFF file written by SDK snapshot export or any WIC-readable TIFF.
+     *
+     * The analysis uses Windows Imaging Component on Windows and reports stored
+     * bit depth, effective bit depth heuristics, min/max/unique values, and
+     * gray-ramp detection. It does not allocate memory for the caller.
+     */
+    GCAP_API gcap_status_t gcap_analyze_tiff(const char *path_utf8, gcap_tiff_analysis_t *out);
+
+    /**
+     * Decode the first TIFF frame into RGBA64 little-endian pixels for preview.
+     *
+     * Pass dst = NULL or dst_size = 0 to query required_size/width/height/stride.
+     * The destination buffer must be at least required_size bytes.
+     */
+    GCAP_API gcap_status_t gcap_read_tiff_preview_rgba64(const char *path_utf8,
+                                                         void *dst,
+                                                         size_t dst_size,
+                                                         int *width,
+                                                         int *height,
+                                                         int *stride_bytes,
+                                                         size_t *required_size);
 
     /** Return human-readable status string. Never returns null. */
     GCAP_API const char *gcap_strerror(gcap_status_t);
