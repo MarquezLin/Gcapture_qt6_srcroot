@@ -1,4 +1,5 @@
 // Avoid Windows min/max macros breaking std::min/std::max
+#include "../core/logging.h"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -13,7 +14,7 @@
 #include <algorithm>
 #include <sstream>
 #include <comdef.h>  // for _com_error
-#include <windows.h> // for OutputDebugStringA
+#include <windows.h>
 #include <string>
 #include <thread>
 #include <mutex>
@@ -877,7 +878,7 @@ gcap_status_t WinMFProvider::startRecording(const char *pathUtf8)
     if (!recorder_->open(wpath, w, h, fpsN, fpsD, isP010Format, audioIdW))
         return GCAP_EIO;
 
-    OutputDebugStringA("[WinMF] Recorder: startRecording()\\n");
+    gcap_log_debug("[WinMF] Recorder: startRecording()\\n");
     return GCAP_OK;
 }
 
@@ -888,7 +889,7 @@ gcap_status_t WinMFProvider::stopRecording()
     if (recorder_)
     {
         recorder_->close();
-        OutputDebugStringA("[WinMF] Recorder: stopRecording()\\n");
+        gcap_log_debug("[WinMF] Recorder: stopRecording()\\n");
     }
     return GCAP_OK;
 }
@@ -902,7 +903,7 @@ gcap_status_t WinMFProvider::setRecordingAudioDevice(const char *device_id_utf8)
     if (device_id_utf8 && *device_id_utf8)
         rec_audio_device_id_ = device_id_utf8;
 
-    OutputDebugStringA("[WinMF] Recorder audio endpoint set\n");
+    gcap_log_debug("[WinMF] Recorder audio endpoint set\n");
     return GCAP_OK;
 }
 
@@ -910,7 +911,7 @@ gcap_status_t WinMFProvider::setRecordingAudioDevice(const char *device_id_utf8)
     do                                                                          \
     {                                                                           \
         std::string __m = std::string("[WinMF] ") + stage + " : " + hr_msg(hr); \
-        OutputDebugStringA((__m + "\n").c_str());                               \
+        gcap_log_debug((__m + "\n").c_str());                               \
     } while (0)
 
 // Member-scope debug: also forward to app log (via emit_error(GCAP_OK,...)).
@@ -937,7 +938,7 @@ static void ensure_mf()
         if (FAILED(hr)) {
             DBG("MFStartup", hr);
             // 這通常是 Windows N/Server 未裝 Media Feature Pack
-            OutputDebugStringA("[WinMF] Media Foundation platform not initialized. Check 'Media Features' / Media Feature Pack.\n");
+            gcap_log_debug("[WinMF] Media Foundation platform not initialized. Check 'Media Features' / Media Feature Pack.\n");
         } });
 }
 
@@ -1246,7 +1247,7 @@ bool WinMFProvider::open(int index)
     if (!create_reader_cpu_only(index))
     {
         emit_error(GCAP_EIO, "Create reader (CPU) failed");
-        OutputDebugStringA("[WinMF] open(): Create reader (CPU) failed\n");
+        gcap_log_debug("[WinMF] open(): Create reader (CPU) failed\n");
         return false;
     }
 
@@ -1286,7 +1287,7 @@ bool WinMFProvider::open(int index)
 
     refresh_signal_probe(true);
 
-    OutputDebugStringA("[WinMF] open(): using CPU pipeline\n");
+    gcap_log_debug("[WinMF] open(): using CPU pipeline\n");
     emit_error(GCAP_OK, "[WinMF] open(): using CPU pipeline");
     return true;
 }
@@ -3613,7 +3614,7 @@ bool WinMFProvider::ensure_compute_shader()
     if (FAILED(hr))
     {
         if (err)
-            OutputDebugStringA((const char *)err->GetBufferPointer());
+            gcap_log_debug((const char *)err->GetBufferPointer());
         MDBG("DXGI: D3DCompile(g_cs_nv12) failed", hr);
         return false;
     }

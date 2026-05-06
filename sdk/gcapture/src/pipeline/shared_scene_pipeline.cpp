@@ -1,4 +1,5 @@
 #include <dxgi1_2.h>
+#include "../core/logging.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -25,7 +26,7 @@ static void SSP_DBG(const char *stage, HRESULT hr)
     char buf[256] = {};
     std::snprintf(buf, sizeof(buf), "[SharedScene] %s : hr=0x%lx\n",
                   stage ? stage : "(null)", (unsigned long)hr);
-    ::OutputDebugStringA(buf);
+    gcap_log_debug(buf);
 }
 
 using Microsoft::WRL::ComPtr;
@@ -62,8 +63,8 @@ static void ssp_log_text(const char *msg)
 {
     if (!msg)
         return;
-    ::OutputDebugStringA(msg);
-    ::OutputDebugStringA("\n");
+    gcap_log_debug(msg);
+    gcap_log_debug("\n");
 }
 
 static ComPtr<ID3D11ShaderResourceView> createSRV_NV12(ID3D11Device *dev, ID3D11Texture2D *tex, bool uv)

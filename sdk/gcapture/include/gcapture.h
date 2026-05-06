@@ -76,6 +76,26 @@ extern "C"
         GCAP_PROFILE_CUSTOM
     };
 
+
+    /** SDK log level passed to gcap_log_callback_t. */
+    typedef enum
+    {
+        GCAP_LOG_TRACE = 0,
+        GCAP_LOG_DEBUG = 1,
+        GCAP_LOG_INFO  = 2,
+        GCAP_LOG_WARN  = 3,
+        GCAP_LOG_ERROR = 4
+    } gcap_log_level_t;
+
+    /**
+     * SDK log callback.
+     *
+     * The callback may be invoked from SDK/backend worker threads. Do not touch
+     * UI objects directly; marshal the message to your UI/log thread.
+     * message_utf8 is valid only during the callback call. Copy it if needed.
+     */
+    typedef void (*gcap_log_callback_t)(gcap_log_level_t level, const char *message_utf8, void *user);
+
     /** SDK status code returned by most high-level APIs. */
     typedef enum
     {
@@ -209,7 +229,7 @@ extern "C"
         int video_only;           /** 1 = current recorder writes video only; 0 = audio may be included when configured/supported. */
     } gcap_recording_info_t;
 
-    /** Snapshot export flags. If desc->flags is 0, SDK exports RAW_ALL + TIFF + STATS. */
+    /** Snapshot export flags. If desc->flags is 0, SDK exports RAW_ALL + TIFF + STATS + PNG. */
     typedef enum
     {
         GCAP_EXPORT_RAW_NATIVE      = 1 << 0, /** Native readback RAW: 10-bit source -> *_abgr2101010.raw; 8-bit source -> *_bgra8.raw. */
@@ -217,6 +237,7 @@ extern "C"
         GCAP_EXPORT_RAW_RGBA16      = 1 << 2, /** 10-bit values expanded to 16-bit RGBA: *_rgba16_expanded.raw. */
         GCAP_EXPORT_TIFF            = 1 << 3, /** WIC TIFF export: *.tiff. */
         GCAP_EXPORT_STATS           = 1 << 4, /** Text statistics: *.stats.txt. */
+        GCAP_EXPORT_PNG             = 1 << 5, /** WIC PNG preview/export image: *.png. */
         GCAP_EXPORT_RAW_ALL         = GCAP_EXPORT_RAW_NATIVE | GCAP_EXPORT_RAW_RGB10_U16 | GCAP_EXPORT_RAW_RGBA16
     } gcap_export_flags_t;
 
@@ -236,6 +257,7 @@ extern "C"
         char rgba16_path[512];      /** *_rgba16_expanded.raw, generated for 10-bit sources when RAW export is requested. */
         char tiff_path[512];        /** *.tiff when TIFF export is requested. */
         char stats_path[512];       /** *.stats.txt when STATS export is requested. */
+        char png_path[512];         /** *.png when PNG export is requested. */
         int width;
         int height;
         gcap_pixfmt_t source_format;
@@ -356,6 +378,17 @@ extern "C"
     typedef void (*gcap_on_error_cb)(gcap_status_t code, const char *msg, void *user);
 
     typedef struct gcap_handle_t *gcap_handle;
+
+    /**
+     * Installs a process-wide SDK log callback.
+     *
+     * This is intended for SDK clients to receive WinMF/DShow/snapshot/recording
+     * diagnostics in their own logging system. Passing cb = NULL disables the
+     * callback. The callback may be invoked from SDK/backend worker threads.
+     * The SDK may still also send messages to OutputDebugString on Windows as
+     * a fallback.
+     */
+    GCAP_API void gcap_set_log_callback(gcap_log_callback_t cb, void *user);
 
     /**
      * Enumerate capture devices.
@@ -518,11 +551,13 @@ extern "C"
      *       C:/cap/snapshot_001.tiff
      *     STATS:
      *       C:/cap/snapshot_001.stats.txt
+     *     PNG:
+     *       C:/cap/snapshot_001.png
      *
      * Parameters:
      *   h    - Opened capture handle.
      *   desc - Export request. desc->base_path_utf8 must not be null/empty.
-     *          desc->flags == 0 means RAW_ALL | TIFF | STATS.
+     *          desc->flags == 0 means RAW_ALL | TIFF | STATS | PNG.
      *   out  - Optional result. If non-null, SDK clears it to zero before writing.
      *
      * Return:

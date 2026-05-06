@@ -1,5 +1,6 @@
 #include "dshow_custom_sink.h"
 #include "dshow_raw_renderer.h"
+#include "../core/logging.h"
 
 #include <dvdmedia.h>
 #include <mfapi.h>
@@ -11,7 +12,7 @@ namespace
 {
 static void dshow_sink_log(const char *msg)
 {
-    OutputDebugStringA(msg);
+    gcap_log_debug(msg);
 }
 
 static void dshow_sink_log_hr(const char *prefix, HRESULT hr)
@@ -22,7 +23,7 @@ static void dshow_sink_log_hr(const char *prefix, HRESULT hr)
                    sys, static_cast<DWORD>(sizeof(sys)), nullptr);
     char buf[512] = {};
     sprintf_s(buf, "[DShowRawSink] %s hr=0x%08X (%s)", prefix, static_cast<unsigned>(hr), sys[0] ? sys : "n/a");
-    OutputDebugStringA(buf);
+    gcap_log_debug(buf);
 }
 }
 

@@ -4,6 +4,7 @@
 #include <d3d9.h>
 #include <vmr9.h>
 #include <evcode.h>
+#include "../core/logging.h"
 
 #include "dshow_provider.h"
 #include "dshow_custom_sink.h"
@@ -25,7 +26,7 @@ namespace
 
     void dshow_log(const char *msg)
     {
-        OutputDebugStringA(msg);
+        gcap_log_debug(msg);
     }
 
     void dshow_log_hr(const char *prefix, HRESULT hr)
@@ -37,7 +38,7 @@ namespace
 
         char buf[1024] = {};
         sprintf_s(buf, "[DShow] %s hr=0x%08X (%s)", prefix, static_cast<unsigned>(hr), sys[0] ? sys : "n/a");
-        OutputDebugStringA(buf);
+        gcap_log_debug(buf);
     }
 
     static int readEnvIntClamp(const char *name, int defaultValue, int minValue, int maxValue)
@@ -369,7 +370,7 @@ namespace
         {                                            \
             char _buf[512] = {};                     \
             sprintf_s(_buf, "[DShow] OK: %s\n", #x); \
-            OutputDebugStringA(_buf);                \
+            gcap_log_debug(_buf);                \
         }                                            \
     } while (0)
 }
@@ -642,7 +643,7 @@ bool DShowProvider::setPreview(const gcap_preview_desc_t &desc)
     previewHwnd_ = reinterpret_cast<HWND>(desc.hwnd);
     char buf[128];
     sprintf_s(buf, "[DShow] setPreview hwnd=%p", previewHwnd_);
-    OutputDebugStringA(buf);
+    gcap_log_debug(buf);
     if (vmrWindowless_)
         updatePreviewRect();
     if (pipeline_)
@@ -762,7 +763,7 @@ void DShowProvider::logCaptureCapabilities(IAMStreamConfig *streamConfig)
         const std::string guid = guidToString(pmt->subtype);
         char buf[384] = {};
         sprintf_s(buf, "[DShow] cap[%d] -> %s guid=%s %dx%d %.2ffps", i, subtypeName(pmt->subtype), guid.c_str(), w, h, fps);
-        OutputDebugStringA(buf);
+        gcap_log_debug(buf);
 
         freeMediaType(pmt);
     }
@@ -790,7 +791,7 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
     sprintf_s(reqMsg, "[DShow] requested profile format=%d(%s) auto=%d explicit=%s guid=%s",
               static_cast<int>(profile_.format), profileFormatName(static_cast<int>(profile_.format)), profileAuto ? 1 : 0,
               subtypeName(explicitSubtype), reqGuid.c_str());
-    OutputDebugStringA(reqMsg);
+    gcap_log_debug(reqMsg);
 
     int capCount = 0, capSize = 0;
     if (FAILED(streamConfig->GetNumberOfCapabilities(&capCount, &capSize)) || capCount <= 0 || capSize <= 0)
@@ -994,7 +995,7 @@ bool DShowProvider::configureCaptureFormat(IAMStreamConfig *streamConfig)
               subtypeName(preferredSubtype), preferredGuid.c_str(),
               subtypeName(best->subtype), negotiatedGuid.c_str(),
               w, h, (fpsNum > 0 && fpsDen > 0) ? ((double)fpsNum / (double)fpsDen) : 0.0);
-    OutputDebugStringA(buf);
+    gcap_log_debug(buf);
     freeMediaType(best);
     return true;
 }
@@ -1082,7 +1083,7 @@ bool DShowProvider::createRenderPipeline()
     char previewBuf[256] = {};
     sprintf_s(previewBuf, "[DShow] createRenderPipeline preview=%p use_fp16=%d previewBitDepthMode=%d",
               previewHwnd_, desc.use_fp16_pipeline, desc.swapchain_10bit);
-    OutputDebugStringA(previewBuf);
+    gcap_log_debug(previewBuf);
 
     pipeline_->configurePreview(desc);
     pipeline_->set_source_bit_depth(gcap_pixfmt_bitdepth(gcap_subtype_to_pixfmt(subtype_)));
@@ -1314,7 +1315,7 @@ bool DShowProvider::buildGraphForDevice(int index)
                                     nameBuf, sizeof(nameBuf), nullptr, nullptr);
                 char buf[320] = {};
                 sprintf_s(buf, "[DShow] selected device[%d] = %s", index, nameBuf);
-                OutputDebugStringA(buf);
+                gcap_log_debug(buf);
             }
             VariantClear(&varName);
         }
@@ -1475,7 +1476,7 @@ bool DShowProvider::open(int index)
 {
     char buf[128];
     sprintf_s(buf, "[DShow] open() current preview_hwnd_=%p", previewHwnd_);
-    OutputDebugStringA(buf);
+    gcap_log_debug(buf);
     ensure_com();
     dshow_log("[DShow] open() begin");
     close();
@@ -1501,7 +1502,7 @@ bool DShowProvider::open(int index)
                   (negotiatedFpsNum_ > 0 && negotiatedFpsDen_ > 0) ? ((double)negotiatedFpsNum_ / (double)negotiatedFpsDen_) : 0.0,
                   isRawCandidate() ? "YES" : "NO",
                   rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO");
-        OutputDebugStringA(msg);
+        gcap_log_debug(msg);
     }
     return true;
 }
@@ -2136,7 +2137,7 @@ void DShowProvider::framePumpLoop()
                                           isRawCandidate() ? "YES" : "NO",
                                           rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO",
                                           canUseSharedRaw ? (rawSubtype == MEDIASUBTYPE_NV12 ? "NV12-direct" : (rawSubtype == MFVideoFormat_P010 ? "P010-direct" : (rawSubtype == MEDIASUBTYPE_Y210 ? "Y210-direct" : "YUY2-direct"))) : ((rawSubtype == MEDIASUBTYPE_Y210) ? "Y210-argb-fallback" : ((rawSubtype == MEDIASUBTYPE_RGB24 || rawSubtype == MEDIASUBTYPE_RGB32 || rawSubtype == MEDIASUBTYPE_ARGB32) ? "RGB-bridge" : "ARGB-bridge")));
-                                OutputDebugStringA(msg);
+                                gcap_log_debug(msg);
                             }
                             vcb(&f, user);
                             ++previewProbeStats_.callbackFrames;
@@ -2179,7 +2180,7 @@ void DShowProvider::framePumpLoop()
                                   callbackSourceName(lastCallbackSource_.load()),
                                   isRawCandidate() ? "YES" : "NO",
                                   rawSinkPlanned() ? "CUSTOM_V4_RAW_PREVIEW" : "NO");
-                        OutputDebugStringA(msg);
+                        gcap_log_debug(msg);
                     }
                     vcb(&f, user);
                     ++previewProbeStats_.callbackFrames;

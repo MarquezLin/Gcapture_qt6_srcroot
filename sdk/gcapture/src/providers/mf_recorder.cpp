@@ -1,5 +1,6 @@
 // Split out from winmf_provider.cpp (recording layer)
 
+#include "../core/logging.h"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -424,7 +425,7 @@ void WinMFProvider::MfRecorder::stopVideoThread()
     std::ostringstream oss;
     oss << "[WinMF][Rec] video async stopped: written=" << videoWritten
         << ", dropped=" << videoDropped << "\n";
-    OutputDebugStringA(oss.str().c_str());
+    gcap_log_debug(oss.str().c_str());
 }
 
 void WinMFProvider::MfRecorder::close()
@@ -438,7 +439,7 @@ void WinMFProvider::MfRecorder::close()
     {
         HRESULT hr = writer->Finalize();
         if (FAILED(hr))
-            OutputDebugStringA(("[WinMF][Rec] Finalize failed: " + hr_msg(hr) + "\n").c_str());
+            gcap_log_debug(("[WinMF][Rec] Finalize failed: " + hr_msg(hr) + "\n").c_str());
         writer.Reset();
     }
     firstTs100ns = -1;
@@ -482,7 +483,7 @@ bool WinMFProvider::MfRecorder::writeOneAudioSample(LONGLONG ts100ns, LONGLONG d
     hr = writer->WriteSample(audioStreamIndex, s.Get());
     if (FAILED(hr))
     {
-        OutputDebugStringA(("[WinMF][Audio] WriteSample failed: " + hr_msg(hr) + "\\n").c_str());
+        gcap_log_debug(("[WinMF][Audio] WriteSample failed: " + hr_msg(hr) + "\\n").c_str());
         return false;
     }
     return true;
@@ -752,7 +753,7 @@ bool WinMFProvider::MfRecorder::open(const std::wstring &path, UINT32 w, UINT32 
     else
     {
         hasAudio = false;
-        OutputDebugStringA("[WinMF][Rec] audio disabled by default; set GCAP_RECORD_AUDIO=1 to enable\n");
+        gcap_log_debug("[WinMF][Rec] audio disabled by default; set GCAP_RECORD_AUDIO=1 to enable\n");
     }
 
     hr = wtr->BeginWriting();
@@ -810,7 +811,7 @@ bool WinMFProvider::MfRecorder::open(const std::wstring &path, UINT32 w, UINT32 
         oss << " fps"
             << ", target bitrate=" << kbps << " kbps\n";
 
-        OutputDebugStringA(oss.str().c_str());
+        gcap_log_debug(oss.str().c_str());
     }
 
     return true;
@@ -842,7 +843,7 @@ void WinMFProvider::MfRecorder::videoWorker()
                 std::ostringstream oss;
                 oss << "[WinMF][Rec] video async progress: written=" << videoWritten
                     << ", dropped=" << videoDropped << "\n";
-                OutputDebugStringA(oss.str().c_str());
+                gcap_log_debug(oss.str().c_str());
             }
         }
     }
@@ -951,7 +952,7 @@ bool WinMFProvider::MfRecorder::writePackedFrame(const PendingVideoFrame &frame)
     hr = writer->WriteSample(streamIndex, sample.Get());
     if (FAILED(hr))
     {
-        OutputDebugStringA(("[WinMF][Rec] video WriteSample failed: " + hr_msg(hr) + "\n").c_str());
+        gcap_log_debug(("[WinMF][Rec] video WriteSample failed: " + hr_msg(hr) + "\n").c_str());
         return false;
     }
 

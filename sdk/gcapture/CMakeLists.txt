@@ -3,6 +3,7 @@ project(gcapture LANGUAGES CXX)
 add_library(gcapture SHARED
     src/core/capture_manager.cpp
     src/core/frame_converter.cpp
+    src/core/logging.cpp
     src/core/c_api.cpp
     src/pipeline/shared_scene_pipeline.cpp
     src/providers/winmf_provider.cpp
@@ -56,7 +57,7 @@ if (WIN32)
       # Media Foundation
       mfplat mf mfuuid mfreadwrite
       # COM / system
-      ole32 oleaut32 propsys uuid user32 advapi32 setupapi
+      ole32 oleaut32 propsys uuid user32 advapi32 setupapi windowscodecs
       # Direct3D
       dxgi d3d11 d2d1 dwrite D3DCompiler
       # DirectShow IIDs

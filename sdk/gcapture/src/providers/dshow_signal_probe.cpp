@@ -1,4 +1,5 @@
 #include "dshow_signal_probe.h"
+#include "../core/logging.h"
 
 #include <objbase.h>
 #include <dvdmedia.h>
@@ -71,7 +72,7 @@ namespace
     static void dshow_probe_log(const std::string &s)
     {
         const std::wstring line = utf8_to_wide(("[DShowSignalProbe] " + s).c_str()) + L"\n";
-        OutputDebugStringW(line.c_str());
+        gcap_log_debug_w(line.c_str());
     }
 
     static std::string wide_to_utf8(const wchar_t *ws)

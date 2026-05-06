@@ -1,6 +1,7 @@
 // src/core/c_api.cpp
 #include "capture_manager.h"
 #include "frame_converter.h"
+#include "logging.h"
 #ifndef GCAPTURE_BUILD
 #error not exporting
 #endif
@@ -10,6 +11,9 @@
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
+#include <string>
+#include <fstream>
+#include <filesystem>
 #include "../audio/audio_manager.h"
 #include "gcap_audio.h"
 #include "../providers/dshow_signal_probe.h"
@@ -20,6 +24,7 @@
 #include <wrl/client.h>
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
+#include <wincodec.h>
 #pragma comment(lib, "ole32.lib")
 using Microsoft::WRL::ComPtr;
 
@@ -34,6 +39,162 @@ static std::string w2utf8(const wchar_t *ws)
     WideCharToMultiByte(CP_UTF8, 0, ws, -1, out.data(), len, nullptr, nullptr);
     return out;
 }
+
+static std::wstring utf8_to_wide_path(const char *s)
+{
+    if (!s || !*s)
+        return {};
+    const int len = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
+    if (len <= 0)
+        return {};
+    std::wstring out(static_cast<size_t>(len - 1), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s, -1, out.data(), len);
+    return out;
+}
+
+static std::wstring wide_append_suffix(const char *base_utf8, const wchar_t *suffix)
+{
+    std::wstring out = utf8_to_wide_path(base_utf8);
+    if (!out.empty() && suffix)
+        out += suffix;
+    return out;
+}
+
+static bool wide_file_exists(const std::wstring &path)
+{
+    if (path.empty())
+        return false;
+    const DWORD attr = GetFileAttributesW(path.c_str());
+    return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+static bool read_file_exact(const std::wstring &path, std::vector<uint8_t> &out, size_t expected_bytes)
+{
+    out.clear();
+    if (path.empty() || expected_bytes == 0)
+        return false;
+    std::ifstream ifs(std::filesystem::path(path), std::ios::binary);
+    if (!ifs)
+        return false;
+    out.resize(expected_bytes);
+    ifs.read(reinterpret_cast<char *>(out.data()), static_cast<std::streamsize>(expected_bytes));
+    return static_cast<size_t>(ifs.gcount()) == expected_bytes;
+}
+
+static bool write_bgra8_png_wic(const std::wstring &path, int width, int height, const std::vector<uint8_t> &bgra)
+{
+    if (path.empty() || width <= 0 || height <= 0)
+        return false;
+    const size_t expected = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+    if (bgra.size() < expected)
+        return false;
+
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool needUninit = SUCCEEDED(hr);
+    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE)
+        return false;
+
+    IWICImagingFactory *factory = nullptr;
+    IWICBitmapEncoder *encoder = nullptr;
+    IWICStream *stream = nullptr;
+    IWICBitmapFrameEncode *frame = nullptr;
+    IPropertyBag2 *bag = nullptr;
+    bool ok = false;
+
+    do
+    {
+        hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+        if (FAILED(hr) || !factory)
+            break;
+        hr = factory->CreateStream(&stream);
+        if (FAILED(hr) || !stream)
+            break;
+        hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
+        if (FAILED(hr))
+            break;
+        hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder);
+        if (FAILED(hr) || !encoder)
+            break;
+        hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
+        if (FAILED(hr))
+            break;
+        hr = encoder->CreateNewFrame(&frame, &bag);
+        if (FAILED(hr) || !frame)
+            break;
+        hr = frame->Initialize(bag);
+        if (FAILED(hr))
+            break;
+        hr = frame->SetSize(static_cast<UINT>(width), static_cast<UINT>(height));
+        if (FAILED(hr))
+            break;
+        WICPixelFormatGUID pf = GUID_WICPixelFormat32bppBGRA;
+        hr = frame->SetPixelFormat(&pf);
+        if (FAILED(hr) || !IsEqualGUID(pf, GUID_WICPixelFormat32bppBGRA))
+            break;
+        const UINT stride = static_cast<UINT>(width * 4);
+        const UINT imageSize = static_cast<UINT>(expected);
+        hr = frame->WritePixels(static_cast<UINT>(height), stride, imageSize, const_cast<BYTE *>(bgra.data()));
+        if (FAILED(hr))
+            break;
+        hr = frame->Commit();
+        if (FAILED(hr))
+            break;
+        hr = encoder->Commit();
+        if (FAILED(hr))
+            break;
+        ok = true;
+    } while (false);
+
+    if (bag)
+        bag->Release();
+    if (frame)
+        frame->Release();
+    if (encoder)
+        encoder->Release();
+    if (stream)
+        stream->Release();
+    if (factory)
+        factory->Release();
+    if (needUninit)
+        CoUninitialize();
+    return ok;
+}
+
+static bool create_png_from_abgr2101010_raw(const std::wstring &raw_path, const std::wstring &png_path, int width, int height)
+{
+    const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+    std::vector<uint8_t> raw;
+    if (!read_file_exact(raw_path, raw, pixelCount * sizeof(uint32_t)))
+        return false;
+
+    std::vector<uint8_t> bgra(pixelCount * 4u);
+    for (size_t i = 0; i < pixelCount; ++i)
+    {
+        const size_t ri = i * 4u;
+        const uint32_t p = static_cast<uint32_t>(raw[ri + 0u]) |
+                           (static_cast<uint32_t>(raw[ri + 1u]) << 8u) |
+                           (static_cast<uint32_t>(raw[ri + 2u]) << 16u) |
+                           (static_cast<uint32_t>(raw[ri + 3u]) << 24u);
+        const uint32_t r10 = (p >> 0u) & 0x3FFu;
+        const uint32_t g10 = (p >> 10u) & 0x3FFu;
+        const uint32_t b10 = (p >> 20u) & 0x3FFu;
+        const size_t bi = i * 4u;
+        bgra[bi + 0u] = static_cast<uint8_t>((b10 * 255u + 511u) / 1023u);
+        bgra[bi + 1u] = static_cast<uint8_t>((g10 * 255u + 511u) / 1023u);
+        bgra[bi + 2u] = static_cast<uint8_t>((r10 * 255u + 511u) / 1023u);
+        bgra[bi + 3u] = 255u;
+    }
+    return write_bgra8_png_wic(png_path, width, height, bgra);
+}
+
+static bool create_png_from_bgra8_raw(const std::wstring &raw_path, const std::wstring &png_path, int width, int height)
+{
+    std::vector<uint8_t> bgra;
+    if (!read_file_exact(raw_path, bgra, static_cast<size_t>(width) * static_cast<size_t>(height) * 4u))
+        return false;
+    return write_bgra8_png_wic(png_path, width, height, bgra);
+}
+
 #endif
 
 extern "C"
@@ -292,7 +453,7 @@ extern "C"
             return GCAP_EINVAL;
         {
             char buf[256];
-            std::fprintf(stderr, "[gcapture] set_frame_packet_callback h=%p cb=%p user=%p\n",
+            gcap::log_printf(GCAP_LOG_DEBUG, "[gcapture] set_frame_packet_callback h=%p cb=%p user=%p\n",
                          h, reinterpret_cast<void *>(cb), user);
         }
         return h->mgr.setFramePacketCallback(cb, user);
@@ -872,16 +1033,33 @@ extern "C"
         if (r->source_bit_depth <= 0)
             r->source_bit_depth = rt.negotiated.bit_depth > 0 ? rt.negotiated.bit_depth : rt.signal.bit_depth;
 
-        const int flags = desc->flags != 0 ? desc->flags : (GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS);
+        const int flags = desc->flags != 0 ? desc->flags : (GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS | GCAP_EXPORT_PNG);
         const bool wantRaw = (flags & GCAP_EXPORT_RAW_ALL) != 0;
         const bool wantTiff = (flags & GCAP_EXPORT_TIFF) != 0;
         const bool wantStats = (flags & GCAP_EXPORT_STATS) != 0;
+        const bool wantPng = (flags & GCAP_EXPORT_PNG) != 0;
 
-        const gcap_status_t st = h->mgr.exportPreviewSceneRgb10(desc->base_path_utf8, wantRaw, wantTiff, wantStats);
+        // PNG is generated by the SDK from the same scene readback RAW data.
+        // If the caller requested only PNG, RAW files are created temporarily and
+        // removed after PNG encoding succeeds/fails.
+        const bool needRawForPng = wantPng;
+        const gcap_status_t st = h->mgr.exportPreviewSceneRgb10(desc->base_path_utf8, wantRaw || needRawForPng, wantTiff, wantStats);
         if (st != GCAP_OK)
             return st;
 
-        const bool sourceIs10Bit = r->source_bit_depth >= 10;
+        bool sourceIs10Bit = r->source_bit_depth >= 10;
+#ifdef _WIN32
+        const std::wstring raw10Path = wide_append_suffix(desc->base_path_utf8, L"_abgr2101010.raw");
+        const std::wstring raw8Path = wide_append_suffix(desc->base_path_utf8, L"_bgra8.raw");
+        const bool raw10Exists = wide_file_exists(raw10Path);
+        const bool raw8Exists = wide_file_exists(raw8Path);
+        if (raw10Exists || raw8Exists)
+        {
+            sourceIs10Bit = raw10Exists && !raw8Exists;
+            if (raw10Exists && raw8Exists)
+                sourceIs10Bit = r->source_bit_depth >= 10;
+        }
+#endif
         if (wantRaw)
         {
             if (sourceIs10Bit)
@@ -908,6 +1086,40 @@ extern "C"
             copy_path(r->stats_path, sizeof(r->stats_path), desc->base_path_utf8, ".stats.txt");
             r->generated_flags |= GCAP_EXPORT_STATS;
         }
+#ifdef _WIN32
+        if (wantPng)
+        {
+            const std::wstring pngPath = wide_append_suffix(desc->base_path_utf8, L".png");
+            bool pngOk = sourceIs10Bit
+                             ? create_png_from_abgr2101010_raw(raw10Path, pngPath, r->width, r->height)
+                             : create_png_from_bgra8_raw(raw8Path, pngPath, r->width, r->height);
+            if (!pngOk)
+            {
+                // Be tolerant of drivers/runtime info that report incomplete bit-depth metadata.
+                pngOk = sourceIs10Bit
+                            ? create_png_from_bgra8_raw(raw8Path, pngPath, r->width, r->height)
+                            : create_png_from_abgr2101010_raw(raw10Path, pngPath, r->width, r->height);
+            }
+            if (pngOk)
+            {
+                copy_path(r->png_path, sizeof(r->png_path), desc->base_path_utf8, ".png");
+                r->generated_flags |= GCAP_EXPORT_PNG;
+            }
+            if (!wantRaw)
+            {
+                DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_abgr2101010.raw").c_str());
+                DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_bgra8.raw").c_str());
+                DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_fp16_rgba16f.raw").c_str());
+                DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_rgb10_u16.raw").c_str());
+                DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_rgba16_expanded.raw").c_str());
+            }
+            if (!pngOk)
+                return GCAP_EIO;
+        }
+#else
+        if (wantPng)
+            return GCAP_ENOTSUP;
+#endif
         return GCAP_OK;
     }
 

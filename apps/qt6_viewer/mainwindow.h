@@ -180,7 +180,7 @@ private:
     QString buildSnapshotPath() const;
     QString buildSnapshotBasePath() const;
     bool saveSnapshotImage(QString *outPath, const QString &fullPath = QString());
-    bool saveRgb10Exports(const QString &basePath, QString *rawPath, QString *tiffPath, QString *statsPath);
+    bool saveSceneExports(const QString &basePath, gcap_snapshot_export_result_t *result);
 
 signals:
     void sigFrame(const QImage &);

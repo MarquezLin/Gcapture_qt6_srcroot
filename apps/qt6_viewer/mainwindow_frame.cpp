@@ -7,9 +7,8 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QMessageBox>
-#include <QFile>
-#include <QtEndian>
-#include <vector>
+#include <QStringList>
+#include <cstring>
 
 namespace
 {
@@ -32,70 +31,6 @@ static const char *packetFmtNameFrame(int fmt)
     }
 }
 } // namespace
-
-static bool currentSourceIs10Bit(gcap_handle h)
-{
-    if (!h)
-        return false;
-    gcap_runtime_info_t rt{};
-    if (gcap_get_runtime_info(h, &rt) == GCAP_OK)
-    {
-        if (rt.negotiated.bit_depth > 0)
-            return rt.negotiated.bit_depth >= 10;
-        switch (rt.negotiated.pixfmt)
-        {
-        case GCAP_FMT_P010:
-        case GCAP_FMT_Y210:
-        case GCAP_FMT_V210:
-        case GCAP_FMT_R210:
-            return true;
-        default:
-            break;
-        }
-    }
-    return false;
-}
-
-static bool savePngFromAbgr2101010Raw(const QString &rawPath, const QString &pngPath, int width, int height)
-{
-    if (width <= 0 || height <= 0)
-        return false;
-
-    QFile f(rawPath);
-    if (!f.open(QIODevice::ReadOnly))
-        return false;
-
-    const qsizetype pixelCount = static_cast<qsizetype>(width) * static_cast<qsizetype>(height);
-    const qint64 expectedBytes = static_cast<qint64>(pixelCount) * static_cast<qint64>(sizeof(quint32));
-    if (f.size() < expectedBytes)
-        return false;
-
-    const QByteArray payload = f.read(expectedBytes);
-    if (payload.size() < expectedBytes)
-        return false;
-
-    QImage img(width, height, QImage::Format_RGB888);
-    if (img.isNull())
-        return false;
-
-    const auto *src = reinterpret_cast<const quint32 *>(payload.constData());
-    for (int y = 0; y < height; ++y)
-    {
-        uchar *dst = img.scanLine(y);
-        const qsizetype rowBase = static_cast<qsizetype>(y) * static_cast<qsizetype>(width);
-        for (int x = 0; x < width; ++x)
-        {
-            const quint32 p = qFromLittleEndian(src[rowBase + x]);
-            const quint32 r10 = (p >> 0) & 0x3FFu;
-            const quint32 g10 = (p >> 10) & 0x3FFu;
-            const quint32 b10 = (p >> 20) & 0x3FFu;
-            dst[x * 3 + 0] = static_cast<uchar>((r10 * 255u + 511u) / 1023u);
-            dst[x * 3 + 1] = static_cast<uchar>((g10 * 255u + 511u) / 1023u);
-            dst[x * 3 + 2] = static_cast<uchar>((b10 * 255u + 511u) / 1023u);
-        }
-    }
-    return img.save(pngPath, "PNG");
-}
 
 void MainWindow::applyInitialPreviewSizeFromSource(int width, int height)
 {
@@ -208,31 +143,19 @@ bool MainWindow::saveSnapshotImage(QString *outPath, const QString &fullPath)
     return ok;
 }
 
-bool MainWindow::saveRgb10Exports(const QString &basePath, QString *rawPath, QString *tiffPath, QString *statsPath)
+bool MainWindow::saveSceneExports(const QString &basePath, gcap_snapshot_export_result_t *result)
 {
-    if (!h_ || basePath.isEmpty())
+    if (!h_ || basePath.isEmpty() || !result)
         return false;
 
     const QByteArray baseUtf8 = QDir::toNativeSeparators(basePath).toUtf8();
     gcap_snapshot_export_desc_t desc{};
     desc.base_path_utf8 = baseUtf8.constData();
-    desc.flags = GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS;
+    desc.flags = GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS | GCAP_EXPORT_PNG;
 
-    gcap_snapshot_export_result_t result{};
-    const gcap_status_t st = gcap_export_snapshot(h_, &desc, &result);
-    if (st != GCAP_OK)
-        return false;
-
-    if (rawPath)
-        *rawPath = result.native_raw_path[0] ? QString::fromUtf8(result.native_raw_path)
-                                            : QString();
-    if (tiffPath)
-        *tiffPath = result.tiff_path[0] ? QString::fromUtf8(result.tiff_path)
-                                        : QString();
-    if (statsPath)
-        *statsPath = result.stats_path[0] ? QString::fromUtf8(result.stats_path)
-                                          : QString();
-    return true;
+    std::memset(result, 0, sizeof(*result));
+    const gcap_status_t st = gcap_export_snapshot(h_, &desc, result);
+    return st == GCAP_OK;
 }
 
 void MainWindow::onFrameArrived(const QImage &img)
@@ -259,63 +182,69 @@ void MainWindow::onSnapshot()
     }
 
     const QString basePath = buildSnapshotBasePath();
-    QString rawPath, tiffPath, statsPath;
-    const bool rgb10Ok = saveRgb10Exports(basePath, &rawPath, &tiffPath, &statsPath);
+    gcap_snapshot_export_result_t result{};
+    const bool sceneOk = saveSceneExports(basePath, &result);
 
-    QString pngPath = basePath + ".png";
-    bool pngOk = false;
-    if (rgb10Ok)
+    QString pngPath = result.png_path[0] ? QString::fromUtf8(result.png_path) : QString();
+    bool pngOk = !pngPath.isEmpty();
+    if (!pngOk)
     {
-        if (currentSourceIs10Bit(h_))
-            pngOk = savePngFromAbgr2101010Raw(rawPath, pngPath, lastFrameWidth_, lastFrameHeight_);
-        if (!pngOk)
-            pngOk = saveSnapshotImage(&pngPath, pngPath);
-    }
-    else
-    {
+        pngPath = basePath + ".png";
         pngOk = saveSnapshotImage(&pngPath, pngPath);
     }
 
-    if (!pngOk && !rgb10Ok)
+    if (!pngOk && !sceneOk)
     {
         QMessageBox::warning(this, "Snapshot",
-                             QStringLiteral("Snapshot / scene RAW export failed.\nBase path: %1").arg(basePath));
+                             QStringLiteral("Snapshot / scene export failed.\nBase path: %1").arg(basePath));
         return;
     }
 
     QStringList saved;
+    const auto appendPath = [&saved](const char *p)
+    {
+        if (p && p[0])
+            saved << QString::fromUtf8(p);
+    };
+
     if (pngOk)
         saved << pngPath;
-    if (rgb10Ok)
+
+    if (sceneOk)
     {
-        if (currentSourceIs10Bit(h_))
-        {
-            const QString fp16RawPath = basePath + "_fp16_rgba16f.raw";
-            const QString rgb10RawPath = basePath + "_rgb10_u16.raw";
-            const QString abgr2101010RawPath = basePath + "_abgr2101010.raw";
-            const QString rgba16RawPath = basePath + "_rgba16_expanded.raw";
-            saved << fp16RawPath << rgb10RawPath << abgr2101010RawPath << rgba16RawPath << tiffPath << statsPath;
-            MainWindow::postLog(QStringLiteral("[SceneRawExport] source=10-bit PNG=%1 FP16=%2 RGB10=%3 ABGR2101010=%4 RGBA16=%5 TIFF=%6 STATS=%7")
-                                    .arg(pngPath, fp16RawPath, rgb10RawPath, abgr2101010RawPath, rgba16RawPath, tiffPath, statsPath));
-        }
-        else
-        {
-            const QString bgra8RawPath = basePath + "_bgra8.raw";
-            saved << bgra8RawPath << tiffPath << statsPath;
-            MainWindow::postLog(QStringLiteral("[SceneRawExport] source=8-bit PNG=%1 BGRA8=%2 TIFF=%3 STATS=%4")
-                                    .arg(pngPath, bgra8RawPath, tiffPath, statsPath));
-        }
+        appendPath(result.fp16_raw_path);
+        appendPath(result.rgb10_u16_path);
+        appendPath(result.native_raw_path);
+        appendPath(result.rgba16_path);
+        appendPath(result.tiff_path);
+        appendPath(result.stats_path);
+
+        const QString source = result.source_bit_depth >= 10 ? QStringLiteral("10-bit") : QStringLiteral("8-bit");
+        MainWindow::postLog(QStringLiteral("[SceneExport] source=%1 PNG=%2 nativeRAW=%3 FP16=%4 RGB10=%5 RGBA16=%6 TIFF=%7 STATS=%8 flags=0x%9")
+                                .arg(source,
+                                     pngPath,
+                                     QString::fromUtf8(result.native_raw_path),
+                                     QString::fromUtf8(result.fp16_raw_path),
+                                     QString::fromUtf8(result.rgb10_u16_path),
+                                     QString::fromUtf8(result.rgba16_path),
+                                     QString::fromUtf8(result.tiff_path),
+                                     QString::fromUtf8(result.stats_path),
+                                     QString::number(result.generated_flags, 16)));
     }
 
     if (ui->statusbar)
     {
+        const QString statusFile = sceneOk && result.native_raw_path[0]
+                                       ? QFileInfo(QString::fromUtf8(result.native_raw_path)).fileName()
+                                       : QFileInfo(pngPath).fileName();
         ui->statusbar->showMessage(
-            rgb10Ok
-                ? QStringLiteral("Snapshot + scene RAW saved: %1").arg(QFileInfo(rawPath).fileName())
-                : QStringLiteral("Snapshot saved: %1").arg(QFileInfo(pngPath).fileName()),
+            sceneOk
+                ? QStringLiteral("Snapshot + scene export saved: %1").arg(statusFile)
+                : QStringLiteral("Snapshot saved: %1").arg(statusFile),
             6000);
     }
 
+    saved.removeDuplicates();
     QMessageBox::information(this, "Snapshot",
                              QStringLiteral("Saved files:\n%1").arg(saved.join("\n")));
 }

@@ -1,5 +1,6 @@
 #include "capture_manager.h"
 #include <cstring>
+#include "logging.h"
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -15,10 +16,7 @@
 
 static void cmDebug(const char *msg)
 {
-#ifdef _WIN32
-    OutputDebugStringA(msg);
-#endif
-    std::fputs(msg, stderr);
+    gcap_log_debug(msg);
 }
 
 enum class Backend

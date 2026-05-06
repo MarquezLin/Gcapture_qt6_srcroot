@@ -33,6 +33,38 @@ using Microsoft::WRL::ComPtr;
 
 static MainWindow *g_mainWindow = nullptr;
 
+static void sdkLogCallback(gcap_log_level_t level, const char *message_utf8, void *user)
+{
+    Q_UNUSED(user);
+    const QString prefix = [level]() -> QString {
+        switch (level)
+        {
+        case GCAP_LOG_TRACE: return QStringLiteral("[SDK][TRACE]");
+        case GCAP_LOG_DEBUG: return QStringLiteral("[SDK][DEBUG]");
+        case GCAP_LOG_INFO:  return QStringLiteral("[SDK][INFO]");
+        case GCAP_LOG_WARN:  return QStringLiteral("[SDK][WARN]");
+        case GCAP_LOG_ERROR: return QStringLiteral("[SDK][ERROR]");
+        default:             return QStringLiteral("[SDK]");
+        }
+    }();
+    QString msg = QString::fromUtf8(message_utf8 ? message_utf8 : "").trimmed();
+    if (msg.isEmpty())
+        return;
+    const QString line = prefix + QLatin1Char(' ') + msg;
+    if (level >= GCAP_LOG_WARN)
+        qWarning().noquote() << line;
+    else
+        qInfo().noquote() << line;
+    if (g_mainWindow)
+    {
+        QMetaObject::invokeMethod(
+            g_mainWindow,
+            "appendDebugLog",
+            Qt::QueuedConnection,
+            Q_ARG(QString, line));
+    }
+}
+
 namespace
 {
     static const char *packetFmtName(int fmt)
@@ -153,13 +185,17 @@ MainWindow::MainWindow(QWidget *parent)
     setupConnections();
 
     g_mainWindow = this;
+    gcap_set_log_callback(sdkLogCallback, this);
     logStartupInfo();
 }
 
 MainWindow::~MainWindow()
 {
     if (g_mainWindow == this)
+    {
+        gcap_set_log_callback(nullptr, nullptr);
         g_mainWindow = nullptr;
+    }
     delete tiffAnalysisDlg_;
     delete previewWindow_;
     delete ui;
