@@ -79,7 +79,10 @@ public:
     bool getSignalStatus(gcap_signal_status_t &out) override;
     bool getRuntimeInfo(gcap_runtime_info_t &out) override;
     bool setProcessing(const gcap_processing_opts_t &opts) override;
+    bool getProcAmp(gcap_procamp_t &out) override;
+    bool getProcAmpCaps(gcap_procamp_caps_t &out) override;
     bool setProcAmp(const gcap_procamp_t &p) override;
+    bool resetProcAmp() override;
     bool setPreview(const gcap_preview_desc_t &desc) override;
     bool exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats) override;
     bool getRecordingStats(gcap_recording_stats_t &out) override;

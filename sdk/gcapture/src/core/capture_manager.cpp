@@ -393,11 +393,34 @@ gcap_status_t CaptureManager::setProcessing(const gcap_processing_opts_t &opts)
     return provider_->setProcessing(opts) ? GCAP_OK : GCAP_ENOTSUP;
 }
 
+gcap_status_t CaptureManager::getProcAmp(gcap_procamp_t &out)
+{
+    memset(&out, 0, sizeof(out));
+    if (!provider_)
+        return GCAP_ENOTSUP;
+    return provider_->getProcAmp(out) ? GCAP_OK : GCAP_ENOTSUP;
+}
+
+gcap_status_t CaptureManager::getProcAmpCaps(gcap_procamp_caps_t &out)
+{
+    memset(&out, 0, sizeof(out));
+    if (!provider_)
+        return GCAP_ENOTSUP;
+    return provider_->getProcAmpCaps(out) ? GCAP_OK : GCAP_ENOTSUP;
+}
+
 gcap_status_t CaptureManager::setProcAmp(const gcap_procamp_t &p)
 {
     if (!provider_)
         return GCAP_ENOTSUP;
     return provider_->setProcAmp(p) ? GCAP_OK : GCAP_ENOTSUP;
+}
+
+gcap_status_t CaptureManager::resetProcAmp()
+{
+    if (!provider_)
+        return GCAP_ENOTSUP;
+    return provider_->resetProcAmp() ? GCAP_OK : GCAP_ENOTSUP;
 }
 
 gcap_status_t CaptureManager::setPreview(const gcap_preview_desc_t &desc)

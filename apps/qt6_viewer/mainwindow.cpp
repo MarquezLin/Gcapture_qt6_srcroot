@@ -530,9 +530,30 @@ void MainWindow::setupProcAmpAction()
                             });
                 }
 
-                const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
                 usePacketCallback_ = false;
-                const bool supported = (backend == 0 || backend == 1 || backend == 3);
+
+                bool supported = false;
+                if (h_)
+                {
+                    gcap_procamp_caps_t caps{};
+                    if (gcap_get_procamp_caps(h_, &caps) == GCAP_OK)
+                    {
+                        procampDlg_->setCaps(caps);
+                        supported = true;
+
+                        gcap_procamp_t current{};
+                        if (gcap_get_procamp(h_, &current) == GCAP_OK)
+                            m_currentProcAmp = current;
+                    }
+                }
+                else
+                {
+                    // No active SDK handle yet. Keep the dialog usable for pre-start values;
+                    // the values are applied in startCapture() after gcap_open().
+                    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
+                    supported = (backend == 0 || backend == 1 || backend == 3);
+                }
+
                 procampDlg_->setControlsEnabled(supported);
                 procampDlg_->setValues(m_currentProcAmp);
                 procampDlg_->show();

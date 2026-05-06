@@ -99,9 +99,23 @@ struct ICaptureProvider
     }
 
     // --- ProcAmp ---
+    virtual bool getProcAmp(gcap_procamp_t &out)
+    {
+        (void)out;
+        return false;
+    }
+    virtual bool getProcAmpCaps(gcap_procamp_caps_t &out)
+    {
+        (void)out;
+        return false;
+    }
     virtual bool setProcAmp(const gcap_procamp_t &p)
     {
         (void)p;
+        return false;
+    }
+    virtual bool resetProcAmp()
+    {
         return false;
     }
 
@@ -154,7 +168,10 @@ public:
     gcap_status_t getSignalStatus(gcap_signal_status_t &out);
     gcap_status_t getRuntimeInfo(gcap_runtime_info_t &out);
     gcap_status_t setProcessing(const gcap_processing_opts_t &opts);
+    gcap_status_t getProcAmp(gcap_procamp_t &out);
+    gcap_status_t getProcAmpCaps(gcap_procamp_caps_t &out);
     gcap_status_t setProcAmp(const gcap_procamp_t &p);
+    gcap_status_t resetProcAmp();
     gcap_status_t setPreview(const gcap_preview_desc_t &desc);
     gcap_status_t exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats);
     gcap_status_t getRecordingStats(gcap_recording_stats_t &out);

@@ -302,7 +302,7 @@ extern "C"
         gcap_range_t force_range;         /** GCAP_RANGE_UNKNOWN = auto. */
     } gcap_processing_opts_t;
 
-    /** ProcAmp settings. UI scale is 0..255, where 128 is neutral. */
+    /** ProcAmp settings. SDK UI scale is 0..255, where 128 is neutral. */
     typedef struct
     {
         int brightness;
@@ -311,6 +311,27 @@ extern "C"
         int saturation;
         int sharpness;
     } gcap_procamp_t;
+
+    /** One ProcAmp control range in SDK UI units. */
+    typedef struct
+    {
+        int supported;      /** Non-zero if this control is supported by the active backend/path. */
+        int min_value;      /** Minimum accepted value. */
+        int max_value;      /** Maximum accepted value. */
+        int step;           /** Recommended slider step. */
+        int default_value;  /** Recommended neutral/default value. */
+        int current_value;  /** Current value if available; otherwise default_value. */
+    } gcap_procamp_range_t;
+
+    /** ProcAmp capability block for Brightness/Contrast/Hue/Saturation/Sharpness. */
+    typedef struct
+    {
+        gcap_procamp_range_t brightness;
+        gcap_procamp_range_t contrast;
+        gcap_procamp_range_t hue;
+        gcap_procamp_range_t saturation;
+        gcap_procamp_range_t sharpness;
+    } gcap_procamp_caps_t;
 
     /** Requested capture profile. For GCAP_PROFILE_CUSTOM, set width/height/fps/format. */
     typedef struct
@@ -579,8 +600,29 @@ extern "C"
     /** Set processing preferences such as preferred format, deinterlace, or forced range. Prefer calling before start. */
     GCAP_API gcap_status_t gcap_set_processing(gcap_handle h, const gcap_processing_opts_t *opts);
 
-    /** Apply ProcAmp settings on supported CPU/conversion paths. Passing null resets to neutral. */
+    /**
+     * Query current ProcAmp values from the active backend/path.
+     *
+     * Can be called after gcap_open(). If the active backend/path does not
+     * support SDK ProcAmp, returns GCAP_ENOTSUP.
+     */
+    GCAP_API gcap_status_t gcap_get_procamp(gcap_handle h, gcap_procamp_t *out);
+
+    /**
+     * Query ProcAmp control ranges/capabilities.
+     *
+     * The current implementation exposes SDK-side preview/conversion ProcAmp
+     * controls in 0..255 units, default 128. These are not necessarily the
+     * hardware driver's IAMVideoProcAmp ranges. Unsupported controls are marked
+     * supported = 0.
+     */
+    GCAP_API gcap_status_t gcap_get_procamp_caps(gcap_handle h, gcap_procamp_caps_t *out);
+
+    /** Apply ProcAmp settings on supported CPU/GPU preview/conversion paths. Passing null resets to neutral. */
     GCAP_API gcap_status_t gcap_set_procamp(gcap_handle h, const gcap_procamp_t *p);
+
+    /** Reset ProcAmp settings to backend defaults/neutral values. */
+    GCAP_API gcap_status_t gcap_reset_procamp(gcap_handle h);
 
     /** Legacy audio count helper. Prefer gcap_audio_device_count() for new code. */
     GCAP_API int gcap_get_audio_device_count(void);

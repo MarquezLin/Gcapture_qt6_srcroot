@@ -16,7 +16,10 @@ EXPORTS
     gcap_get_signal_status
     gcap_get_runtime_info
     gcap_set_processing
+    gcap_get_procamp
+    gcap_get_procamp_caps
     gcap_set_procamp
+    gcap_reset_procamp
     gcap_stop
     gcap_close
     gcap_strerror

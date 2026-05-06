@@ -20,6 +20,7 @@ public:
     void setValues(const gcap_procamp_t &p);
     gcap_procamp_t values() const;
     void setControlsEnabled(bool en);
+    void setCaps(const gcap_procamp_caps_t &caps);
     void setParams(const gcap_procamp_t &p);
 
 signals:

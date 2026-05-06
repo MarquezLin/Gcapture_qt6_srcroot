@@ -30,6 +30,7 @@
 #include <set>
 #include <array>
 #include <vector>
+#include <cstring>
 namespace
 {
     // DEVPROPKEY = { fmtid(GUID), pid }
@@ -678,6 +679,35 @@ bool WinMFProvider::setProcessing(const gcap_processing_opts_t &opts)
     return false;
 }
 
+bool WinMFProvider::getProcAmp(gcap_procamp_t &out)
+{
+    out = procamp_;
+    return true;
+}
+
+static gcap_procamp_range_t make_sdk_procamp_range(int current)
+{
+    gcap_procamp_range_t r{};
+    r.supported = 1;
+    r.min_value = 0;
+    r.max_value = 255;
+    r.step = 1;
+    r.default_value = 128;
+    r.current_value = std::clamp(current, 0, 255);
+    return r;
+}
+
+bool WinMFProvider::getProcAmpCaps(gcap_procamp_caps_t &out)
+{
+    memset(&out, 0, sizeof(out));
+    out.brightness = make_sdk_procamp_range(procamp_.brightness);
+    out.contrast = make_sdk_procamp_range(procamp_.contrast);
+    out.hue = make_sdk_procamp_range(procamp_.hue);
+    out.saturation = make_sdk_procamp_range(procamp_.saturation);
+    out.sharpness = make_sdk_procamp_range(procamp_.sharpness);
+    return true;
+}
+
 bool WinMFProvider::setProcAmp(const gcap_procamp_t &p)
 {
     // Clamp to 0..255 just in case caller passes out-of-range.
@@ -690,6 +720,12 @@ bool WinMFProvider::setProcAmp(const gcap_procamp_t &p)
     procamp_.saturation = clamp255(p.saturation);
     procamp_.sharpness = clamp255(p.sharpness);
     return true;
+}
+
+bool WinMFProvider::resetProcAmp()
+{
+    gcap_procamp_t neutral{128, 128, 128, 128, 128};
+    return setProcAmp(neutral);
 }
 
 // ---- logging helpers (for negotiated media type / stride debug) ----

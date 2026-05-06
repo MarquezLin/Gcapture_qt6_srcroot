@@ -954,6 +954,20 @@ extern "C"
         return h->mgr.setProcessing(*opts);
     }
 
+    GCAP_API gcap_status_t gcap_get_procamp(gcap_handle h, gcap_procamp_t *out)
+    {
+        if (!h || !out)
+            return GCAP_EINVAL;
+        return h->mgr.getProcAmp(*out);
+    }
+
+    GCAP_API gcap_status_t gcap_get_procamp_caps(gcap_handle h, gcap_procamp_caps_t *out)
+    {
+        if (!h || !out)
+            return GCAP_EINVAL;
+        return h->mgr.getProcAmpCaps(*out);
+    }
+
     GCAP_API gcap_status_t gcap_set_procamp(gcap_handle h, const gcap_procamp_t *p)
     {
         if (!h)
@@ -974,6 +988,13 @@ extern "C"
             v.sharpness = 128;
         }
         return h->mgr.setProcAmp(v);
+    }
+
+    GCAP_API gcap_status_t gcap_reset_procamp(gcap_handle h)
+    {
+        if (!h)
+            return GCAP_EINVAL;
+        return h->mgr.resetProcAmp();
     }
 
     GCAP_API void gcap_set_backend(int backend)

@@ -1,5 +1,7 @@
 #include "procamp.h"
 #include "ui_procamp.h"
+#include <QSignalBlocker>
+#include <QSlider>
 
 ProcAmp::ProcAmp(QWidget *parent)
     : QDialog(parent), ui(new Ui::ProcAmp)
@@ -36,6 +38,11 @@ ProcAmp::~ProcAmp()
 
 void ProcAmp::setValues(const gcap_procamp_t &p)
 {
+    const QSignalBlocker b1(ui->sldBrightness);
+    const QSignalBlocker b2(ui->sldContrast);
+    const QSignalBlocker b3(ui->sldHue);
+    const QSignalBlocker b4(ui->sldSaturation);
+    const QSignalBlocker b5(ui->sldSharpness);
     ui->sldBrightness->setValue(p.brightness);
     ui->sldContrast->setValue(p.contrast);
     ui->sldHue->setValue(p.hue);
@@ -65,6 +72,34 @@ void ProcAmp::setControlsEnabled(bool en)
     ui->buttonBox->setEnabled(en);
 }
 
+
+static void applyRange(QSlider *slider, const gcap_procamp_range_t &r)
+{
+    slider->setEnabled(r.supported != 0);
+    if (r.supported)
+    {
+        slider->setRange(r.min_value, r.max_value);
+        slider->setSingleStep(r.step > 0 ? r.step : 1);
+        slider->setPageStep((r.step > 0 ? r.step : 1) * 8);
+        slider->setValue(r.current_value);
+    }
+}
+
+void ProcAmp::setCaps(const gcap_procamp_caps_t &caps)
+{
+    const QSignalBlocker b1(ui->sldBrightness);
+    const QSignalBlocker b2(ui->sldContrast);
+    const QSignalBlocker b3(ui->sldHue);
+    const QSignalBlocker b4(ui->sldSaturation);
+    const QSignalBlocker b5(ui->sldSharpness);
+    applyRange(ui->sldBrightness, caps.brightness);
+    applyRange(ui->sldContrast, caps.contrast);
+    applyRange(ui->sldHue, caps.hue);
+    applyRange(ui->sldSaturation, caps.saturation);
+    applyRange(ui->sldSharpness, caps.sharpness);
+    updateValueLabels();
+}
+
 void ProcAmp::updateValueLabels()
 {
     ui->lblBrightnessVal->setText(QString::number(ui->sldBrightness->value()));
@@ -87,9 +122,5 @@ gcap_procamp_t ProcAmp::currentParams() const
 
 void ProcAmp::setParams(const gcap_procamp_t &p)
 {
-    ui->sldBrightness->setValue(p.brightness);
-    ui->sldContrast->setValue(p.contrast);
-    ui->sldHue->setValue(p.hue);
-    ui->sldSaturation->setValue(p.saturation);
-    ui->sldSharpness->setValue(p.sharpness);
+    setValues(p);
 }
