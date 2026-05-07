@@ -433,11 +433,11 @@ gcap_status_t CaptureManager::setPreview(const gcap_preview_desc_t &desc)
     return provider_->setPreview(desc) ? GCAP_OK : GCAP_ENOTSUP;
 }
 
-gcap_status_t CaptureManager::exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats)
+gcap_status_t CaptureManager::exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats, bool exportGigabyteRaw)
 {
     if (!provider_ || !basePathUtf8 || !*basePathUtf8)
         return GCAP_EINVAL;
-    return provider_->exportPreviewSceneRgb10(basePathUtf8, exportRaw, exportTiff, exportStats) ? GCAP_OK : GCAP_ENOTSUP;
+    return provider_->exportPreviewSceneRgb10(basePathUtf8, exportRaw, exportTiff, exportStats, exportGigabyteRaw) ? GCAP_OK : GCAP_ENOTSUP;
 }
 
 gcap_status_t CaptureManager::getRecordingStats(gcap_recording_stats_t &out)

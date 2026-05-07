@@ -45,7 +45,7 @@ public:
     bool getSignalStatus(gcap_signal_status_t &out) override;
     bool getRuntimeInfo(gcap_runtime_info_t &out) override;
     bool setPreview(const gcap_preview_desc_t &desc) override;
-    bool exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats) override;
+    bool exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats, bool exportGigabyteRaw) override;
     bool getRecordingStats(gcap_recording_stats_t &out) override;
     gcap_status_t startRecording(const char *pathUtf8);
     gcap_status_t stopRecording();

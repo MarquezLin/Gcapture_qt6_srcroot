@@ -1030,7 +1030,8 @@ extern "C"
         return h->mgr.exportPreviewSceneRgb10(base_path_utf8,
                                               export_raw != 0,
                                               export_tiff != 0,
-                                              export_stats != 0);
+                                              export_stats != 0,
+                                              false);
     }
 
     GCAP_API gcap_status_t gcap_export_snapshot(gcap_handle h, const gcap_snapshot_export_desc_t *desc,
@@ -1056,6 +1057,7 @@ extern "C"
 
         const int flags = desc->flags != 0 ? desc->flags : (GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS | GCAP_EXPORT_PNG);
         const bool wantRaw = (flags & GCAP_EXPORT_RAW_ALL) != 0;
+        const bool wantGigabyteRaw = (flags & GCAP_EXPORT_RAW_GIGABYTE_HEADER) != 0;
         const bool wantTiff = (flags & GCAP_EXPORT_TIFF) != 0;
         const bool wantStats = (flags & GCAP_EXPORT_STATS) != 0;
         const bool wantPng = (flags & GCAP_EXPORT_PNG) != 0;
@@ -1064,7 +1066,7 @@ extern "C"
         // If the caller requested only PNG, RAW files are created temporarily and
         // removed after PNG encoding succeeds/fails.
         const bool needRawForPng = wantPng;
-        const gcap_status_t st = h->mgr.exportPreviewSceneRgb10(desc->base_path_utf8, wantRaw || needRawForPng, wantTiff, wantStats);
+        const gcap_status_t st = h->mgr.exportPreviewSceneRgb10(desc->base_path_utf8, wantRaw || needRawForPng, wantTiff, wantStats, wantGigabyteRaw);
         if (st != GCAP_OK)
             return st;
 
@@ -1096,6 +1098,21 @@ extern "C"
                 copy_path(r->native_raw_path, sizeof(r->native_raw_path), desc->base_path_utf8, "_bgra8.raw");
                 r->generated_flags |= GCAP_EXPORT_RAW_NATIVE;
             }
+        }
+        if (wantGigabyteRaw)
+        {
+            if (sourceIs10Bit)
+            {
+                copy_path(r->gigabyte_native_raw_path, sizeof(r->gigabyte_native_raw_path), desc->base_path_utf8, "_gigabyte_abgr2101010.raw");
+                copy_path(r->gigabyte_fp16_raw_path, sizeof(r->gigabyte_fp16_raw_path), desc->base_path_utf8, "_gigabyte_fp16_rgba16f.raw");
+                copy_path(r->gigabyte_rgb10_u16_path, sizeof(r->gigabyte_rgb10_u16_path), desc->base_path_utf8, "_gigabyte_rgb10_u16.raw");
+                copy_path(r->gigabyte_rgba16_path, sizeof(r->gigabyte_rgba16_path), desc->base_path_utf8, "_gigabyte_rgba16_expanded.raw");
+            }
+            else
+            {
+                copy_path(r->gigabyte_native_raw_path, sizeof(r->gigabyte_native_raw_path), desc->base_path_utf8, "_gigabyte_bgra8.raw");
+            }
+            r->generated_flags |= GCAP_EXPORT_RAW_GIGABYTE_HEADER;
         }
         if (wantTiff)
         {

@@ -84,7 +84,7 @@ public:
     bool setProcAmp(const gcap_procamp_t &p) override;
     bool resetProcAmp() override;
     bool setPreview(const gcap_preview_desc_t &desc) override;
-    bool exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats) override;
+    bool exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats, bool exportGigabyteRaw) override;
     bool getRecordingStats(gcap_recording_stats_t &out) override;
 
     bool isUsingGpu() const { return use_dxgi_ && !cpu_path_; }

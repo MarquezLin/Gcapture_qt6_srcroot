@@ -1619,6 +1619,90 @@ namespace
         return static_cast<uint8_t>(std::lround(v * 255.0f));
     }
 
+    static bool ssp_write_gigabyte_raw_file(const std::wstring &path,
+                                            int w,
+                                            int h,
+                                            const char *format,
+                                            int sourceBitDepth,
+                                            const void *payload,
+                                            size_t payloadBytes)
+    {
+        if (path.empty() || !format || !*format || !payload || payloadBytes == 0)
+            return false;
+
+        char header[GCAP_GIGABYTE_RAW_HEADER_SIZE] = {};
+        std::snprintf(header, sizeof(header),
+                      "GIGABYTE_RAW\n"
+                      "header_size=%d\n"
+                      "Width=%d\n"
+                      "Height=%d\n"
+                      "Format=%s\n"
+                      "SourceBitDepth=%d\n",
+                      GCAP_GIGABYTE_RAW_HEADER_SIZE,
+                      w,
+                      h,
+                      format,
+                      sourceBitDepth);
+
+        std::ofstream ofs(std::filesystem::path(path), std::ios::binary);
+        if (!ofs)
+            return false;
+        ofs.write(header, static_cast<std::streamsize>(sizeof(header)));
+        ofs.write(reinterpret_cast<const char *>(payload), static_cast<std::streamsize>(payloadBytes));
+        return ofs.good();
+    }
+
+    static bool ssp_write_fp16_gigabyte_raw(const std::wstring &path, int w, int h, int sourceBitDepth, const std::vector<uint16_t> &rgba16f)
+    {
+        if (w <= 0 || h <= 0 || rgba16f.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 4u)
+            return false;
+        const size_t payloadBytes = rgba16f.size() * sizeof(uint16_t);
+        return ssp_write_gigabyte_raw_file(path, w, h, "RGBA16F", sourceBitDepth, rgba16f.data(), payloadBytes);
+    }
+
+    static bool ssp_write_rgb10_gigabyte_raw(const std::wstring &path, int w, int h, int sourceBitDepth, const std::vector<uint16_t> &rgb10)
+    {
+        if (w <= 0 || h <= 0 || rgb10.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 3u)
+            return false;
+        const size_t payloadBytes = rgb10.size() * sizeof(uint16_t);
+        return ssp_write_gigabyte_raw_file(path, w, h, "RGB10_U16", sourceBitDepth, rgb10.data(), payloadBytes);
+    }
+
+    static bool ssp_write_bgra8_gigabyte_raw(const std::wstring &path, int w, int h, int sourceBitDepth, const std::vector<uint8_t> &bgra8)
+    {
+        if (w <= 0 || h <= 0 || bgra8.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 4u)
+            return false;
+        return ssp_write_gigabyte_raw_file(path, w, h, "BGRA8", sourceBitDepth, bgra8.data(), bgra8.size());
+    }
+
+    static bool ssp_write_abgr2101010_gigabyte_raw(const std::wstring &path, int w, int h, int sourceBitDepth, const std::vector<uint32_t> &abgr2101010)
+    {
+        if (w <= 0 || h <= 0 || abgr2101010.size() < static_cast<size_t>(w) * static_cast<size_t>(h))
+            return false;
+        const size_t payloadBytes = abgr2101010.size() * sizeof(uint32_t);
+        return ssp_write_gigabyte_raw_file(path, w, h, "ABGR2101010", sourceBitDepth, abgr2101010.data(), payloadBytes);
+    }
+
+    static bool ssp_write_rgba16_expanded_gigabyte_raw(const std::wstring &path, int w, int h, int sourceBitDepth, const std::vector<uint16_t> &rgb10)
+    {
+        if (w <= 0 || h <= 0 || rgb10.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 3u)
+            return false;
+
+        std::vector<uint16_t> rgba;
+        const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
+        rgba.resize(pixelCount * 4u);
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            rgba[i * 4u + 0u] = ssp_expand_10_to_16(rgb10[i * 3u + 0u]);
+            rgba[i * 4u + 1u] = ssp_expand_10_to_16(rgb10[i * 3u + 1u]);
+            rgba[i * 4u + 2u] = ssp_expand_10_to_16(rgb10[i * 3u + 2u]);
+            rgba[i * 4u + 3u] = 0xFFFFu;
+        }
+
+        const size_t payloadBytes = rgba.size() * sizeof(uint16_t);
+        return ssp_write_gigabyte_raw_file(path, w, h, "RGBA16", sourceBitDepth, rgba.data(), payloadBytes);
+    }
+
     static bool ssp_write_fp16_raw(const std::wstring &path, int w, int h, const std::vector<uint16_t> &rgba16f)
     {
         if (w <= 0 || h <= 0 || rgba16f.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 4u)
@@ -1885,7 +1969,7 @@ bool SharedScenePipeline::readback_to_frame(int frame_w, int frame_h, uint64_t p
     return true;
 }
 
-bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool export_raw, bool export_tiff, bool export_stats)
+bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool export_raw, bool export_tiff, bool export_stats, bool export_gigabyte_raw)
 {
     if (!base_path || !*base_path || !ctx_ || !rt_scene_stage_fp16_ || !rt_scene_fp16_ || rt_w_ <= 0 || rt_h_ <= 0)
         return false;
@@ -1962,6 +2046,21 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
             ok = ssp_write_bgra8_raw_value(base + L"_bgra8.raw", rt_w_, rt_h_, bgra8) && ok;
         }
     }
+    if (export_gigabyte_raw)
+    {
+        const int sourceBitDepth = preview_source_bit_depth_ > 0 ? preview_source_bit_depth_ : (sourceIs10Bit ? 10 : 8);
+        if (sourceIs10Bit)
+        {
+            ok = ssp_write_fp16_gigabyte_raw(base + L"_gigabyte_fp16_rgba16f.raw", rt_w_, rt_h_, sourceBitDepth, rgba16f) && ok;
+            ok = ssp_write_rgb10_gigabyte_raw(base + L"_gigabyte_rgb10_u16.raw", rt_w_, rt_h_, sourceBitDepth, rgb10) && ok;
+            ok = ssp_write_abgr2101010_gigabyte_raw(base + L"_gigabyte_abgr2101010.raw", rt_w_, rt_h_, sourceBitDepth, abgr2101010) && ok;
+            ok = ssp_write_rgba16_expanded_gigabyte_raw(base + L"_gigabyte_rgba16_expanded.raw", rt_w_, rt_h_, sourceBitDepth, rgb10) && ok;
+        }
+        else
+        {
+            ok = ssp_write_bgra8_gigabyte_raw(base + L"_gigabyte_bgra8.raw", rt_w_, rt_h_, sourceBitDepth, bgra8) && ok;
+        }
+    }
     if (export_tiff)
         ok = ssp_write_rgb16_tiff(base + L".tiff", rt_w_, rt_h_, rgb10) && ok;
     if (export_stats)
@@ -1971,8 +2070,8 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
 
     char msg[512] = {};
     std::snprintf(msg, sizeof(msg),
-                  "[SharedScene] export_scene_rgb10 base=%ls size=%dx%d sourceBitDepth=%d exportAs=%s raw=%d tiff=%d stats=%d ok=%d",
-                  base_path, rt_w_, rt_h_, preview_source_bit_depth_, sourceIs10Bit ? "abgr2101010" : "bgra8", export_raw ? 1 : 0, export_tiff ? 1 : 0, export_stats ? 1 : 0, ok ? 1 : 0);
+                  "[SharedScene] export_scene_rgb10 base=%ls size=%dx%d sourceBitDepth=%d exportAs=%s raw=%d gigabyteRaw=%d tiff=%d stats=%d ok=%d",
+                  base_path, rt_w_, rt_h_, preview_source_bit_depth_, sourceIs10Bit ? "abgr2101010" : "bgra8", export_raw ? 1 : 0, export_gigabyte_raw ? 1 : 0, export_tiff ? 1 : 0, export_stats ? 1 : 0, ok ? 1 : 0);
     ssp_log_text(msg);
     return ok;
 }

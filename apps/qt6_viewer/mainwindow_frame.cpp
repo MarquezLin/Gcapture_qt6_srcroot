@@ -151,7 +151,7 @@ bool MainWindow::saveSceneExports(const QString &basePath, gcap_snapshot_export_
     const QByteArray baseUtf8 = QDir::toNativeSeparators(basePath).toUtf8();
     gcap_snapshot_export_desc_t desc{};
     desc.base_path_utf8 = baseUtf8.constData();
-    desc.flags = GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS | GCAP_EXPORT_PNG;
+    desc.flags = GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_RAW_GIGABYTE_HEADER | GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS | GCAP_EXPORT_PNG;
 
     std::memset(result, 0, sizeof(*result));
     const gcap_status_t st = gcap_export_snapshot(h_, &desc, result);
@@ -216,20 +216,29 @@ void MainWindow::onSnapshot()
         appendPath(result.rgb10_u16_path);
         appendPath(result.native_raw_path);
         appendPath(result.rgba16_path);
+        appendPath(result.gigabyte_fp16_raw_path);
+        appendPath(result.gigabyte_rgb10_u16_path);
+        appendPath(result.gigabyte_native_raw_path);
+        appendPath(result.gigabyte_rgba16_path);
         appendPath(result.tiff_path);
         appendPath(result.stats_path);
 
         const QString source = result.source_bit_depth >= 10 ? QStringLiteral("10-bit") : QStringLiteral("8-bit");
-        MainWindow::postLog(QStringLiteral("[SceneExport] source=%1 PNG=%2 nativeRAW=%3 FP16=%4 RGB10=%5 RGBA16=%6 TIFF=%7 STATS=%8 flags=0x%9")
-                                .arg(source,
-                                     pngPath,
-                                     QString::fromUtf8(result.native_raw_path),
-                                     QString::fromUtf8(result.fp16_raw_path),
-                                     QString::fromUtf8(result.rgb10_u16_path),
-                                     QString::fromUtf8(result.rgba16_path),
-                                     QString::fromUtf8(result.tiff_path),
-                                     QString::fromUtf8(result.stats_path),
-                                     QString::number(result.generated_flags, 16)));
+        QStringList logParts;
+        logParts << QStringLiteral("source=%1").arg(source)
+                 << QStringLiteral("PNG=%1").arg(pngPath)
+                 << QStringLiteral("nativeRAW=%1").arg(QString::fromUtf8(result.native_raw_path))
+                 << QStringLiteral("FP16=%1").arg(QString::fromUtf8(result.fp16_raw_path))
+                 << QStringLiteral("RGB10=%1").arg(QString::fromUtf8(result.rgb10_u16_path))
+                 << QStringLiteral("RGBA16=%1").arg(QString::fromUtf8(result.rgba16_path))
+                 << QStringLiteral("gigaNativeRAW=%1").arg(QString::fromUtf8(result.gigabyte_native_raw_path))
+                 << QStringLiteral("gigaFP16=%1").arg(QString::fromUtf8(result.gigabyte_fp16_raw_path))
+                 << QStringLiteral("gigaRGB10=%1").arg(QString::fromUtf8(result.gigabyte_rgb10_u16_path))
+                 << QStringLiteral("gigaRGBA16=%1").arg(QString::fromUtf8(result.gigabyte_rgba16_path))
+                 << QStringLiteral("TIFF=%1").arg(QString::fromUtf8(result.tiff_path))
+                 << QStringLiteral("STATS=%1").arg(QString::fromUtf8(result.stats_path))
+                 << QStringLiteral("flags=0x%1").arg(QString::number(result.generated_flags, 16));
+        MainWindow::postLog(QStringLiteral("[SceneExport] %1").arg(logParts.join(QStringLiteral(" "))));
     }
 
     if (ui->statusbar)
