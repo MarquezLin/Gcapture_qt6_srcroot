@@ -20,6 +20,22 @@ static std::string toUtf8Path(const QString &path)
     const QByteArray u8 = path.toUtf8();
     return std::string(u8.constData(), static_cast<size_t>(u8.size()));
 }
+
+static QString rampStatusText(int status)
+{
+    switch (status)
+    {
+    case GCAP_TIFF_RAMP_DETECTED_VALID:
+        return QStringLiteral("Detected valid ramp");
+    case GCAP_TIFF_RAMP_DETECTED_INVALID:
+        return QStringLiteral("Detected invalid ramp");
+    case GCAP_TIFF_RAMP_NOT_APPLICABLE:
+        return QStringLiteral("Not applicable");
+    case GCAP_TIFF_RAMP_NOT_CHECKED:
+    default:
+        return QStringLiteral("Not checked");
+    }
+}
 }
 
 TiffBitDepthReport TiffAnalyzer::analyzeFile(const QString &path)
@@ -57,9 +73,12 @@ TiffBitDepthReport TiffAnalyzer::analyzeFile(const QString &path)
     report.likelyTenBitContent = sdk.likely_ten_bit_content != 0;
     report.valuesLookShifted10Bit = sdk.values_look_shifted_10bit != 0;
     report.valuesLook8BitExpanded = sdk.values_look_8bit_expanded != 0;
+    report.rampStatus = sdk.ramp_status;
+    report.rampStatusText = rampStatusText(sdk.ramp_status);
     report.rampReason = fromUtf8Field(sdk.ramp_reason);
     report.strictRampReason = fromUtf8Field(sdk.strict_ramp_reason);
     report.visualRampReason = fromUtf8Field(sdk.visual_ramp_reason);
+    report.rampNote = fromUtf8Field(sdk.ramp_note);
     report.sampledRowY = sdk.sampled_row_y;
     report.sampledRowSource = fromUtf8Field(sdk.sampled_row_source);
     report.sampledRowLogical10Rule = fromUtf8Field(sdk.sampled_row_logical10_rule);
@@ -99,22 +118,36 @@ QString TiffAnalyzer::formatReportText(const TiffBitDepthReport &r)
 
     lines << QStringLiteral("Status: OK");
     lines << QStringLiteral("Analyzer: gcapture SDK / WIC");
+
+    lines << QString();
+    lines << QStringLiteral("[TIFF Container]");
     lines << QStringLiteral("Size: %1 x %2").arg(r.width).arg(r.height);
     lines << QStringLiteral("Pixel format: %1").arg(r.pixelFormatName);
     lines << QStringLiteral("Photometric: %1").arg(r.photometric);
     lines << QStringLiteral("Samples per pixel: %1").arg(r.samplesPerPixel);
     lines << QStringLiteral("Bits per sample (stored): %1").arg(r.bitsPerSample);
     lines << QStringLiteral("Stored bit depth: %1-bit").arg(r.storedBitDepth);
-    lines << QStringLiteral("Effective bit depth: %1-bit").arg(r.effectiveBitDepth);
+
+    lines << QString();
+    lines << QStringLiteral("[Bit-depth Evidence]");
+    lines << QStringLiteral("Effective bit depth estimate: %1-bit").arg(r.effectiveBitDepth);
     lines << QStringLiteral("Min / Max: %1 / %2").arg(r.minValue).arg(r.maxValue);
     lines << QStringLiteral("Unique values: %1").arg(r.uniqueValueCount);
+    lines << QStringLiteral("Has values > 255: %1").arg(r.maxValue > 255 ? QStringLiteral("Yes") : QStringLiteral("No"));
     lines << QStringLiteral("Looks like shifted 10-bit in 16-bit container: %1").arg(r.valuesLookShifted10Bit ? QStringLiteral("Yes") : QStringLiteral("No"));
     lines << QStringLiteral("Looks like expanded 8-bit: %1").arg(r.valuesLook8BitExpanded ? QStringLiteral("Yes") : QStringLiteral("No"));
-    lines << QStringLiteral("Likely 10-bit content: %1").arg(r.likelyTenBitContent ? QStringLiteral("Yes") : QStringLiteral("No"));
+    lines << QStringLiteral("Likely >8-bit / 10-bit content: %1").arg(r.likelyTenBitContent ? QStringLiteral("Yes") : QStringLiteral("No"));
+
+    lines << QString();
+    lines << QStringLiteral("[Ramp Pattern Validation]");
+    lines << QStringLiteral("Ramp status: %1").arg(r.rampStatusText);
+    lines << QStringLiteral("10-bit ramp verdict: %1").arg(r.likelyTenBitRamp ? QStringLiteral("Valid") : QStringLiteral("Not valid / Not applicable"));
     lines << QStringLiteral("Strict 10-bit ramp: %1").arg(r.strictTenBitRamp ? QStringLiteral("Yes") : QStringLiteral("No"));
-    lines << QStringLiteral("Visual 10-bit ramp candidate: %1").arg(r.visualTenBitRampCandidate ? QStringLiteral("Yes") : QStringLiteral("No"));
-    lines << QStringLiteral("10-bit ramp: %1").arg(r.likelyTenBitRamp ? QStringLiteral("Yes") : QStringLiteral("No"));
-    lines << QStringLiteral("Ramp reason: %1").arg(r.rampReason);
+    lines << QStringLiteral("Visual ramp pattern candidate: %1").arg(r.visualTenBitRampCandidate ? QStringLiteral("Yes") : QStringLiteral("No"));
+    if (!r.rampNote.isEmpty())
+        lines << QStringLiteral("Ramp note: %1").arg(r.rampNote);
+    lines << QStringLiteral("Ramp detail: %1").arg(r.rampReason);
+    lines << QStringLiteral("Note: Ramp validation is only meaningful for generated monotonic ramp test images. For real scenes, use Bit-depth Evidence instead.");
     if (r.sampledRowY >= 0 && !r.sampledRowRaw16Csv.isEmpty())
     {
         lines << QString();

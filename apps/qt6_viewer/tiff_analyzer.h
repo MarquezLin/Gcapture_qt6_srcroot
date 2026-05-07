@@ -31,9 +31,12 @@ struct TiffBitDepthReport
     bool strictTenBitRamp = false;
     bool visualTenBitRampCandidate = false;
     bool likelyTenBitContent = false;
+    int rampStatus = 0;
+    QString rampStatusText;
     QString rampReason;
     QString strictRampReason;
     QString visualRampReason;
+    QString rampNote;
 
     bool valuesLookShifted10Bit = false;
     bool valuesLook8BitExpanded = false;

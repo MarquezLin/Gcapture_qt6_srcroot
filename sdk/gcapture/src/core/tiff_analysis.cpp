@@ -241,6 +241,38 @@ static std::vector<uint16_t> extract_gray_axis_col(const std::vector<uint16_t> &
     return out;
 }
 
+static int estimate_likely_ten_bit_content(const gcap_tiff_analysis_t &report)
+{
+    if (report.values_look_8bit_expanded)
+        return 0;
+
+    const bool highValueEvidence = report.max_value > 255;
+    const bool levelCountEvidence = report.unique_value_count > 256;
+    const bool shifted10Evidence = report.values_look_shifted_10bit != 0;
+    const bool effective10Evidence = report.effective_bit_depth >= 10;
+    const bool tenBitRangeEvidence = report.max_value <= 1023 && report.unique_value_count > 64;
+
+    if (effective10Evidence && (highValueEvidence || levelCountEvidence || shifted10Evidence || tenBitRangeEvidence))
+        return 1;
+    return 0;
+}
+
+static const char *ramp_status_name(int status)
+{
+    switch (status)
+    {
+    case GCAP_TIFF_RAMP_DETECTED_VALID:
+        return "Detected valid ramp";
+    case GCAP_TIFF_RAMP_DETECTED_INVALID:
+        return "Detected invalid ramp";
+    case GCAP_TIFF_RAMP_NOT_APPLICABLE:
+        return "Not applicable";
+    case GCAP_TIFF_RAMP_NOT_CHECKED:
+    default:
+        return "Not checked";
+    }
+}
+
 static std::vector<uint16_t> convert_axis_to_logical10(const std::vector<uint16_t> &axis, const gcap_tiff_analysis_t &report, std::string &rule)
 {
     std::vector<uint16_t> out;
@@ -285,11 +317,16 @@ static void fill_ramp_report(const std::vector<uint16_t> &gray, int width, int h
     const bool colStrict = looks_like_gray_ramp(colAxis, colReason);
     const bool rowVisual = looks_like_visual_gray_ramp(rowAxis, rowVisualReason);
     const bool colVisual = looks_like_visual_gray_ramp(colAxis, colVisualReason);
+    const bool strictPattern = rowStrict || colStrict;
+    const bool visualPattern = rowVisual || colVisual || strictPattern;
 
-    report.likely_ten_bit_content = (report.effective_bit_depth >= 10 && rgbNearlyEqual && !report.values_look_8bit_expanded) ? 1 : 0;
-    report.strict_ten_bit_ramp = (report.likely_ten_bit_content && (rowStrict || colStrict)) ? 1 : 0;
-    report.visual_ten_bit_ramp_candidate = (report.likely_ten_bit_content && (rowVisual || colVisual)) ? 1 : 0;
-    report.likely_ten_bit_ramp = report.visual_ten_bit_ramp_candidate;
+    report.likely_ten_bit_content = estimate_likely_ten_bit_content(report);
+
+    // Ramp validation is an optional pattern check. It must not be used as the
+    // general bit-depth verdict for arbitrary camera/HDMI frames.
+    report.strict_ten_bit_ramp = (report.likely_ten_bit_content && strictPattern) ? 1 : 0;
+    report.visual_ten_bit_ramp_candidate = visualPattern ? 1 : 0;
+    report.likely_ten_bit_ramp = 0;
 
     char tmp[512];
     if (rowStrict)
@@ -297,7 +334,7 @@ static void fill_ramp_report(const std::vector<uint16_t> &gray, int width, int h
     else if (colStrict)
         std::snprintf(tmp, sizeof(tmp), "column strict ramp; grayRGB=%s; %s", rgbNearlyEqual ? "yes" : "no", colReason.c_str());
     else
-        std::snprintf(tmp, sizeof(tmp), "not strict enough; grayRGB=%s; row=%s; col=%s", rgbNearlyEqual ? "yes" : "no", rowReason.c_str(), colReason.c_str());
+        std::snprintf(tmp, sizeof(tmp), "no strict monotonic ramp pattern; grayRGB=%s; row=%s; col=%s", rgbNearlyEqual ? "yes" : "no", rowReason.c_str(), colReason.c_str());
     copy_text(report.strict_ramp_reason, sizeof(report.strict_ramp_reason), tmp);
 
     if (rowVisual)
@@ -305,10 +342,41 @@ static void fill_ramp_report(const std::vector<uint16_t> &gray, int width, int h
     else if (colVisual)
         std::snprintf(tmp, sizeof(tmp), "column visual ramp candidate; grayRGB=%s; %s", rgbNearlyEqual ? "yes" : "no", colVisualReason.c_str());
     else
-        std::snprintf(tmp, sizeof(tmp), "not smooth/trending enough; grayRGB=%s; row=%s; col=%s", rgbNearlyEqual ? "yes" : "no", rowVisualReason.c_str(), colVisualReason.c_str());
+        std::snprintf(tmp, sizeof(tmp), "no visual/monotonic ramp pattern; grayRGB=%s; row=%s; col=%s", rgbNearlyEqual ? "yes" : "no", rowVisualReason.c_str(), colVisualReason.c_str());
     copy_text(report.visual_ramp_reason, sizeof(report.visual_ramp_reason), tmp);
 
-    std::snprintf(tmp, sizeof(tmp), "strict=%s; visual=%s", report.strict_ramp_reason, report.visual_ramp_reason);
+    if (!rgbNearlyEqual)
+    {
+        report.ramp_status = GCAP_TIFF_RAMP_NOT_APPLICABLE;
+        std::snprintf(tmp, sizeof(tmp),
+                      "Not applicable: image is not grayscale/RGB-equal enough for ramp-pattern validation. "
+                      "This does not affect general bit-depth evidence.");
+    }
+    else if (!visualPattern)
+    {
+        report.ramp_status = GCAP_TIFF_RAMP_NOT_APPLICABLE;
+        std::snprintf(tmp, sizeof(tmp),
+                      "Not applicable: no monotonic ramp test pattern was detected. "
+                      "Use bit-depth evidence for real scene images.");
+    }
+    else if (report.likely_ten_bit_content)
+    {
+        report.ramp_status = GCAP_TIFF_RAMP_DETECTED_VALID;
+        report.likely_ten_bit_ramp = 1;
+        std::snprintf(tmp, sizeof(tmp),
+                      "Valid ramp-pattern evidence: a monotonic ramp was detected and the sample statistics indicate likely 10-bit content.");
+    }
+    else
+    {
+        report.ramp_status = GCAP_TIFF_RAMP_DETECTED_INVALID;
+        std::snprintf(tmp, sizeof(tmp),
+                      "Invalid ramp-pattern evidence: the image looks ramp-like, but the bit-depth evidence does not indicate 10-bit content.");
+    }
+    copy_text(report.ramp_note, sizeof(report.ramp_note), tmp);
+
+    std::snprintf(tmp, sizeof(tmp), "%s; %s; strict=%s; visual=%s",
+                  ramp_status_name(report.ramp_status), report.ramp_note,
+                  report.strict_ramp_reason, report.visual_ramp_reason);
     copy_text(report.ramp_reason, sizeof(report.ramp_reason), tmp);
 }
 

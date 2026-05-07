@@ -1007,11 +1007,12 @@ void MainWindow::onOpenTiffAnalyze()
         {
             ui->labelinfo1->setEnabled(true);
             ui->labelinfo1->setText(
-                tr("TIFF: %1 | stored=%2-bit | effective=%3-bit | 10-bit ramp=%4")
+                tr("TIFF: %1 | stored=%2-bit | effective=%3-bit | 10-bit evidence=%4 | ramp=%5")
                     .arg(QFileInfo(path).fileName())
                     .arg(lastTiffReport_.storedBitDepth)
                     .arg(lastTiffReport_.effectiveBitDepth)
-                    .arg(lastTiffReport_.likelyTenBitRamp ? tr("Yes") : tr("No")));
+                    .arg(lastTiffReport_.likelyTenBitContent ? tr("Yes") : tr("No"))
+                    .arg(lastTiffReport_.rampStatusText));
         }
         else
         {
@@ -1023,11 +1024,12 @@ void MainWindow::onOpenTiffAnalyze()
     if (lastTiffReport_.ok)
     {
         MainWindow::postLog(
-            QStringLiteral("[TIFF] %1 stored=%2 effective=%3 ramp=%4 fmt=%5 range=%6..%7 unique=%8")
+            QStringLiteral("[TIFF] %1 stored=%2 effective=%3 likely10=%4 rampStatus=%5 fmt=%6 range=%7..%8 unique=%9")
                 .arg(path)
                 .arg(lastTiffReport_.storedBitDepth)
                 .arg(lastTiffReport_.effectiveBitDepth)
-                .arg(lastTiffReport_.likelyTenBitRamp ? QStringLiteral("Yes") : QStringLiteral("No"))
+                .arg(lastTiffReport_.likelyTenBitContent ? QStringLiteral("Yes") : QStringLiteral("No"))
+                .arg(lastTiffReport_.rampStatusText)
                 .arg(lastTiffReport_.pixelFormatName)
                 .arg(lastTiffReport_.minValue)
                 .arg(lastTiffReport_.maxValue)
