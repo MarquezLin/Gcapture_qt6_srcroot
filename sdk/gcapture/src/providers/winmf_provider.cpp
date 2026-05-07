@@ -3791,14 +3791,14 @@ bool WinMFProvider::setPreview(const gcap_preview_desc_t &desc)
     return pipeline_->configurePreview(desc);
 }
 
-bool WinMFProvider::exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats, bool exportGigabyteRaw)
+bool WinMFProvider::exportPreviewSceneRgb10(const char *basePathUtf8, int rawFlags, bool exportTiff, bool exportStats, bool exportGigabyteRaw)
 {
     if (!pipeline_ || !basePathUtf8 || !*basePathUtf8)
         return false;
     wchar_t wpath[1024] = {};
     if (MultiByteToWideChar(CP_UTF8, 0, basePathUtf8, -1, wpath, 1024) <= 0)
         return false;
-    return pipeline_->export_scene_rgb10(wpath, exportRaw, exportTiff, exportStats, exportGigabyteRaw);
+    return pipeline_->export_scene_rgb10(wpath, rawFlags, exportTiff, exportStats, exportGigabyteRaw);
 }
 
 

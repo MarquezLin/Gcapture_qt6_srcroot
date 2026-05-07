@@ -124,10 +124,10 @@ struct ICaptureProvider
         (void)desc;
         return false;
     }
-    virtual bool exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats, bool exportGigabyteRaw)
+    virtual bool exportPreviewSceneRgb10(const char *basePathUtf8, int rawFlags, bool exportTiff, bool exportStats, bool exportGigabyteRaw)
     {
         (void)basePathUtf8;
-        (void)exportRaw;
+        (void)rawFlags;
         (void)exportTiff;
         (void)exportStats;
         (void)exportGigabyteRaw;
@@ -174,7 +174,7 @@ public:
     gcap_status_t setProcAmp(const gcap_procamp_t &p);
     gcap_status_t resetProcAmp();
     gcap_status_t setPreview(const gcap_preview_desc_t &desc);
-    gcap_status_t exportPreviewSceneRgb10(const char *basePathUtf8, bool exportRaw, bool exportTiff, bool exportStats, bool exportGigabyteRaw);
+    gcap_status_t exportPreviewSceneRgb10(const char *basePathUtf8, int rawFlags, bool exportTiff, bool exportStats, bool exportGigabyteRaw);
     gcap_status_t getRecordingStats(gcap_recording_stats_t &out);
     int getActiveBackendInt() const;
 

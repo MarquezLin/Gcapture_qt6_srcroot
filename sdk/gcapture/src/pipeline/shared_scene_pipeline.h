@@ -54,7 +54,7 @@ public:
     bool copy_fp16_to_scene();
     bool readback_to_frame(int frame_w, int frame_h, uint64_t pts_ns, uint64_t frame_id,
                            gcap_frame_t *out);
-    bool export_scene_rgb10(const wchar_t *base_path, bool export_raw, bool export_tiff, bool export_stats, bool export_gigabyte_raw);
+    bool export_scene_rgb10(const wchar_t *base_path, int raw_flags, bool export_tiff, bool export_stats, bool export_gigabyte_raw);
 
     ID3D11Device *d3d_ = nullptr;
     ID3D11DeviceContext *ctx_ = nullptr;

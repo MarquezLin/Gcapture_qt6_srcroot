@@ -242,6 +242,7 @@ extern "C"
         GCAP_EXPORT_STATS           = 1 << 4, /** Text statistics: *.stats.txt. */
         GCAP_EXPORT_PNG             = 1 << 5, /** WIC PNG preview/export image: *.png. */
         GCAP_EXPORT_RAW_GIGABYTE_HEADER = 1 << 6, /** Additional RAW copies with 128-byte GIGABYTE RAW header: *_gigabyte_*.raw. */
+        GCAP_EXPORT_RAW_RGBA8       = 1 << 7, /** Hex-editor-friendly RGBA8 dump: *_rgba8.raw, bytes are R G B A per pixel. */
         GCAP_EXPORT_RAW_ALL         = GCAP_EXPORT_RAW_NATIVE | GCAP_EXPORT_RAW_RGB10_U16 | GCAP_EXPORT_RAW_RGBA16
     } gcap_export_flags_t;
 
@@ -271,10 +272,11 @@ extern "C"
         char fp16_raw_path[512];    /** *_fp16_rgba16f.raw, generated for 10-bit/FP16 scene readback when RAW export is requested. */
         char rgb10_u16_path[512];   /** *_rgb10_u16.raw, generated for 10-bit sources when RAW export is requested. */
         char rgba16_path[512];      /** *_rgba16_expanded.raw, generated for 10-bit sources when RAW export is requested. */
+        char rgba8_path[512];       /** *_rgba8.raw, generated for hex-editor-friendly R8 G8 B8 A8 inspection. */
         char gigabyte_native_raw_path[512]; /** Headered mirror: *_gigabyte_abgr2101010.raw or *_gigabyte_bgra8.raw. */
-        char gigabyte_fp16_raw_path[512];   /** Headered mirror: *_gigabyte_fp16_rgba16f.raw. */
-        char gigabyte_rgb10_u16_path[512];  /** Headered mirror: *_gigabyte_rgb10_u16.raw. */
-        char gigabyte_rgba16_path[512];     /** Headered mirror: *_gigabyte_rgba16_expanded.raw. */
+        char gigabyte_fp16_raw_path[512];   /** Reserved legacy field. Current snapshot export leaves this empty. */
+        char gigabyte_rgb10_u16_path[512];  /** Reserved legacy field. Current snapshot export leaves this empty. */
+        char gigabyte_rgba16_path[512];     /** Reserved legacy field. Current snapshot export leaves this empty. */
         char tiff_path[512];        /** *.tiff when TIFF export is requested. */
         char stats_path[512];       /** *.stats.txt when STATS export is requested. */
         char png_path[512];         /** *.png when PNG export is requested. */

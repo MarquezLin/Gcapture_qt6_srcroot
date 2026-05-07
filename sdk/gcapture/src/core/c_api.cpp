@@ -1028,7 +1028,7 @@ extern "C"
         if (!h || !base_path_utf8 || !*base_path_utf8)
             return GCAP_EINVAL;
         return h->mgr.exportPreviewSceneRgb10(base_path_utf8,
-                                              export_raw != 0,
+                                              export_raw != 0 ? GCAP_EXPORT_RAW_ALL : 0,
                                               export_tiff != 0,
                                               export_stats != 0,
                                               false);
@@ -1056,7 +1056,7 @@ extern "C"
             r->source_bit_depth = rt.negotiated.bit_depth > 0 ? rt.negotiated.bit_depth : rt.signal.bit_depth;
 
         const int flags = desc->flags != 0 ? desc->flags : (GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS | GCAP_EXPORT_PNG);
-        const bool wantRaw = (flags & GCAP_EXPORT_RAW_ALL) != 0;
+        const bool wantRaw = (flags & (GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_RAW_RGBA8)) != 0;
         const bool wantGigabyteRaw = (flags & GCAP_EXPORT_RAW_GIGABYTE_HEADER) != 0;
         const bool wantTiff = (flags & GCAP_EXPORT_TIFF) != 0;
         const bool wantStats = (flags & GCAP_EXPORT_STATS) != 0;
@@ -1066,7 +1066,10 @@ extern "C"
         // If the caller requested only PNG, RAW files are created temporarily and
         // removed after PNG encoding succeeds/fails.
         const bool needRawForPng = wantPng;
-        const gcap_status_t st = h->mgr.exportPreviewSceneRgb10(desc->base_path_utf8, wantRaw || needRawForPng, wantTiff, wantStats, wantGigabyteRaw);
+        int rawFlags = flags & (GCAP_EXPORT_RAW_ALL | GCAP_EXPORT_RAW_RGBA8);
+        if (needRawForPng)
+            rawFlags |= GCAP_EXPORT_RAW_NATIVE;
+        const gcap_status_t st = h->mgr.exportPreviewSceneRgb10(desc->base_path_utf8, rawFlags, wantTiff, wantStats, wantGigabyteRaw);
         if (st != GCAP_OK)
             return st;
 
@@ -1087,16 +1090,39 @@ extern "C"
         {
             if (sourceIs10Bit)
             {
-                copy_path(r->native_raw_path, sizeof(r->native_raw_path), desc->base_path_utf8, "_abgr2101010.raw");
-                copy_path(r->fp16_raw_path, sizeof(r->fp16_raw_path), desc->base_path_utf8, "_fp16_rgba16f.raw");
-                copy_path(r->rgb10_u16_path, sizeof(r->rgb10_u16_path), desc->base_path_utf8, "_rgb10_u16.raw");
-                copy_path(r->rgba16_path, sizeof(r->rgba16_path), desc->base_path_utf8, "_rgba16_expanded.raw");
-                r->generated_flags |= GCAP_EXPORT_RAW_NATIVE | GCAP_EXPORT_RAW_RGB10_U16 | GCAP_EXPORT_RAW_RGBA16;
+                if (flags & GCAP_EXPORT_RAW_NATIVE)
+                {
+                    copy_path(r->native_raw_path, sizeof(r->native_raw_path), desc->base_path_utf8, "_abgr2101010.raw");
+                    r->generated_flags |= GCAP_EXPORT_RAW_NATIVE;
+                }
+                if (flags & GCAP_EXPORT_RAW_RGB10_U16)
+                {
+                    copy_path(r->rgb10_u16_path, sizeof(r->rgb10_u16_path), desc->base_path_utf8, "_rgb10_u16.raw");
+                    r->generated_flags |= GCAP_EXPORT_RAW_RGB10_U16;
+                }
+                if (flags & GCAP_EXPORT_RAW_RGBA16)
+                {
+                    copy_path(r->rgba16_path, sizeof(r->rgba16_path), desc->base_path_utf8, "_rgba16_expanded.raw");
+                    r->generated_flags |= GCAP_EXPORT_RAW_RGBA16;
+                }
+                if (flags & GCAP_EXPORT_RAW_RGBA8)
+                {
+                    copy_path(r->rgba8_path, sizeof(r->rgba8_path), desc->base_path_utf8, "_rgba8.raw");
+                    r->generated_flags |= GCAP_EXPORT_RAW_RGBA8;
+                }
             }
             else
             {
-                copy_path(r->native_raw_path, sizeof(r->native_raw_path), desc->base_path_utf8, "_bgra8.raw");
-                r->generated_flags |= GCAP_EXPORT_RAW_NATIVE;
+                if (flags & GCAP_EXPORT_RAW_NATIVE)
+                {
+                    copy_path(r->native_raw_path, sizeof(r->native_raw_path), desc->base_path_utf8, "_bgra8.raw");
+                    r->generated_flags |= GCAP_EXPORT_RAW_NATIVE;
+                }
+                if (flags & GCAP_EXPORT_RAW_RGBA8)
+                {
+                    copy_path(r->rgba8_path, sizeof(r->rgba8_path), desc->base_path_utf8, "_rgba8.raw");
+                    r->generated_flags |= GCAP_EXPORT_RAW_RGBA8;
+                }
             }
         }
         if (wantGigabyteRaw)
@@ -1104,9 +1130,6 @@ extern "C"
             if (sourceIs10Bit)
             {
                 copy_path(r->gigabyte_native_raw_path, sizeof(r->gigabyte_native_raw_path), desc->base_path_utf8, "_gigabyte_abgr2101010.raw");
-                copy_path(r->gigabyte_fp16_raw_path, sizeof(r->gigabyte_fp16_raw_path), desc->base_path_utf8, "_gigabyte_fp16_rgba16f.raw");
-                copy_path(r->gigabyte_rgb10_u16_path, sizeof(r->gigabyte_rgb10_u16_path), desc->base_path_utf8, "_gigabyte_rgb10_u16.raw");
-                copy_path(r->gigabyte_rgba16_path, sizeof(r->gigabyte_rgba16_path), desc->base_path_utf8, "_gigabyte_rgba16_expanded.raw");
             }
             else
             {
@@ -1143,13 +1166,17 @@ extern "C"
                 copy_path(r->png_path, sizeof(r->png_path), desc->base_path_utf8, ".png");
                 r->generated_flags |= GCAP_EXPORT_PNG;
             }
-            if (!wantRaw)
+            if ((flags & GCAP_EXPORT_RAW_NATIVE) == 0)
             {
                 DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_abgr2101010.raw").c_str());
                 DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_bgra8.raw").c_str());
+            }
+            if (!wantRaw)
+            {
                 DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_fp16_rgba16f.raw").c_str());
                 DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_rgb10_u16.raw").c_str());
                 DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_rgba16_expanded.raw").c_str());
+                DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_rgba8.raw").c_str());
             }
             if (!pngOk)
                 return GCAP_EIO;

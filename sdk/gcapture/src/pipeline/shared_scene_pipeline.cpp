@@ -1743,6 +1743,29 @@ namespace
         return ofs.good();
     }
 
+    static bool ssp_write_rgba8_raw_value(const std::wstring &path, int w, int h, const std::vector<uint8_t> &bgra8)
+    {
+        if (w <= 0 || h <= 0 || bgra8.size() < static_cast<size_t>(w) * static_cast<size_t>(h) * 4u)
+            return false;
+
+        std::vector<uint8_t> rgba8;
+        const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
+        rgba8.resize(pixelCount * 4u);
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            rgba8[i * 4u + 0u] = bgra8[i * 4u + 2u];
+            rgba8[i * 4u + 1u] = bgra8[i * 4u + 1u];
+            rgba8[i * 4u + 2u] = bgra8[i * 4u + 0u];
+            rgba8[i * 4u + 3u] = bgra8[i * 4u + 3u];
+        }
+
+        std::ofstream ofs(std::filesystem::path(path), std::ios::binary);
+        if (!ofs)
+            return false;
+        ofs.write(reinterpret_cast<const char *>(rgba8.data()), static_cast<std::streamsize>(rgba8.size()));
+        return ofs.good();
+    }
+
     static bool ssp_write_abgr2101010_raw_value(const std::wstring &path, int w, int h, const std::vector<uint32_t> &abgr2101010)
     {
         if (w <= 0 || h <= 0 || abgr2101010.size() < static_cast<size_t>(w) * static_cast<size_t>(h))
@@ -1785,7 +1808,7 @@ namespace
         return ofs.good();
     }
 
-    static bool ssp_write_rgb10_stats(const std::wstring &path, int w, int h, const std::vector<uint16_t> &rgb10)
+    static bool ssp_write_rgb10_stats(const std::wstring &path, int w, int h, int sourceBitDepth, const std::vector<uint16_t> &rgb10)
     {
         if (rgb10.empty())
             return false;
@@ -1815,7 +1838,11 @@ namespace
             return false;
         ofs << "Width=" << w << "\n";
         ofs << "Height=" << h << "\n";
-        ofs << "Format=10-bit RAW export from FP16 scene: fp16.rgba16f.raw, rgb10.u16.raw, abgr2101010.raw, rgba16.expanded.raw\n";
+        ofs << "SourceBitDepth=" << sourceBitDepth << "\n";
+        ofs << "Files=_abgr2101010.raw, _gigabyte_abgr2101010.raw, _rgba8.raw, .tiff, .png, .stats.txt\n";
+        ofs << "NativeRAW=_abgr2101010.raw, DXGI R10G10B10A2 layout, little-endian uint32 per pixel\n";
+        ofs << "GigabyteRAW=_gigabyte_abgr2101010.raw, 128-byte ASCII GIGABYTE_RAW header + same native payload\n";
+        ofs << "HexRGBA=_rgba8.raw, R8 G8 B8 A8 byte order, 4 bytes per pixel, no header\n";
         ofs << "R min=" << minV[0] << " max=" << maxV[0] << " unique=" << unique[0] << "\n";
         ofs << "G min=" << minV[1] << " max=" << maxV[1] << " unique=" << unique[1] << "\n";
         ofs << "B min=" << minV[2] << " max=" << maxV[2] << " unique=" << unique[2] << "\n";
@@ -1826,7 +1853,7 @@ namespace
         return ofs.good();
     }
 
-    static bool ssp_write_bgra8_stats(const std::wstring &path, int w, int h, const std::vector<uint8_t> &bgra8)
+    static bool ssp_write_bgra8_stats(const std::wstring &path, int w, int h, int sourceBitDepth, const std::vector<uint8_t> &bgra8)
     {
         if (bgra8.empty())
             return false;
@@ -1856,9 +1883,12 @@ namespace
             return false;
         ofs << "Width=" << w << "\n";
         ofs << "Height=" << h << "\n";
-        ofs << "Format=BGRA8 raw export from FP16 scene: bgra8.raw, B8 G8 R8 A8, 4 bytes per pixel, no header\n";
+        ofs << "SourceBitDepth=" << sourceBitDepth << "\n";
+        ofs << "Files=_bgra8.raw, _gigabyte_bgra8.raw, _rgba8.raw, .tiff, .png, .stats.txt\n";
+        ofs << "NativeRAW=_bgra8.raw, B8 G8 R8 A8 byte order, 4 bytes per pixel, no header\n";
+        ofs << "GigabyteRAW=_gigabyte_bgra8.raw, 128-byte ASCII GIGABYTE_RAW header + same native payload\n";
+        ofs << "HexRGBA=_rgba8.raw, R8 G8 B8 A8 byte order, 4 bytes per pixel, no header\n";
         ofs << "MatchesPreviewSwapchain=DXGI_FORMAT_B8G8R8A8_UNORM\n";
-        ofs << "SourceBitDepth=" << 8 << "\n";
         ofs << "R min=" << static_cast<int>(minV[0]) << " max=" << static_cast<int>(maxV[0]) << " unique=" << unique[0] << "\n";
         ofs << "G min=" << static_cast<int>(minV[1]) << " max=" << static_cast<int>(maxV[1]) << " unique=" << unique[1] << "\n";
         ofs << "B min=" << static_cast<int>(minV[2]) << " max=" << static_cast<int>(maxV[2]) << " unique=" << unique[2] << "\n";
@@ -1969,7 +1999,7 @@ bool SharedScenePipeline::readback_to_frame(int frame_w, int frame_h, uint64_t p
     return true;
 }
 
-bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool export_raw, bool export_tiff, bool export_stats, bool export_gigabyte_raw)
+bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, int raw_flags, bool export_tiff, bool export_stats, bool export_gigabyte_raw)
 {
     if (!base_path || !*base_path || !ctx_ || !rt_scene_stage_fp16_ || !rt_scene_fp16_ || rt_w_ <= 0 || rt_h_ <= 0)
         return false;
@@ -2030,20 +2060,34 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
     }
     ctx_->Unmap(rt_scene_stage_fp16_.Get(), 0);
 
+    const bool exportNativeRaw = (raw_flags & GCAP_EXPORT_RAW_NATIVE) != 0;
+    const bool exportRgb10Raw = (raw_flags & GCAP_EXPORT_RAW_RGB10_U16) != 0;
+    const bool exportRgba16Raw = (raw_flags & GCAP_EXPORT_RAW_RGBA16) != 0;
+    const bool exportRgba8Raw = (raw_flags & GCAP_EXPORT_RAW_RGBA8) != 0;
+    const bool exportFp16Raw = sourceIs10Bit && (raw_flags & GCAP_EXPORT_RAW_ALL) == GCAP_EXPORT_RAW_ALL;
     const std::wstring base(base_path);
     bool ok = true;
-    if (export_raw)
+    if (raw_flags != 0)
     {
         if (sourceIs10Bit)
         {
-            ok = ssp_write_fp16_raw(base + L"_fp16_rgba16f.raw", rt_w_, rt_h_, rgba16f) && ok;
-            ok = ssp_write_rgb10_raw_value(base + L"_rgb10_u16.raw", rt_w_, rt_h_, rgb10) && ok;
-            ok = ssp_write_abgr2101010_raw_value(base + L"_abgr2101010.raw", rt_w_, rt_h_, abgr2101010) && ok;
-            ok = ssp_write_rgba16_expanded_raw(base + L"_rgba16_expanded.raw", rt_w_, rt_h_, rgb10) && ok;
+            if (exportFp16Raw)
+                ok = ssp_write_fp16_raw(base + L"_fp16_rgba16f.raw", rt_w_, rt_h_, rgba16f) && ok;
+            if (exportRgb10Raw)
+                ok = ssp_write_rgb10_raw_value(base + L"_rgb10_u16.raw", rt_w_, rt_h_, rgb10) && ok;
+            if (exportNativeRaw)
+                ok = ssp_write_abgr2101010_raw_value(base + L"_abgr2101010.raw", rt_w_, rt_h_, abgr2101010) && ok;
+            if (exportRgba16Raw)
+                ok = ssp_write_rgba16_expanded_raw(base + L"_rgba16_expanded.raw", rt_w_, rt_h_, rgb10) && ok;
+            if (exportRgba8Raw)
+                ok = ssp_write_rgba8_raw_value(base + L"_rgba8.raw", rt_w_, rt_h_, bgra8) && ok;
         }
         else
         {
-            ok = ssp_write_bgra8_raw_value(base + L"_bgra8.raw", rt_w_, rt_h_, bgra8) && ok;
+            if (exportNativeRaw)
+                ok = ssp_write_bgra8_raw_value(base + L"_bgra8.raw", rt_w_, rt_h_, bgra8) && ok;
+            if (exportRgba8Raw)
+                ok = ssp_write_rgba8_raw_value(base + L"_rgba8.raw", rt_w_, rt_h_, bgra8) && ok;
         }
     }
     if (export_gigabyte_raw)
@@ -2051,10 +2095,7 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
         const int sourceBitDepth = preview_source_bit_depth_ > 0 ? preview_source_bit_depth_ : (sourceIs10Bit ? 10 : 8);
         if (sourceIs10Bit)
         {
-            ok = ssp_write_fp16_gigabyte_raw(base + L"_gigabyte_fp16_rgba16f.raw", rt_w_, rt_h_, sourceBitDepth, rgba16f) && ok;
-            ok = ssp_write_rgb10_gigabyte_raw(base + L"_gigabyte_rgb10_u16.raw", rt_w_, rt_h_, sourceBitDepth, rgb10) && ok;
             ok = ssp_write_abgr2101010_gigabyte_raw(base + L"_gigabyte_abgr2101010.raw", rt_w_, rt_h_, sourceBitDepth, abgr2101010) && ok;
-            ok = ssp_write_rgba16_expanded_gigabyte_raw(base + L"_gigabyte_rgba16_expanded.raw", rt_w_, rt_h_, sourceBitDepth, rgb10) && ok;
         }
         else
         {
@@ -2064,14 +2105,17 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, bool expo
     if (export_tiff)
         ok = ssp_write_rgb16_tiff(base + L".tiff", rt_w_, rt_h_, rgb10) && ok;
     if (export_stats)
+    {
+        const int sourceBitDepth = preview_source_bit_depth_ > 0 ? preview_source_bit_depth_ : (sourceIs10Bit ? 10 : 8);
         ok = sourceIs10Bit
-                 ? (ssp_write_rgb10_stats(base + L".stats.txt", rt_w_, rt_h_, rgb10) && ok)
-                 : (ssp_write_bgra8_stats(base + L".stats.txt", rt_w_, rt_h_, bgra8) && ok);
+                 ? (ssp_write_rgb10_stats(base + L".stats.txt", rt_w_, rt_h_, sourceBitDepth, rgb10) && ok)
+                 : (ssp_write_bgra8_stats(base + L".stats.txt", rt_w_, rt_h_, sourceBitDepth, bgra8) && ok);
+    }
 
     char msg[512] = {};
     std::snprintf(msg, sizeof(msg),
-                  "[SharedScene] export_scene_rgb10 base=%ls size=%dx%d sourceBitDepth=%d exportAs=%s raw=%d gigabyteRaw=%d tiff=%d stats=%d ok=%d",
-                  base_path, rt_w_, rt_h_, preview_source_bit_depth_, sourceIs10Bit ? "abgr2101010" : "bgra8", export_raw ? 1 : 0, export_gigabyte_raw ? 1 : 0, export_tiff ? 1 : 0, export_stats ? 1 : 0, ok ? 1 : 0);
+                  "[SharedScene] export_scene_rgb10 base=%ls size=%dx%d sourceBitDepth=%d exportAs=%s rawFlags=0x%x gigabyteRaw=%d tiff=%d stats=%d ok=%d",
+                  base_path, rt_w_, rt_h_, preview_source_bit_depth_, sourceIs10Bit ? "abgr2101010" : "bgra8", raw_flags, export_gigabyte_raw ? 1 : 0, export_tiff ? 1 : 0, export_stats ? 1 : 0, ok ? 1 : 0);
     ssp_log_text(msg);
     return ok;
 }
