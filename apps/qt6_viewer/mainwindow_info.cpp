@@ -35,8 +35,11 @@ static const char *packetFmtNameInfo(int fmt)
 static QString formatVideoCapDisplay(const gcap_video_cap_t &cap)
 {
     const double fps = (cap.fps_den > 0) ? (double(cap.fps_num) / double(cap.fps_den)) : 0.0;
+    const QString nativeName = cap.subtype_name[0]
+                                   ? QString::fromUtf8(cap.subtype_name)
+                                   : QString::fromLatin1(packetFmtNameInfo(cap.pixfmt));
     QString text = QStringLiteral("%1 %2x%3")
-                       .arg(QString::fromLatin1(packetFmtNameInfo(cap.pixfmt)))
+                       .arg(nativeName)
                        .arg(cap.width)
                        .arg(cap.height);
     if (fps > 0.0)
@@ -117,6 +120,58 @@ void MainWindow::invalidateDeviceCapabilityCache()
     cachedDeviceCapsIndex_ = -1;
     cachedSupportedFormats_.clear();
     cachedPropertyPages_.clear();
+}
+
+void MainWindow::updateCapabilityLabel()
+{
+    if (!ui || !ui->labelinfo1)
+        return;
+
+    ui->labelinfo1->setEnabled(true);
+    ui->labelinfo1->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    ui->labelinfo1->setWordWrap(false);
+
+    // Prefer the active provider's open-graph selectable list. This is the list
+    // actually used by SetFormat retry after SDK filtering/policy. For WDM devices
+    // such as Blackmagic, a separate capability enumeration can disagree with the
+    // active graph and show misleading modes.
+    if (h_)
+    {
+        gcap_runtime_info_t rt{};
+        if (gcap_get_runtime_info(h_, &rt) == GCAP_OK && rt.selectable_caps_inline[0])
+        {
+            const QString inlineText = QString::fromUtf8(rt.selectable_caps_inline);
+            const QString tooltipText = rt.selectable_caps_tooltip[0]
+                                            ? QString::fromUtf8(rt.selectable_caps_tooltip)
+                                            : inlineText;
+            ui->labelinfo1->setText(tr("Caps(Open): %1").arg(inlineText));
+            ui->labelinfo1->setToolTip(tr("Active open-graph selectable modes after SDK filtering/policy:\n%1")
+                                           .arg(tooltipText));
+            return;
+        }
+    }
+
+    ensureDeviceCapabilityCache(currentDeviceIndex());
+
+    QStringList display = cachedSupportedFormats_;
+    display.removeDuplicates();
+
+    if (display.isEmpty())
+    {
+        ui->labelinfo1->setText(tr("Caps: --"));
+        ui->labelinfo1->setToolTip(tr("No capability list available for the selected backend/device."));
+        return;
+    }
+
+    const int maxInline = 6;
+    QStringList inlineItems = display.mid(0, maxInline);
+    QString inlineText = inlineItems.join(QStringLiteral(" | "));
+    if (display.size() > maxInline)
+        inlineText += tr(" | ... +%1 more").arg(display.size() - maxInline);
+
+    ui->labelinfo1->setText(tr("Caps(Enum): %1").arg(inlineText));
+    ui->labelinfo1->setToolTip(tr("Capability list from a separate enumeration query. The active open graph may differ on some drivers:\n%1")
+                                   .arg(display.join(QStringLiteral("\n"))));
 }
 
 
@@ -256,6 +311,7 @@ void MainWindow::refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps)
     captureInfo_.supportedFormats = cachedSupportedFormats_;
     captureInfo_.propertyPages = cachedPropertyPages_;
     lastInfoText_ = formatCaptureDeviceInfo(captureInfo_, avgFps_);
+    updateCapabilityLabel();
 }
 
 void MainWindow::refreshDisplayInfoFromFrame(const QImage &img)

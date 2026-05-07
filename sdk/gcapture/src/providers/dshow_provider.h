@@ -81,6 +81,7 @@ private:
     bool shouldDoSharedReadback(uint64_t ptsNs, uint64_t frameId, bool sharedReady, bool havePreview, bool haveCallback, uint64_t &lastReadbackPtsNs) const;
     int callbackTargetFps() const;
     bool isRawCandidate() const;
+    bool syncActiveFormatFromRawRenderer(const char *reason, bool logChange);
     const char *callbackSourceName(CallbackSource src) const;
     bool rawSinkPlanned() const;
     bool createRenderPipeline();
@@ -120,9 +121,12 @@ private:
     bool signalHasVendorCustomPage_ = false;
     wchar_t signalVendorModule_[260] = {};
     uint64_t lastSignalProbeMs_ = 0;
+    std::string selectableCapsInline_;
+    std::string selectableCapsTooltip_;
 
     std::atomic<bool> running_{false};
     int currentIndex_ = -1;
+    bool blackmagicLikeDevice_ = false;
 
     gcap_profile_t profile_{};
     gcap_on_video_cb vcb_ = nullptr;

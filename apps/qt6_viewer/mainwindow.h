@@ -146,6 +146,7 @@ private:
     void refreshCaptureDeviceProps(bool throttleDeviceProps);
     void ensureDeviceCapabilityCache(int deviceIndex);
     void invalidateDeviceCapabilityCache();
+    void updateCapabilityLabel();
     void refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps);
     void refreshDisplayInfoFromFrame(const QImage &img);
     void refreshDisplayInfoFromCurrentState();

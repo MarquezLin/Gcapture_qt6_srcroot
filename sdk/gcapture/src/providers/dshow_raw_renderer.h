@@ -16,6 +16,7 @@ public:
     void setNegotiated(const GUID &subtype, int width, int height, int fpsNum, int fpsDen);
     bool isSupportedSubtype() const;
     GUID negotiatedFormat() const;
+    bool negotiatedInfo(GUID &subtype, int &width, int &height, int &fpsNum, int &fpsDen) const;
     const char *negotiatedSubtypeName() const;
     static const char *subtypeName(const GUID &g);
 
@@ -36,6 +37,7 @@ private:
     static uint8_t clampByte(int v);
     static void nv12ToArgb(const uint8_t *src, int width, int height, int srcStride, std::vector<uint8_t> &dst, int &dstStride);
     static void yuy2ToArgb(const uint8_t *src, int width, int height, int srcStride, std::vector<uint8_t> &dst, int &dstStride);
+    static void uyvyToArgb(const uint8_t *src, int width, int height, int srcStride, std::vector<uint8_t> &dst, int &dstStride);
     static void y210ToArgb(const uint8_t *src, int width, int height, int srcStride, std::vector<uint8_t> &dst, int &dstStride);
     static void rgb24ToArgb(const uint8_t *src, int width, int height, int srcStride, std::vector<uint8_t> &dst, int &dstStride);
     static void bgraToArgb(const uint8_t *src, int width, int height, int srcStride, std::vector<uint8_t> &dst, int &dstStride);

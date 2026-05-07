@@ -10,6 +10,34 @@
 
 namespace
 {
+    static DWORD custom_make_fourcc(char a, char b, char c, char d)
+    {
+        return (static_cast<DWORD>(static_cast<unsigned char>(a))      ) |
+               (static_cast<DWORD>(static_cast<unsigned char>(b)) <<  8) |
+               (static_cast<DWORD>(static_cast<unsigned char>(c)) << 16) |
+               (static_cast<DWORD>(static_cast<unsigned char>(d)) << 24);
+    }
+
+    static bool custom_is_dshow_fourcc_subtype(const GUID &g, DWORD fourcc)
+    {
+        return g.Data1 == fourcc &&
+               g.Data2 == 0x0000 &&
+               g.Data3 == 0x0010 &&
+               g.Data4[0] == 0x80 &&
+               g.Data4[1] == 0x00 &&
+               g.Data4[2] == 0x00 &&
+               g.Data4[3] == 0xAA &&
+               g.Data4[4] == 0x00 &&
+               g.Data4[5] == 0x38 &&
+               g.Data4[6] == 0x9B &&
+               g.Data4[7] == 0x71;
+    }
+
+    static bool custom_is_hdyc_or_uyvy(const GUID &g)
+    {
+        return custom_is_dshow_fourcc_subtype(g, custom_make_fourcc('H', 'D', 'Y', 'C')) ||
+               custom_is_dshow_fourcc_subtype(g, custom_make_fourcc('U', 'Y', 'V', 'Y'));
+    }
 static void dshow_sink_log(const char *msg)
 {
     gcap_log_debug(msg);
@@ -25,10 +53,6 @@ static void dshow_sink_log_hr(const char *prefix, HRESULT hr)
     sprintf_s(buf, "[DShowRawSink] %s hr=0x%08X (%s)", prefix, static_cast<unsigned>(hr), sys[0] ? sys : "n/a");
     gcap_log_debug(buf);
 }
-}
-
-namespace
-{
 void free_mt(AM_MEDIA_TYPE &mt)
 {
     if (mt.cbFormat && mt.pbFormat)
@@ -232,6 +256,7 @@ STDMETHODIMP DShowCustomSinkPin::QueryAccept(const AM_MEDIA_TYPE *pmt)
     if (!pmt) return E_POINTER;
     if (pmt->majortype != MEDIATYPE_Video) return S_FALSE;
     if (pmt->subtype == MEDIASUBTYPE_NV12 || pmt->subtype == MFVideoFormat_P010 || pmt->subtype == MEDIASUBTYPE_YUY2 || pmt->subtype == MEDIASUBTYPE_Y210 ||
+        custom_is_hdyc_or_uyvy(pmt->subtype) ||
         pmt->subtype == MEDIASUBTYPE_RGB24 || pmt->subtype == MEDIASUBTYPE_RGB32 || pmt->subtype == MEDIASUBTYPE_ARGB32) return S_OK;
     return S_FALSE;
 }

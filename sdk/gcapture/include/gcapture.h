@@ -188,6 +188,7 @@ extern "C"
         int fps_den;
         gcap_pixfmt_t pixfmt;
         int bit_depth;
+        char subtype_name[32];       /** Backend/native media subtype name, e.g. HDYC/UYVY/v210/ARGB32. May be empty. */
     } gcap_video_cap_t;
 
     /** DirectShow property page descriptor. */
@@ -213,6 +214,8 @@ extern "C"
         char input_signal_desc[64];        /** Display field: RGB/YUV, color space, bit depth, may be inferred. */
         char input_signal_note[32];        /** Display field: Inferred / Driver / Unknown. */
         char negotiated_desc[32];          /** Display field: RGB24 / NV12 / YUY2 / ARGB32 / etc. */
+        char selectable_caps_inline[512];  /** Active open-graph selectable modes summary after SDK filtering/policy. */
+        char selectable_caps_tooltip[2048];/** Full active open-graph selectable modes after SDK filtering/policy. */
     } gcap_runtime_info_t;
 
     /** Human-readable recording configuration currently selected by the SDK. */

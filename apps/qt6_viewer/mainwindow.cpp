@@ -75,8 +75,11 @@ namespace
     static QString formatVideoCapDisplay(const gcap_video_cap_t &cap)
     {
         const double fps = (cap.fps_den > 0) ? (double(cap.fps_num) / double(cap.fps_den)) : 0.0;
+        const QString nativeName = cap.subtype_name[0]
+                                       ? QString::fromUtf8(cap.subtype_name)
+                                       : QString::fromLatin1(packetFmtName(cap.pixfmt));
         QString text = QStringLiteral("%1 %2x%3")
-                           .arg(QString::fromLatin1(packetFmtName(cap.pixfmt)))
+                           .arg(nativeName)
                            .arg(cap.width)
                            .arg(cap.height);
         if (fps > 0.0)

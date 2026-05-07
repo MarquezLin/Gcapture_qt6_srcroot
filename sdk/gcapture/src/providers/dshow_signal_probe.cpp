@@ -1134,6 +1134,30 @@ int gcap_pixfmt_bitdepth(gcap_pixfmt_t f)
     }
 }
 
+
+static DWORD gcap_make_fourcc(char a, char b, char c, char d)
+{
+    return (static_cast<DWORD>(static_cast<unsigned char>(a))      ) |
+           (static_cast<DWORD>(static_cast<unsigned char>(b)) <<  8) |
+           (static_cast<DWORD>(static_cast<unsigned char>(c)) << 16) |
+           (static_cast<DWORD>(static_cast<unsigned char>(d)) << 24);
+}
+
+static bool gcap_is_dshow_fourcc_subtype(const GUID &g, DWORD fourcc)
+{
+    return g.Data1 == fourcc &&
+           g.Data2 == 0x0000 &&
+           g.Data3 == 0x0010 &&
+           g.Data4[0] == 0x80 &&
+           g.Data4[1] == 0x00 &&
+           g.Data4[2] == 0x00 &&
+           g.Data4[3] == 0xAA &&
+           g.Data4[4] == 0x00 &&
+           g.Data4[5] == 0x38 &&
+           g.Data4[6] == 0x9B &&
+           g.Data4[7] == 0x71;
+}
+
 const char *gcap_subtype_name(const GUID &sub)
 {
     if (sub == MEDIASUBTYPE_NV12)
@@ -1148,6 +1172,14 @@ const char *gcap_subtype_name(const GUID &sub)
         return "RGB32";
     if (sub == MEDIASUBTYPE_ARGB32)
         return "ARGB32";
+    if (gcap_is_dshow_fourcc_subtype(sub, gcap_make_fourcc('H', 'D', 'Y', 'C')))
+        return "HDYC";
+    if (gcap_is_dshow_fourcc_subtype(sub, gcap_make_fourcc('U', 'Y', 'V', 'Y')))
+        return "UYVY";
+    if (gcap_is_dshow_fourcc_subtype(sub, gcap_make_fourcc('v', '2', '1', '0')))
+        return "v210";
+    if (gcap_is_dshow_fourcc_subtype(sub, gcap_make_fourcc('r', '2', '1', '0')))
+        return "r210";
 
     if (sub == MFVideoFormat_NV12)
         return "NV12";
@@ -1347,6 +1379,7 @@ static bool dshow_extract_video_cap(const AM_MEDIA_TYPE &mt, gcap_video_cap_t &o
     out.fps_den = tmp.fps_den;
     out.pixfmt = gcap_subtype_to_pixfmt(tmp.subtype);
     out.bit_depth = gcap_pixfmt_bitdepth(out.pixfmt);
+    StringCchCopyA(out.subtype_name, ARRAYSIZE(out.subtype_name), gcap_subtype_name(tmp.subtype));
     return (out.width > 0 && out.height > 0);
 }
 
