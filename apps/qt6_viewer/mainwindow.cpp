@@ -10,6 +10,7 @@
 #include <QWindow>
 #include <QScreen>
 #include <QGuiApplication>
+#include <QCoreApplication>
 #include <QDir>
 #include "display_info.h"
 #include <QDialog>
@@ -25,6 +26,7 @@
 #include "tiff_analyzer.h"
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
 #ifdef _WIN32
 #include <dxgi1_2.h>
 #include <wrl.h>
@@ -171,6 +173,160 @@ namespace
             return {};
         return img;
     }
+
+    struct GigabyteRawLoadResult
+    {
+        QImage image;
+        QString format;
+        int sourceBitDepth = 0;
+        QString error;
+    };
+
+    static bool parseGigabyteRawHeader(const QByteArray &header,
+                                       int &width,
+                                       int &height,
+                                       QString &format,
+                                       int &sourceBitDepth,
+                                       QString &error)
+    {
+        const int nul = header.indexOf('\0');
+        const QByteArray textBytes = nul >= 0 ? header.left(nul) : header;
+        const QStringList lines = QString::fromLatin1(textBytes)
+                                      .replace(QLatin1Char('\r'), QLatin1Char('\n'))
+                                      .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        if (lines.isEmpty() || lines.first().trimmed() != QStringLiteral("GIGABYTE_RAW"))
+        {
+            error = QStringLiteral("Not a GIGABYTE_RAW file.");
+            return false;
+        }
+
+        int headerSize = 0;
+        for (int i = 1; i < lines.size(); ++i)
+        {
+            const QString line = lines.at(i).trimmed();
+            const int eq = line.indexOf(QLatin1Char('='));
+            if (eq <= 0)
+                continue;
+            const QString key = line.left(eq).trimmed();
+            const QString value = line.mid(eq + 1).trimmed();
+            if (key == QStringLiteral("header_size"))
+                headerSize = value.toInt();
+            else if (key == QStringLiteral("Width"))
+                width = value.toInt();
+            else if (key == QStringLiteral("Height"))
+                height = value.toInt();
+            else if (key == QStringLiteral("Format"))
+                format = value;
+            else if (key == QStringLiteral("SourceBitDepth"))
+                sourceBitDepth = value.toInt();
+        }
+
+        if (headerSize != GCAP_GIGABYTE_RAW_HEADER_SIZE)
+        {
+            error = QStringLiteral("Unsupported GIGABYTE RAW header size: %1").arg(headerSize);
+            return false;
+        }
+        if (width <= 0 || height <= 0 || format.isEmpty())
+        {
+            error = QStringLiteral("Invalid GIGABYTE RAW metadata.");
+            return false;
+        }
+        return true;
+    }
+
+    static GigabyteRawLoadResult loadGigabyteRawImage(const QString &path)
+    {
+        GigabyteRawLoadResult result;
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly))
+        {
+            result.error = QStringLiteral("Failed to open file.");
+            return result;
+        }
+
+        const QByteArray header = f.read(GCAP_GIGABYTE_RAW_HEADER_SIZE);
+        if (header.size() != GCAP_GIGABYTE_RAW_HEADER_SIZE)
+        {
+            result.error = QStringLiteral("File is too small for a GIGABYTE RAW header.");
+            return result;
+        }
+
+        int width = 0;
+        int height = 0;
+        QString format;
+        int sourceBitDepth = 0;
+        QString error;
+        if (!parseGigabyteRawHeader(header, width, height, format, sourceBitDepth, error))
+        {
+            result.error = error;
+            return result;
+        }
+
+        const qint64 pixelCount = qint64(width) * qint64(height);
+        const qint64 expected = pixelCount * 4;
+        if (pixelCount <= 0 || expected <= 0)
+        {
+            result.error = QStringLiteral("Invalid image dimensions.");
+            return result;
+        }
+
+        const QByteArray payload = f.read(expected);
+        if (payload.size() != expected)
+        {
+            result.error = QStringLiteral("%1 payload is incomplete.").arg(format);
+            return result;
+        }
+
+        if (format == QStringLiteral("BGRA8"))
+        {
+            const QImage wrapped(reinterpret_cast<const uchar *>(payload.constData()),
+                                 width,
+                                 height,
+                                 width * 4,
+                                 QImage::Format_ARGB32);
+            result.image = wrapped.copy();
+        }
+        else if (format == QStringLiteral("ABGR2101010"))
+        {
+            QImage img(width, height, QImage::Format_ARGB32);
+            if (img.isNull())
+            {
+                result.error = QStringLiteral("Failed to allocate image.");
+                return result;
+            }
+
+            const uchar *src = reinterpret_cast<const uchar *>(payload.constData());
+            for (int y = 0; y < height; ++y)
+            {
+                QRgb *dst = reinterpret_cast<QRgb *>(img.scanLine(y));
+                for (int x = 0; x < width; ++x)
+                {
+                    const qint64 i = (qint64(y) * qint64(width) + qint64(x)) * 4;
+                    const quint32 p = quint32(src[i + 0]) |
+                                      (quint32(src[i + 1]) << 8) |
+                                      (quint32(src[i + 2]) << 16) |
+                                      (quint32(src[i + 3]) << 24);
+                    const quint32 r10 = (p >> 0) & 0x3FFu;
+                    const quint32 g10 = (p >> 10) & 0x3FFu;
+                    const quint32 b10 = (p >> 20) & 0x3FFu;
+                    dst[x] = qRgba(int((r10 * 255u + 511u) / 1023u),
+                                   int((g10 * 255u + 511u) / 1023u),
+                                   int((b10 * 255u + 511u) / 1023u),
+                                   255);
+                }
+            }
+            result.image = img;
+        }
+        else
+        {
+            result.error = QStringLiteral("Unsupported GIGABYTE RAW format: %1").arg(format);
+            return result;
+        }
+
+        result.format = format;
+        result.sourceBitDepth = sourceBitDepth;
+        return result;
+    }
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -200,12 +356,18 @@ MainWindow::~MainWindow()
         g_mainWindow = nullptr;
     }
     delete tiffAnalysisDlg_;
+    delete rawPreviewWindow_;
     delete previewWindow_;
     delete ui;
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (rawPreviewWindow_)
+    {
+        rawPreviewWindow_->close();
+    }
+
     if (previewWindow_)
     {
         previewWindow_->close();
@@ -911,6 +1073,8 @@ void MainWindow::setupConnections()
         connect(ui->actionOpenLogFolder, &QAction::triggered, this, &MainWindow::onOpenLogFolder);
     if (ui->actionOpenSnapshot)
         connect(ui->actionOpenSnapshot, &QAction::triggered, this, &MainWindow::onOpenSnapshot);
+    if (ui->actionOpenGigabyteRaw)
+        connect(ui->actionOpenGigabyteRaw, &QAction::triggered, this, &MainWindow::onOpenGigabyteRaw);
     if (ui->actionInputInfo)
         connect(ui->actionInputInfo, &QAction::triggered, this, &MainWindow::onShowInputInfo);
     if (ui->actionDisplayInfo)
@@ -930,6 +1094,49 @@ void MainWindow::logStartupInfo()
     const QString logPath = qApp ? qApp->property("logPath").toString() : QString();
     if (!logPath.isEmpty())
         MainWindow::postLog(QStringLiteral("Log file: %1").arg(logPath));
+}
+
+void MainWindow::onOpenGigabyteRaw()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        tr("Open GIGABYTE RAW"),
+        QCoreApplication::applicationDirPath() + "/snapshots",
+        tr("GIGABYTE RAW (*.raw);;All Files (*.*)"));
+    if (path.isEmpty())
+        return;
+
+    const GigabyteRawLoadResult loaded = loadGigabyteRawImage(path);
+    if (loaded.image.isNull())
+    {
+        QMessageBox::warning(this,
+                             tr("Open GIGABYTE RAW"),
+                             tr("Failed to load GIGABYTE RAW:\n%1\n\n%2").arg(path, loaded.error));
+        return;
+    }
+
+    if (!rawPreviewWindow_)
+    {
+        rawPreviewWindow_ = new previewwindow();
+        rawPreviewWindow_->setWindowTitle(QStringLiteral("GIGABYTE RAW Preview"));
+        rawPreviewWindow_->resize(1280, 720);
+    }
+
+    rawPreviewWindow_->show();
+    rawPreviewWindow_->resizeToSourceContent(loaded.image.width(), loaded.image.height());
+    rawPreviewWindow_->setImportedFrame(loaded.image);
+    rawPreviewWindow_->raise();
+    rawPreviewWindow_->activateWindow();
+
+    const QString fileName = QFileInfo(path).fileName();
+    MainWindow::postLog(QStringLiteral("[GIGABYTE_RAW] loaded %1 format=%2 sourceBitDepth=%3 size=%4x%5")
+                            .arg(fileName,
+                                 loaded.format,
+                                 QString::number(loaded.sourceBitDepth),
+                                 QString::number(loaded.image.width()),
+                                 QString::number(loaded.image.height())));
+    if (ui->statusbar)
+        ui->statusbar->showMessage(QStringLiteral("Loaded GIGABYTE RAW: %1").arg(fileName), 6000);
 }
 
 void MainWindow::postLog(const QString &line, bool isError)

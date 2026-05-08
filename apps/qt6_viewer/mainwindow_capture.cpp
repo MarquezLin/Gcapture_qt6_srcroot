@@ -66,7 +66,6 @@ void MainWindow::resetRuntimeTracking()
     lastPacketCallbackPtsNs_ = 0;
     framePacketLogCount_ = 0;
     ++framePacketSessionId_;
-    lastPreviewPushMs_ = 0;
     initialPreviewSizeApplied_ = false;
 }
 
@@ -240,6 +239,7 @@ void MainWindow::onStart()
         ui->statusbar->showMessage(QStringLiteral("Starting..."));
 
     setupPreviewWindow();
+    previewWindow_->clearFrame();
     previewWindow_->show();
     previewWindow_->raise();
     previewWindow_->activateWindow();

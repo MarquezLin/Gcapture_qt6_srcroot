@@ -136,6 +136,7 @@
     <addaction name="actionOpenRecordFolder"/>
     <addaction name="actionOpenLogFolder"/>
     <addaction name="actionOpenSnapshot"/>
+    <addaction name="actionOpenGigabyteRaw"/>
     <addaction name="actionOpenTiffAnalyzer"/>
    </widget>
    <addaction name="menuView"/>
@@ -149,6 +150,14 @@
    </property>
    <property name="text">
     <string>Open TIFF Analyzer...</string>
+   </property>
+  </action>
+  <action name="actionOpenGigabyteRaw">
+   <property name="enabled">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Open GIGABYTE RAW...</string>
    </property>
   </action>
   <action name="actionDebugLog">

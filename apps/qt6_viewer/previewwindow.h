@@ -5,14 +5,13 @@
 #include <QCloseEvent>
 #include <QImage>
 #include <QSize>
-#include "d3dpreviewwidget.h"
+
+class QLabel;
 
 namespace Ui
 {
     class previewwindow;
 }
-
-class d3dpreviewwidget;
 
 class previewwindow : public QWidget
 {
@@ -22,6 +21,7 @@ public:
     explicit previewwindow(QWidget *parent = nullptr);
     ~previewwindow();
     void setFrame(const QImage &img);
+    void setImportedFrame(const QImage &img);
     void clearFrame();
 
     // Resize the preview window once so the native preview host roughly matches
@@ -33,10 +33,14 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
+    void updateImportedPixmap();
+
     Ui::previewwindow *ui;
-    d3dpreviewwidget *previewWidget_ = nullptr;
+    QLabel *importedImageLabel_ = nullptr;
+    QImage importedImage_;
 };
 
 #endif // PREVIEWWINDOW_H

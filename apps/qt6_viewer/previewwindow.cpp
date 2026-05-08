@@ -5,6 +5,10 @@
 #include <QScreen>
 #include <QSize>
 #include <QRect>
+#include <QGridLayout>
+#include <QLabel>
+#include <QPixmap>
+#include <QResizeEvent>
 
 previewwindow::previewwindow(QWidget *parent)
     : QWidget(parent), ui(new Ui::previewwindow)
@@ -26,8 +30,12 @@ void *previewwindow::previewHwnd() const
 
 void previewwindow::clearFrame()
 {
-    if (previewWidget_)
-        previewWidget_->clearFrame();
+    if (importedImageLabel_)
+    {
+        importedImageLabel_->clear();
+        importedImageLabel_->hide();
+    }
+    importedImage_ = QImage();
 }
 
 QSize previewwindow::resizeToSourceContent(int sourceWidth, int sourceHeight)
@@ -63,8 +71,49 @@ QSize previewwindow::resizeToSourceContent(int sourceWidth, int sourceHeight)
 
 void previewwindow::setFrame(const QImage &img)
 {
-    if (previewWidget_)
-        previewWidget_->setFrame(img);
+    Q_UNUSED(img);
+}
+
+void previewwindow::setImportedFrame(const QImage &img)
+{
+    if (img.isNull() || !ui || !ui->previewHost)
+        return;
+
+    if (!importedImageLabel_)
+    {
+        importedImageLabel_ = new QLabel(ui->previewHost);
+        importedImageLabel_->setAlignment(Qt::AlignCenter);
+        importedImageLabel_->setAutoFillBackground(true);
+
+        auto *hostLayout = new QGridLayout(ui->previewHost);
+        hostLayout->setContentsMargins(0, 0, 0, 0);
+        hostLayout->setSpacing(0);
+        hostLayout->addWidget(importedImageLabel_, 0, 0);
+    }
+
+    importedImage_ = img;
+    updateImportedPixmap();
+    importedImageLabel_->show();
+    importedImageLabel_->raise();
+}
+
+void previewwindow::updateImportedPixmap()
+{
+    if (!importedImageLabel_ || importedImage_.isNull() || !ui || !ui->previewHost)
+        return;
+
+    const QSize targetSize = ui->previewHost->size();
+    if (targetSize.width() <= 0 || targetSize.height() <= 0)
+        return;
+
+    const QImage scaled = importedImage_.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    importedImageLabel_->setPixmap(QPixmap::fromImage(scaled));
+}
+
+void previewwindow::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    updateImportedPixmap();
 }
 
 void previewwindow::closeEvent(QCloseEvent *event)

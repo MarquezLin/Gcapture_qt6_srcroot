@@ -161,13 +161,8 @@ bool MainWindow::saveSceneExports(const QString &basePath, gcap_snapshot_export_
 void MainWindow::onFrameArrived(const QImage &img)
 {
     lastFrameImage_ = img;
-
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    if (previewWindow_ && previewWindow_->isVisible() && (lastPreviewPushMs_ == 0 || (nowMs - lastPreviewPushMs_) >= 33))
-    {
-        previewWindow_->setFrame(img);
-        lastPreviewPushMs_ = nowMs;
-    }
+    if (!img.isNull())
+        applyInitialPreviewSizeFromSource(img.width(), img.height());
 }
 
 

@@ -56,6 +56,7 @@ private slots:
     void onOpenLogFolder();
     void onOpenRecordFolder();
     void onOpenSnapshot();
+    void onOpenGigabyteRaw();
     void onShowInputInfo();
     void onShowDisplayInfo();
     void onSnapshot();
@@ -113,11 +114,11 @@ private:
     CaptureDeviceInfo captureInfo_;
     DisplayOutputInfo displayInfo_;
     previewwindow *previewWindow_ = nullptr;
+    previewwindow *rawPreviewWindow_ = nullptr;
     class TiffAnalysisDialog *tiffAnalysisDlg_ = nullptr;
     TiffBitDepthReport lastTiffReport_{};
 
     qint64 lastPropsQueryMs_ = 0;
-    qint64 lastPreviewPushMs_ = 0;
     int cachedDeviceCapsBackend_ = -1;
     int cachedDeviceCapsIndex_ = -1;
     QStringList cachedSupportedFormats_;
