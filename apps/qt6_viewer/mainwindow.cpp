@@ -822,10 +822,12 @@ void MainWindow::notifyPixelFormatEnumerationFailure(int backend)
 
     QString title = QStringLiteral("Pixel Format");
     QString message;
+    bool showDialog = true;
     switch (backend)
     {
     case GCAP_BACKEND_DSHOW:
-        message = QStringLiteral("DirectShow format enumeration failed for this device.\nPlease check the driver or device status");
+        message = QStringLiteral("DirectShow format enumeration failed; keeping Format: Auto.");
+        showDialog = false;
         break;
     case GCAP_BACKEND_WINMF_CPU:
     case GCAP_BACKEND_WINMF_GPU:
@@ -840,7 +842,16 @@ void MainWindow::notifyPixelFormatEnumerationFailure(int backend)
         return;
 
     lastPixelFormatWarningKey_ = warningKey;
-    QMessageBox::warning(this, title, message);
+    if (showDialog)
+    {
+        QMessageBox::warning(this, title, message);
+    }
+    else
+    {
+        MainWindow::postLog(QStringLiteral("[PixelFormat] %1").arg(message), true);
+        if (ui->statusbar)
+            ui->statusbar->showMessage(message, 6000);
+    }
 }
 
 void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
@@ -1081,8 +1092,6 @@ void MainWindow::setupConnections()
         connect(ui->actionDisplayInfo, &QAction::triggered, this, &MainWindow::onShowDisplayInfo);
     if (ui->btnSnapshot)
         connect(ui->btnSnapshot, &QPushButton::clicked, this, &MainWindow::onSnapshot);
-    if (ui->actionOpenVendorPropertyPageTest)
-        connect(ui->actionOpenVendorPropertyPageTest, &QAction::triggered, this, &MainWindow::onOpenVendorPropertyPageTest);
     if (ui->btnOpenTiff)
         connect(ui->btnOpenTiff, &QPushButton::clicked, this, &MainWindow::onOpenTiffAnalyze);
     if (ui->actionOpenTiffAnalyzer)

@@ -60,7 +60,6 @@ private slots:
     void onShowInputInfo();
     void onShowDisplayInfo();
     void onSnapshot();
-    void onOpenVendorPropertyPageTest();
     void onOpenTiffAnalyze();
 
     void on_btnPreview_clicked();

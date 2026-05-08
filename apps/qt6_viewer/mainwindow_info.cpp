@@ -425,30 +425,6 @@ void MainWindow::onShowInputInfo()
     showAndActivateDialog(infoDlg_);
 }
 
-void MainWindow::onOpenVendorPropertyPageTest()
-{
-#ifdef _WIN32
-    const int devIndex = currentDeviceIndex();
-    MainWindow::postLog(QStringLiteral("[VendorPageTest] begin devIndex=%1").arg(devIndex));
-
-    const bool ok = (gcap_open_vendor_property_page(devIndex) != 0);
-    MainWindow::postLog(QStringLiteral("[VendorPageTest] launch result=%1 devIndex=%2")
-                            .arg(ok ? QStringLiteral("STARTED") : QStringLiteral("FAIL"))
-                            .arg(devIndex),
-                        !ok);
-    if (!ok)
-    {
-        QMessageBox::warning(this,
-                             tr("Vendor Property Page"),
-                             tr("Open Vendor Property Page failed.\nPlease check debug log."));
-    }
-#else
-    QMessageBox::information(this,
-                             tr("Vendor Property Page"),
-                             tr("This test is only available on Windows."));
-#endif
-}
-
 void MainWindow::onShowDisplayInfo()
 {
     ensureDisplayInfoDialog();

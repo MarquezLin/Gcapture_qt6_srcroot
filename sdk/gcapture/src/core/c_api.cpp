@@ -1097,18 +1097,13 @@ extern "C"
                 }
                 if (flags & GCAP_EXPORT_RAW_RGB10_U16)
                 {
-                    copy_path(r->rgb10_u16_path, sizeof(r->rgb10_u16_path), desc->base_path_utf8, "_rgb10_u16.raw");
+                    copy_path(r->rgb10_u16_path, sizeof(r->rgb10_u16_path), desc->base_path_utf8, "_rgb10.raw");
                     r->generated_flags |= GCAP_EXPORT_RAW_RGB10_U16;
                 }
                 if (flags & GCAP_EXPORT_RAW_RGBA16)
                 {
                     copy_path(r->rgba16_path, sizeof(r->rgba16_path), desc->base_path_utf8, "_rgba16_expanded.raw");
                     r->generated_flags |= GCAP_EXPORT_RAW_RGBA16;
-                }
-                if (flags & GCAP_EXPORT_RAW_RGBA8)
-                {
-                    copy_path(r->rgba8_path, sizeof(r->rgba8_path), desc->base_path_utf8, "_rgba8.raw");
-                    r->generated_flags |= GCAP_EXPORT_RAW_RGBA8;
                 }
             }
             else
@@ -1174,6 +1169,7 @@ extern "C"
             if (!wantRaw)
             {
                 DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_fp16_rgba16f.raw").c_str());
+                DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_rgb10.raw").c_str());
                 DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_rgb10_u16.raw").c_str());
                 DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_rgba16_expanded.raw").c_str());
                 DeleteFileW(wide_append_suffix(desc->base_path_utf8, L"_rgba8.raw").c_str());

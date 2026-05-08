@@ -63,7 +63,7 @@
     <item row="1" column="4">
      <widget class="QPushButton" name="btnRecord">
       <property name="enabled">
-       <bool>true</bool>
+       <bool>false</bool>
       </property>
       <property name="text">
        <string>Record</string>
@@ -73,7 +73,7 @@
     <item row="0" column="5">
      <widget class="QPushButton" name="btnOpenTiff">
       <property name="enabled">
-       <bool>true</bool>
+       <bool>false</bool>
       </property>
       <property name="text">
        <string>Open TIFF</string>
@@ -123,12 +123,6 @@
     <addaction name="actionDisplayInfo"/>
     <addaction name="actionProcAmp"/>
    </widget>
-   <widget class="QMenu" name="menuDebug">
-    <property name="title">
-     <string>Debug</string>
-    </property>
-    <addaction name="actionOpenVendorPropertyPageTest"/>
-   </widget>
    <widget class="QMenu" name="menuOpen">
     <property name="title">
      <string>Open</string>
@@ -141,12 +135,11 @@
    </widget>
    <addaction name="menuView"/>
    <addaction name="menuOpen"/>
-   <addaction name="menuDebug"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <action name="actionOpenTiffAnalyzer">
    <property name="enabled">
-    <bool>true</bool>
+    <bool>false</bool>
    </property>
    <property name="text">
     <string>Open TIFF Analyzer...</string>
@@ -193,11 +186,6 @@
   <action name="actionOpenRecordFolder">
    <property name="text">
     <string>Record folder</string>
-   </property>
-  </action>
-  <action name="actionOpenVendorPropertyPageTest">
-   <property name="text">
-    <string>Open Vendor Property Page (Test)</string>
    </property>
   </action>
  </widget>

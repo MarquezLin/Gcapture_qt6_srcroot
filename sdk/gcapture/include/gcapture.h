@@ -236,13 +236,13 @@ extern "C"
     typedef enum
     {
         GCAP_EXPORT_RAW_NATIVE      = 1 << 0, /** Native readback RAW: 10-bit source -> *_abgr2101010.raw; 8-bit source -> *_bgra8.raw. */
-        GCAP_EXPORT_RAW_RGB10_U16   = 1 << 1, /** 10-bit RGB values stored in uint16 containers: *_rgb10_u16.raw. */
+        GCAP_EXPORT_RAW_RGB10_U16   = 1 << 1, /** 10-bit RGB values stored in uint16 containers: *_rgb10.raw. */
         GCAP_EXPORT_RAW_RGBA16      = 1 << 2, /** 10-bit values expanded to 16-bit RGBA: *_rgba16_expanded.raw. */
         GCAP_EXPORT_TIFF            = 1 << 3, /** WIC TIFF export: *.tiff. */
         GCAP_EXPORT_STATS           = 1 << 4, /** Text statistics: *.stats.txt. */
         GCAP_EXPORT_PNG             = 1 << 5, /** WIC PNG preview/export image: *.png. */
         GCAP_EXPORT_RAW_GIGABYTE_HEADER = 1 << 6, /** Additional RAW copies with 128-byte GIGABYTE RAW header: *_gigabyte_*.raw. */
-        GCAP_EXPORT_RAW_RGBA8       = 1 << 7, /** Hex-editor-friendly RGBA8 dump: *_rgba8.raw, bytes are R G B A per pixel. */
+        GCAP_EXPORT_RAW_RGBA8       = 1 << 7, /** 8-bit hex-editor-friendly RGBA dump: *_rgba8.raw, bytes are R G B A per pixel. */
         GCAP_EXPORT_RAW_ALL         = GCAP_EXPORT_RAW_NATIVE | GCAP_EXPORT_RAW_RGB10_U16 | GCAP_EXPORT_RAW_RGBA16
     } gcap_export_flags_t;
 
@@ -270,9 +270,9 @@ extern "C"
     {
         char native_raw_path[512];  /** *_abgr2101010.raw for 10-bit sources, or *_bgra8.raw for 8-bit sources. */
         char fp16_raw_path[512];    /** *_fp16_rgba16f.raw, generated for 10-bit/FP16 scene readback when RAW export is requested. */
-        char rgb10_u16_path[512];   /** *_rgb10_u16.raw, generated for 10-bit sources when RAW export is requested. */
+        char rgb10_u16_path[512];   /** *_rgb10.raw, generated for 10-bit sources when RGB10 RAW export is requested. */
         char rgba16_path[512];      /** *_rgba16_expanded.raw, generated for 10-bit sources when RAW export is requested. */
-        char rgba8_path[512];       /** *_rgba8.raw, generated for hex-editor-friendly R8 G8 B8 A8 inspection. */
+        char rgba8_path[512];       /** *_rgba8.raw, generated for 8-bit hex-editor-friendly R8 G8 B8 A8 inspection. */
         char gigabyte_native_raw_path[512]; /** Headered mirror: *_gigabyte_abgr2101010.raw or *_gigabyte_bgra8.raw. */
         char gigabyte_fp16_raw_path[512];   /** Reserved legacy field. Current snapshot export leaves this empty. */
         char gigabyte_rgb10_u16_path[512];  /** Reserved legacy field. Current snapshot export leaves this empty. */
@@ -649,7 +649,7 @@ extern "C"
      *     10-bit source RAW:
      *       C:/cap/snapshot_001_abgr2101010.raw
      *       C:/cap/snapshot_001_fp16_rgba16f.raw
-     *       C:/cap/snapshot_001_rgb10_u16.raw
+     *       C:/cap/snapshot_001_rgb10.raw
      *       C:/cap/snapshot_001_rgba16_expanded.raw
      *     8-bit source RAW:
      *       C:/cap/snapshot_001_bgra8.raw

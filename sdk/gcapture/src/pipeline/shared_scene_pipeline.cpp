@@ -1839,10 +1839,10 @@ namespace
         ofs << "Width=" << w << "\n";
         ofs << "Height=" << h << "\n";
         ofs << "SourceBitDepth=" << sourceBitDepth << "\n";
-        ofs << "Files=_abgr2101010.raw, _gigabyte_abgr2101010.raw, _rgba8.raw, .tiff, .png, .stats.txt\n";
+        ofs << "Files=_abgr2101010.raw, _gigabyte_abgr2101010.raw, _rgb10.raw, .tiff, .png, .stats.txt\n";
         ofs << "NativeRAW=_abgr2101010.raw, DXGI R10G10B10A2 layout, little-endian uint32 per pixel\n";
         ofs << "GigabyteRAW=_gigabyte_abgr2101010.raw, 128-byte ASCII GIGABYTE_RAW header + same native payload\n";
-        ofs << "HexRGBA=_rgba8.raw, R8 G8 B8 A8 byte order, 4 bytes per pixel, no header\n";
+        ofs << "HexRGB10=_rgb10.raw, little-endian uint16 R G B values per pixel, valid range 0..1023, no header\n";
         ofs << "R min=" << minV[0] << " max=" << maxV[0] << " unique=" << unique[0] << "\n";
         ofs << "G min=" << minV[1] << " max=" << maxV[1] << " unique=" << unique[1] << "\n";
         ofs << "B min=" << minV[2] << " max=" << maxV[2] << " unique=" << unique[2] << "\n";
@@ -2074,13 +2074,11 @@ bool SharedScenePipeline::export_scene_rgb10(const wchar_t *base_path, int raw_f
             if (exportFp16Raw)
                 ok = ssp_write_fp16_raw(base + L"_fp16_rgba16f.raw", rt_w_, rt_h_, rgba16f) && ok;
             if (exportRgb10Raw)
-                ok = ssp_write_rgb10_raw_value(base + L"_rgb10_u16.raw", rt_w_, rt_h_, rgb10) && ok;
+                ok = ssp_write_rgb10_raw_value(base + L"_rgb10.raw", rt_w_, rt_h_, rgb10) && ok;
             if (exportNativeRaw)
                 ok = ssp_write_abgr2101010_raw_value(base + L"_abgr2101010.raw", rt_w_, rt_h_, abgr2101010) && ok;
             if (exportRgba16Raw)
                 ok = ssp_write_rgba16_expanded_raw(base + L"_rgba16_expanded.raw", rt_w_, rt_h_, rgb10) && ok;
-            if (exportRgba8Raw)
-                ok = ssp_write_rgba8_raw_value(base + L"_rgba8.raw", rt_w_, rt_h_, bgra8) && ok;
         }
         else
         {
