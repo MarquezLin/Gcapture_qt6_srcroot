@@ -1,4 +1,8 @@
-project(gcapture LANGUAGES CXX)
+if (NOT DEFINED GCAPTURE_SDK_VERSION)
+  set(GCAPTURE_SDK_VERSION "1.0.0" CACHE STRING "gcapture SDK version")
+endif()
+
+project(gcapture VERSION ${GCAPTURE_SDK_VERSION} LANGUAGES CXX)
 
 add_library(gcapture SHARED
     src/core/capture_manager.cpp
@@ -30,6 +34,10 @@ set_target_properties(gcapture PROPERTIES
 target_include_directories(gcapture
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_compile_definitions(gcapture PRIVATE
+    GCAPTURE_SDK_VERSION="${GCAPTURE_SDK_VERSION}"
 )
 
 # Optional FFmpeg recorder support for DShow recording.

@@ -1,9 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(win_capture_sdk LANGUAGES CXX)
+project(win_capture_sdk VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(GCAPTURE_SDK_VERSION "1.0.0" CACHE STRING "gcapture SDK version")
+set(QT6_VIEWER_VERSION "1.0.0" CACHE STRING "Qt viewer application version")
 
 # Qt auto tools (moc/uic/rcc) - safe to enable globally
 set(CMAKE_AUTOMOC ON)

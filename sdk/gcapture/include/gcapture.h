@@ -724,6 +724,9 @@ extern "C"
     /** Return stable SDK pixel format display name. Never returns null. */
     GCAP_API const char *gcap_pixfmt_name(gcap_pixfmt_t fmt);
 
+    /** Return gcapture SDK version string, for example "1.0.0". Never returns null. */
+    GCAP_API const char *gcap_version_string(void);
+
     /** Return nominal bit depth for a pixel format, or 0 if unknown/unsupported. */
     GCAP_API int gcap_pixfmt_bit_depth(gcap_pixfmt_t fmt);
 

@@ -35,6 +35,10 @@ using Microsoft::WRL::ComPtr;
 
 static MainWindow *g_mainWindow = nullptr;
 
+#ifndef QT6_VIEWER_VERSION
+#define QT6_VIEWER_VERSION "1.0.0"
+#endif
+
 static void sdkLogCallback(gcap_log_level_t level, const char *message_utf8, void *user)
 {
     Q_UNUSED(user);
@@ -333,6 +337,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    setWindowTitle(QStringLiteral("Gigabyte v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
 
     setupRuntimeStatusTimer();
     setupDebugDock();
@@ -1100,6 +1105,9 @@ void MainWindow::setupConnections()
 
 void MainWindow::logStartupInfo()
 {
+    MainWindow::postLog(QStringLiteral("Viewer version: %1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
+    MainWindow::postLog(QStringLiteral("gcapture SDK version: %1").arg(QString::fromUtf8(gcap_version_string())));
+
     const QString logPath = qApp ? qApp->property("logPath").toString() : QString();
     if (!logPath.isEmpty())
         MainWindow::postLog(QStringLiteral("Log file: %1").arg(logPath));

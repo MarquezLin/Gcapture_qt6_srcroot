@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(qt6_viewer VERSION 0.1 LANGUAGES CXX)
+if (NOT DEFINED QT6_VIEWER_VERSION)
+  set(QT6_VIEWER_VERSION "1.0.0" CACHE STRING "Qt viewer application version")
+endif()
+
+project(qt6_viewer VERSION ${QT6_VIEWER_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -69,6 +73,10 @@ target_include_directories(qt6_viewer PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/info
   ${CMAKE_SOURCE_DIR}/sdk/gcapture/include
+)
+
+target_compile_definitions(qt6_viewer PRIVATE
+  QT6_VIEWER_VERSION="${QT6_VIEWER_VERSION}"
 )
 
 # CaptureSDK (Windows only): header-only include + copy DLL next to exe

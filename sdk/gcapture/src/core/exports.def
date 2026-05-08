@@ -37,6 +37,7 @@ EXPORTS
     gcap_set_frame_packet_callback
     gcap_set_preview
     gcap_pixfmt_name
+    gcap_version_string
     gcap_pixfmt_bit_depth
     gcap_pixfmt_is_10bit
     gcap_pixfmt_is_yuv

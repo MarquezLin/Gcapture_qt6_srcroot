@@ -19,6 +19,10 @@
 #include "../providers/dshow_signal_probe.h"
 #include "../providers/winmf_provider.h"
 
+#ifndef GCAPTURE_SDK_VERSION
+#define GCAPTURE_SDK_VERSION "1.0.0"
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #include <wrl/client.h>
@@ -263,6 +267,11 @@ extern "C"
         case GCAP_FMT_R210: return "R210";
         default: return "UNKNOWN";
         }
+    }
+
+    const char *gcap_version_string(void)
+    {
+        return GCAPTURE_SDK_VERSION;
     }
 
     int gcap_pixfmt_bit_depth(gcap_pixfmt_t fmt)
