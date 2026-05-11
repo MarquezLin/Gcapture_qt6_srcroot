@@ -12,24 +12,24 @@
 
 namespace
 {
-static const char *packetFmtNameFrame(int fmt)
-{
-    switch (fmt)
+    static const char *packetFmtNameFrame(int fmt)
     {
-    case GCAP_FMT_NV12:
-        return "NV12";
-    case GCAP_FMT_P010:
-        return "P010";
-    case GCAP_FMT_YUY2:
-        return "YUY2";
-    case GCAP_FMT_Y210:
-        return "Y210";
-    case GCAP_FMT_ARGB:
-        return "ARGB";
-    default:
-        return "UNKNOWN";
+        switch (fmt)
+        {
+        case GCAP_FMT_NV12:
+            return "NV12";
+        case GCAP_FMT_P010:
+            return "P010";
+        case GCAP_FMT_YUY2:
+            return "YUY2";
+        case GCAP_FMT_Y210:
+            return "Y210";
+        case GCAP_FMT_ARGB:
+            return "ARGB";
+        default:
+            return "UNKNOWN";
+        }
     }
-}
 } // namespace
 
 void MainWindow::applyInitialPreviewSizeFromSource(int width, int height)
@@ -148,7 +148,7 @@ bool MainWindow::saveSceneExports(const QString &basePath, gcap_snapshot_export_
     if (!h_ || basePath.isEmpty() || !result)
         return false;
 
-    constexpr bool kSnapshotTiffExportEnabled = false;
+    constexpr bool kSnapshotTiffExportEnabled = true;
 
     const QByteArray baseUtf8 = QDir::toNativeSeparators(basePath).toUtf8();
     gcap_snapshot_export_desc_t desc{};
@@ -168,8 +168,6 @@ void MainWindow::onFrameArrived(const QImage &img)
     if (!img.isNull())
         applyInitialPreviewSizeFromSource(img.width(), img.height());
 }
-
-
 
 void MainWindow::onSnapshot()
 {
