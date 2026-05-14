@@ -58,7 +58,7 @@ echo ============================================================
 
 copy /y "%BIN_DIR%\qt6_viewer.exe" "%OUT_DIR%\" >nul
 
-for %%F in (gcapture.dll gdisplay.dll CaptureSDK.dll) do (
+for %%F in (gcapture.dll gdisplay.dll gvendor.dll) do (
     if exist "%BIN_DIR%\%%F" (
         echo Copy %%F
         copy /y "%BIN_DIR%\%%F" "%OUT_DIR%\" >nul

@@ -71,7 +71,7 @@ QSize previewwindow::resizeToSourceContent(int sourceWidth, int sourceHeight)
 
 void previewwindow::setFrame(const QImage &img)
 {
-    Q_UNUSED(img);
+    setImportedFrame(img);
 }
 
 void previewwindow::setImportedFrame(const QImage &img)

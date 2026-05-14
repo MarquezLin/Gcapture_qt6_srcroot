@@ -743,11 +743,11 @@ void MainWindow::setupBackendControls()
     ui->comboBackend->addItem("WinMF CPU", 0);
 
 #ifdef _WIN32
-    ui->comboBackend->addItem("CaptureSDK", 100);
-    capSdk_ = new CaptureSdkSource(this);
-    connect(capSdk_, &CaptureSdkSource::frameReady, this, &MainWindow::onFrameArrived, Qt::QueuedConnection);
-    connect(capSdk_, &CaptureSdkSource::errorOccurred, this, [this](const QString &m)
-            { MainWindow::postLog(QStringLiteral("[CaptureSDK] %1").arg(m), true); });
+    ui->comboBackend->addItem("GVendor KS", 100);
+    gVendor_ = new GVendorSource(this);
+    connect(gVendor_, &GVendorSource::frameReady, this, &MainWindow::onFrameArrived, Qt::QueuedConnection);
+    connect(gVendor_, &GVendorSource::errorOccurred, this, [this](const QString &m)
+            { MainWindow::postLog(QStringLiteral("[GVendor] %1").arg(m), true); });
 #endif
 
     const int dsIndex = ui->comboBackend->findData(2);
@@ -900,6 +900,21 @@ void MainWindow::initializeDeviceList()
     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
     const QString previousDeviceName = ui->comboDevice->currentText();
 
+    if (backend == 100)
+    {
+        const QSignalBlocker blocker(ui->comboDevice);
+        ui->comboDevice->clear();
+        ui->comboDevice->addItem(QStringLiteral("GVendor KS: GIGABYTE Capture Card"), 0);
+        ui->comboDevice->setCurrentIndex(0);
+        deviceIndex_ = 0;
+
+        invalidateDeviceCapabilityCache();
+        lastPixelFormatWarningKey_.clear();
+        MainWindow::postLog(QStringLiteral("[DeviceList] backend=100 devices=1 selectedIndex=0 selectedName=GVendor KS: GIGABYTE Capture Card"));
+        refreshPixelFormatOptions(true);
+        return;
+    }
+
     // gcap_enumerate() uses CaptureManager's currently selected backend.
     // Keep the SDK backend in sync with the UI before rebuilding the device list,
     // otherwise WinMF and DirectShow indexes can be mixed up.
@@ -1027,13 +1042,13 @@ void MainWindow::setupConnections()
                 this, [this](int)
                 {
                     const int backend = ui->comboBackend->currentData().toInt();
-                    const bool isCapSdk = (backend == 100);
+                    const bool isGVendor = (backend == 100);
                     if (ui->comboDevice)
-                        ui->comboDevice->setEnabled(!isCapSdk);
+                        ui->comboDevice->setEnabled(!isGVendor);
 
                     // Re-enumerate devices when backend changes. Device index is only
                     // meaningful within the backend that produced the list.
-                    if (!isCapSdk)
+                    if (!isGVendor)
                     {
                         initializeDeviceList();
                         refreshCaptureInfoFromSdkAndRuntime(false);
@@ -1045,8 +1060,13 @@ void MainWindow::setupConnections()
                     }
                     else
                     {
-                        invalidateDeviceCapabilityCache();
-                        refreshPixelFormatOptions(true);
+                        initializeDeviceList();
+                        refreshCaptureInfoFromSdkAndRuntime(false);
+                        if (infoDlg_ && infoDlg_->isVisible())
+                        {
+                            infoDlg_->setInfoText(lastInfoText_);
+                            infoDlg_->setPropertyPages(captureInfo_.propertyPages);
+                        }
                     } });
     }
 

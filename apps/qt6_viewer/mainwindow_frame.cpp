@@ -165,6 +165,8 @@ bool MainWindow::saveSceneExports(const QString &basePath, gcap_snapshot_export_
 void MainWindow::onFrameArrived(const QImage &img)
 {
     lastFrameImage_ = img;
+    if (!img.isNull() && previewWindow_)
+        previewWindow_->setFrame(img);
     if (!img.isNull())
         applyInitialPreviewSizeFromSource(img.width(), img.height());
 }

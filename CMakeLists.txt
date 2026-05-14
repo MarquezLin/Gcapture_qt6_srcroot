@@ -30,6 +30,12 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 # SDK / DLLs
 add_subdirectory(sdk/gcapture)
 add_subdirectory(sdk/gdisplay)
+add_subdirectory(sdk/gvendor)
 
 # Apps / demos
 add_subdirectory(apps/qt6_viewer)
+
+option(BUILD_GVENDOR_PROBE "Build the gvendor KS diagnostic probe tool" OFF)
+if (BUILD_GVENDOR_PROBE)
+  add_subdirectory(apps/gvendor_probe)
+endif()

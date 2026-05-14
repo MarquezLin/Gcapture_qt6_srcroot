@@ -50,20 +50,12 @@ else()
   add_executable(qt6_viewer ${VIEWER_SOURCES})
 endif()
 
-# CaptureSDK backend (Windows): link against CaptureSDK.lib and use CaptureSDK.dll at runtime.
+# Vendor-direct backend (Windows): gvendor KS path.
 if (WIN32)
   target_sources(qt6_viewer PRIVATE
-    capturesdk/capture_sdk_source.h
-    capturesdk/capture_sdk_source.cpp
+    gvendor/gvendor_source.h
+    gvendor/gvendor_source.cpp
   )
-
-  # Import library
-  set(CAPTURESDK_LIB "${CMAKE_CURRENT_SOURCE_DIR}/third_party/capturesdk/lib/x64/CaptureSDK.lib")
-  if (EXISTS "${CAPTURESDK_LIB}")
-    target_link_libraries(qt6_viewer PRIVATE "${CAPTURESDK_LIB}")
-  else()
-    message(FATAL_ERROR "CaptureSDK.lib not found: ${CAPTURESDK_LIB}")
-  endif()
 endif()
 
 # Includes
@@ -79,10 +71,11 @@ target_compile_definitions(qt6_viewer PRIVATE
   QT6_VIEWER_VERSION="${QT6_VIEWER_VERSION}"
 )
 
-# CaptureSDK (Windows only): header-only include + copy DLL next to exe
+# gvendor public headers (Windows only)
 if (WIN32)
   target_include_directories(qt6_viewer PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/capturesdk/include
+    ${CMAKE_SOURCE_DIR}/sdk/gvendor/include
+    ${CMAKE_SOURCE_DIR}/sdk/gdriver_shared/include
   )
 endif()
 
@@ -92,6 +85,7 @@ target_link_libraries(qt6_viewer PRIVATE
   Qt${QT_VERSION_MAJOR}::Widgets
   gcapture
   gdisplay
+  gvendor
   dxgi d3d11 d3dcompiler
 )
 
@@ -120,18 +114,13 @@ add_custom_command(TARGET qt6_viewer POST_BUILD
     $<TARGET_FILE_DIR:qt6_viewer>
 )
 
-# Copy CaptureSDK.dll next to qt6_viewer.exe (Windows)
+# Copy gvendor.dll next to qt6_viewer.exe (Windows)
 if (WIN32)
-  set(CAPTURESDK_DLL "${CMAKE_CURRENT_SOURCE_DIR}/third_party/capturesdk/bin/CaptureSDK.dll")
-  if (EXISTS "${CAPTURESDK_DLL}")
-    add_custom_command(TARGET qt6_viewer POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CAPTURESDK_DLL}"
-        $<TARGET_FILE_DIR:qt6_viewer>
-    )
-  else()
-    message(WARNING "CaptureSDK.dll not found: ${CAPTURESDK_DLL} (skip copy)")
-  endif()
+  add_custom_command(TARGET qt6_viewer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:gvendor>
+      $<TARGET_FILE_DIR:qt6_viewer>
+  )
 endif()
 
 # Copy FFmpeg runtime DLLs next to qt6_viewer.exe (Windows)

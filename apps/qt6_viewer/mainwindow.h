@@ -21,7 +21,7 @@
 #include "tiff_analyzer.h"
 
 #ifdef _WIN32
-#include "capturesdk/capture_sdk_source.h"
+#include "gvendor/gvendor_source.h"
 #endif
 
 QT_BEGIN_NAMESPACE
@@ -72,8 +72,8 @@ private:
     bool recording_ = false;
 
 #ifdef _WIN32
-    CaptureSdkSource *capSdk_ = nullptr;
-    bool usingCaptureSdk_ = false;
+    GVendorSource *gVendor_ = nullptr;
+    bool usingGVendor_ = false;
 #endif
 
     // ---- 實際輸入來源資訊（由每一幀 frame 更新）----

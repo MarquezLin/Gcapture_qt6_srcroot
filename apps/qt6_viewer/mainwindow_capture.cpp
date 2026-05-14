@@ -217,7 +217,7 @@ void MainWindow::onStart()
 {
     if (h_
 #ifdef _WIN32
-        || usingCaptureSdk_
+        || usingGVendor_
 #endif
     )
     {
@@ -258,12 +258,20 @@ void MainWindow::onStart()
 #ifdef _WIN32
     if (backend == 100)
     {
-        usingCaptureSdk_ = capSdk_ && capSdk_->start(1920, 1080);
-        if (!usingCaptureSdk_)
+        usingGVendor_ = gVendor_ && gVendor_->start(1920, 1080);
+        if (!usingGVendor_)
         {
-            QMessageBox::warning(this, QStringLiteral("CaptureSDK"),
+            QMessageBox::warning(this, QStringLiteral("GVendor KS"),
                                  QStringLiteral("Start failed: %1")
-                                     .arg(capSdk_ ? capSdk_->lastError() : QStringLiteral("capSdk_ is null")));
+                                     .arg(gVendor_ ? gVendor_->lastError() : QStringLiteral("gVendor_ is null")));
+        }
+        else
+        {
+            MainWindow::postLog(QStringLiteral("[GVendor] started device=%1 format=SDI/YUY2 1920x1080")
+                                    .arg(gVendor_ ? gVendor_->deviceName() : QStringLiteral("(unknown)")));
+            if (ui->statusbar)
+                ui->statusbar->showMessage(QStringLiteral("GVendor KS started: %1")
+                                               .arg(gVendor_ ? gVendor_->deviceName() : QStringLiteral("(unknown)")));
         }
         return;
     }
@@ -370,11 +378,11 @@ void MainWindow::onStart()
 void MainWindow::onStop()
 {
 #ifdef _WIN32
-    if (usingCaptureSdk_)
+    if (usingGVendor_)
     {
-        if (capSdk_)
-            capSdk_->stop();
-        usingCaptureSdk_ = false;
+        if (gVendor_)
+            gVendor_->stop();
+        usingGVendor_ = false;
         clearPreviewSurface();
         invalidateDeviceCapabilityCache();
         refreshCaptureInfoFromSdkAndRuntime(false);
@@ -440,10 +448,10 @@ void MainWindow::onOpenSnapshot()
 void MainWindow::onRecord()
 {
 #ifdef _WIN32
-    if (usingCaptureSdk_)
+    if (usingGVendor_)
     {
         QMessageBox::information(this, QStringLiteral("Record"),
-                                 QStringLiteral("CaptureSDK backend is enabled. This demo currently supports recording only via gcapture backend."));
+                                 QStringLiteral("GVendor KS backend is enabled. This demo currently supports recording only via gcapture backend."));
         return;
     }
 #endif
