@@ -10,6 +10,8 @@ add_library(gcapture SHARED
     src/core/logging.cpp
     src/core/tiff_analysis.cpp
     src/core/c_api.cpp
+    src/control/gdriver_control_client.cpp
+    src/control/gdriver_control_client.h
     src/pipeline/shared_scene_pipeline.cpp
     src/providers/winmf_provider.cpp
     src/providers/mf_recorder.cpp
@@ -34,6 +36,8 @@ set_target_properties(gcapture PROPERTIES
 target_include_directories(gcapture
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/sdk/gdriver_shared/include
 )
 
 target_compile_definitions(gcapture PRIVATE

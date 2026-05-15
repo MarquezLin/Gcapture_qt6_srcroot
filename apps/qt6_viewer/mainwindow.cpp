@@ -742,8 +742,8 @@ void MainWindow::setupBackendControls()
     ui->comboBackend->addItem("WinMF GPU", 1);
     ui->comboBackend->addItem("WinMF CPU", 0);
 
-#ifdef _WIN32
-    ui->comboBackend->addItem("GVendor KS", 100);
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
+    ui->comboBackend->addItem("GVendor Direct", 100);
     gVendor_ = new GVendorSource(this);
     connect(gVendor_, &GVendorSource::frameReady, this, &MainWindow::onFrameArrived, Qt::QueuedConnection);
     connect(gVendor_, &GVendorSource::errorOccurred, this, [this](const QString &m)
@@ -900,20 +900,22 @@ void MainWindow::initializeDeviceList()
     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
     const QString previousDeviceName = ui->comboDevice->currentText();
 
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
     if (backend == 100)
     {
         const QSignalBlocker blocker(ui->comboDevice);
         ui->comboDevice->clear();
-        ui->comboDevice->addItem(QStringLiteral("GVendor KS: GIGABYTE Capture Card"), 0);
+        ui->comboDevice->addItem(QStringLiteral("GVendor Direct: GIGABYTE Capture"), 0);
         ui->comboDevice->setCurrentIndex(0);
         deviceIndex_ = 0;
 
         invalidateDeviceCapabilityCache();
         lastPixelFormatWarningKey_.clear();
-        MainWindow::postLog(QStringLiteral("[DeviceList] backend=100 devices=1 selectedIndex=0 selectedName=GVendor KS: GIGABYTE Capture Card"));
+        MainWindow::postLog(QStringLiteral("[DeviceList] backend=100 devices=1 selectedIndex=0 selectedName=GVendor Direct: GIGABYTE Capture"));
         refreshPixelFormatOptions(true);
         return;
     }
+#endif
 
     // gcap_enumerate() uses CaptureManager's currently selected backend.
     // Keep the SDK backend in sync with the UI before rebuilding the device list,
@@ -1042,7 +1044,12 @@ void MainWindow::setupConnections()
                 this, [this](int)
                 {
                     const int backend = ui->comboBackend->currentData().toInt();
-                    const bool isGVendor = (backend == 100);
+                    const bool isGVendor =
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
+                        (backend == 100);
+#else
+                        false;
+#endif
                     if (ui->comboDevice)
                         ui->comboDevice->setEnabled(!isGVendor);
 

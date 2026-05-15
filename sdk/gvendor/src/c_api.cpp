@@ -6,6 +6,20 @@
 #include <new>
 #include <vector>
 
+namespace
+{
+    static void copy_wide_to_utf8(const std::wstring &src, char *dst, size_t dstSize)
+    {
+        if (!dst || dstSize == 0)
+            return;
+        dst[0] = '\0';
+        if (src.empty())
+            return;
+        WideCharToMultiByte(CP_UTF8, 0, src.c_str(), -1, dst, static_cast<int>(dstSize), nullptr, nullptr);
+        dst[dstSize - 1] = '\0';
+    }
+}
+
 struct gv_handle_t
 {
     gvendor::KsCaptureSession session;
@@ -19,15 +33,15 @@ extern "C"
         if (!out || max_devices <= 0)
             return static_cast<int>(devices.size());
 
-        const int n = (std::min)(max_devices, static_cast<int>(devices.size()));
+        const int n = max_devices < static_cast<int>(devices.size()) ? max_devices : static_cast<int>(devices.size());
         for (int i = 0; i < n; ++i)
         {
-            std::memset(&out[i], 0, sizeof(out[i]));
-            WideCharToMultiByte(CP_UTF8, 0, devices[static_cast<size_t>(i)].friendly_name.c_str(), -1,
-                                out[i].friendly_name, static_cast<int>(sizeof(out[i].friendly_name)), nullptr, nullptr);
-            WideCharToMultiByte(CP_UTF8, 0, devices[static_cast<size_t>(i)].interface_path.c_str(), -1,
-                                out[i].device_path, static_cast<int>(sizeof(out[i].device_path)), nullptr, nullptr);
-            out[i].inferred_input = devices[static_cast<size_t>(i)].inferred_input;
+            const auto &device = devices[static_cast<size_t>(i)];
+            gv_device_entry_t entry = {};
+            copy_wide_to_utf8(device.friendly_name, entry.friendly_name, sizeof(entry.friendly_name));
+            copy_wide_to_utf8(device.interface_path, entry.device_path, sizeof(entry.device_path));
+            entry.inferred_input = device.inferred_input;
+            out[i] = entry;
         }
         return n;
     }
@@ -59,11 +73,16 @@ extern "C"
             return GV_EINVAL;
         *out = nullptr;
 
+        const std::vector<gvendor::KsCaptureDevice> devices = gvendor::enumerate_ks_capture_devices();
+        const size_t index = static_cast<size_t>(device_index);
+        if (index >= devices.size())
+            return GV_ENODEV;
+
         gv_handle handle = new (std::nothrow) gv_handle_t();
         if (!handle)
             return GV_EIO;
 
-        const gv_status_t st = handle->session.open_device_index(static_cast<size_t>(device_index));
+        const gv_status_t st = handle->session.open_device_index(index);
         if (st != GV_OK)
         {
             delete handle;

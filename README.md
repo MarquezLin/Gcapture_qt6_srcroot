@@ -1,14 +1,12 @@
-﻿# win-capture-sdk_qt6
+# win-capture-sdk_qt6
 
-這個 repo 目前拆成多個 CMake target：SDK DLL、vendor-direct SDK、以及 Qt6 viewer demo。
+這個 repo 目前整理成三個主要部分：
 
-## 專案結構
-
-- `sdk/gcapture`：原本的 capture SDK，輸出 `gcapture.dll` / `gcapture.lib`，目前仍提供 DirectShow / WinMF 等既有 backend。
+- `sdk/gcapture`：正式 capture SDK，輸出 `gcapture.dll` / `gcapture.lib`。目前主線 frame path 是 DirectShow，並保留 WinMF backend。
 - `sdk/gdisplay`：顯示器 / EDID 相關 SDK，輸出 `gdisplay.dll` / `gdisplay.lib`。
-- `sdk/gvendor`：新的 vendor-direct SDK，輸出 `gvendor.dll` / `gvendor.lib`，目前走 KS direct，不依賴 MF / DirectShow 抓 frame。
-- `apps/qt6_viewer`：Qt6 viewer demo，會 link `gcapture`、`gdisplay`、`gvendor`。
-- `apps/gvendor_probe`：`gvendor` 診斷工具，預設不 build，需要時用 `BUILD_GVENDOR_PROBE=ON` 開啟。
+- `apps/qt6_viewer`：Qt6 viewer demo，預設只 link 正式產品 SDK：`gcapture` 與 `gdisplay`。
+
+`sdk/gvendor` 目前定位為工程診斷用 KS backend，不是預設產品路線。
 
 ## Build
 
@@ -24,26 +22,50 @@
 - `build/.../bin`：`.exe` / `.dll`
 - `build/.../lib`：`.lib`
 
-## GVendor KS Backend
+## 正式 SDK 方向
 
-`qt6_viewer` 內的 `GVendor KS` backend 使用：
+目前建議的正式產品架構是：
 
-- `apps/qt6_viewer/gvendor/gvendor_source.h`
-- `apps/qt6_viewer/gvendor/gvendor_source.cpp`
-- `sdk/gvendor/include/gvendor.h`
+```text
+App / qt6_viewer
+  ↓
+gcapture.dll
+  ├─ frame path：DirectShow
+  ├─ preview / snapshot / recording
+  └─ future control path：private IOCTL / KS private property
+        ↓
+      GIGABYTE capture driver
+```
 
-目前已取代舊的外部 CaptureSDK 整合；不再需要 `CaptureSDK.dll`、`CaptureSDK.lib` 或 `apps/qt6_viewer/third_party/capturesdk`。
+也就是說，使用者面對的是 `gcap_*` API；底層是否走 DirectShow、private IOCTL、或未來 shared buffer，都是 SDK 內部實作細節。
 
-目前驗證成功的路徑：
+## Private IOCTL 預留
 
-- 裝置：`GIGABYTE Capture Card`
-- endpoint：driver 的 YUY2 video capture filter
-- 格式：`SDI / YUY2 / 1920x1080`
-- 路徑：KS direct `configure -> start -> wait_frame`
+`sdk/gdriver_shared/include` 放 driver 與 SDK 未來共用的 ABI / IOCTL contract：
 
-## gvendor_probe
+- `gdriver_abi.h`
+- `gdriver_control_codes.h`
 
-`gvendor_probe` 是診斷工具，不會在預設 `all` target 中建立。需要時可在 CMake 設定：
+`sdk/gcapture/src/control/gdriver_control_client.*` 是未來 private IOCTL control path 的 user-mode client 空殼。目前 driver 尚未 expose `GUID_DEVINTERFACE_GDRIVER_CAPTURE`，所以這條路徑尚未接到正式 API。
+
+短期建議先讓 driver 提供控制/資訊 IOCTL：
+
+- `IOCTL_GDRIVER_GET_DEVICE_INFO`
+- `IOCTL_GDRIVER_GET_SIGNAL_STATUS`
+- `IOCTL_GDRIVER_SET_INPUT`
+- `IOCTL_GDRIVER_GET_STATS`
+
+frame path 可以先維持 DirectShow，等 private shared-buffer frame API 成熟後再替換。
+
+## GVendor 診斷工具
+
+`sdk/gvendor` 目前保留兩種診斷 backend：
+
+- KS-direct：直接透過 `KsCreatePin` / `IOCTL_KS_READ_STREAM` 從 AVStream capture pin 讀 frame。
+
+目前提供的 driver package 沒有 expose XDMA user-mode interface，所以專案先不提供 XDMA backend 開關。KS-direct 已驗證可以抓到 frame，但目前定位是診斷 / fallback，不是 viewer 預設 backend。
+
+需要診斷工具時，在 CMake 開啟：
 
 ```text
 BUILD_GVENDOR_PROBE=ON
@@ -58,12 +80,21 @@ gvendor_probe.exe sdi --frames 100
 gvendor_probe.exe sdi --device 2
 ```
 
+如果真的要把 `GVendor Direct` 放回 viewer 下拉選單，需另外開啟：
+
+```text
+BUILD_QT_VIEWER_GVENDOR_BACKEND=ON
+```
+
+## 舊 CaptureSDK 狀態
+
+舊的外部 `CaptureSDK.dll` / `CaptureSDK.lib` 整合已移除。正式路線先收斂到 `gcapture.dll`，未來 vendor/private control 也應接在 `gcapture` 之下。
+
 ## 打包
 
-`pack_qt6_viewer.bat` 會複製 viewer 需要的 DLL，包括：
+`pack_qt6_viewer.bat` 會複製 viewer 需要的 DLL。預設產品 build 需要：
 
 - `gcapture.dll`
 - `gdisplay.dll`
-- `gvendor.dll`
 
-FFmpeg runtime DLL 仍從 `third_party/ffmpeg/bin` 複製。
+只有在開啟 `BUILD_QT_VIEWER_GVENDOR_BACKEND=ON` 時，viewer 才需要 `gvendor.dll`。

@@ -216,7 +216,7 @@ void MainWindow::applySelectedRecordingAudioDevice()
 void MainWindow::onStart()
 {
     if (h_
-#ifdef _WIN32
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
         || usingGVendor_
 #endif
     )
@@ -255,22 +255,22 @@ void MainWindow::onStart()
                        .arg(usePacketCallback_ ? "true" : "false")
                        .arg(packetLogOnly_ ? "true" : "false"));
 
-#ifdef _WIN32
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
     if (backend == 100)
     {
         usingGVendor_ = gVendor_ && gVendor_->start(1920, 1080);
         if (!usingGVendor_)
         {
-            QMessageBox::warning(this, QStringLiteral("GVendor KS"),
+            QMessageBox::warning(this, QStringLiteral("GVendor Direct"),
                                  QStringLiteral("Start failed: %1")
                                      .arg(gVendor_ ? gVendor_->lastError() : QStringLiteral("gVendor_ is null")));
         }
         else
         {
-            MainWindow::postLog(QStringLiteral("[GVendor] started device=%1 format=SDI/YUY2 1920x1080")
+            MainWindow::postLog(QStringLiteral("[GVendor] direct started device=%1 request=SDI/1920x1080")
                                     .arg(gVendor_ ? gVendor_->deviceName() : QStringLiteral("(unknown)")));
             if (ui->statusbar)
-                ui->statusbar->showMessage(QStringLiteral("GVendor KS started: %1")
+                ui->statusbar->showMessage(QStringLiteral("GVendor Direct started: %1")
                                                .arg(gVendor_ ? gVendor_->deviceName() : QStringLiteral("(unknown)")));
         }
         return;
@@ -377,7 +377,7 @@ void MainWindow::onStart()
 
 void MainWindow::onStop()
 {
-#ifdef _WIN32
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
     if (usingGVendor_)
     {
         if (gVendor_)
@@ -447,11 +447,11 @@ void MainWindow::onOpenSnapshot()
 
 void MainWindow::onRecord()
 {
-#ifdef _WIN32
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
     if (usingGVendor_)
     {
         QMessageBox::information(this, QStringLiteral("Record"),
-                                 QStringLiteral("GVendor KS backend is enabled. This demo currently supports recording only via gcapture backend."));
+                                 QStringLiteral("GVendor Direct backend is enabled. This demo currently supports recording only via gcapture backend."));
         return;
     }
 #endif

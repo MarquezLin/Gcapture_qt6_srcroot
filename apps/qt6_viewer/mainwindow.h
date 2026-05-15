@@ -20,7 +20,7 @@
 #include "previewwindow.h"
 #include "tiff_analyzer.h"
 
-#ifdef _WIN32
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
 #include "gvendor/gvendor_source.h"
 #endif
 
@@ -71,7 +71,7 @@ private:
     int deviceIndex_ = 0;
     bool recording_ = false;
 
-#ifdef _WIN32
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
     GVendorSource *gVendor_ = nullptr;
     bool usingGVendor_ = false;
 #endif

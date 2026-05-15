@@ -50,12 +50,13 @@ else()
   add_executable(qt6_viewer ${VIEWER_SOURCES})
 endif()
 
-# Vendor-direct backend (Windows): gvendor KS path.
-if (WIN32)
+# Experimental vendor-direct backend (Windows): KS diagnostic path.
+if (WIN32 AND BUILD_QT_VIEWER_GVENDOR_BACKEND)
   target_sources(qt6_viewer PRIVATE
     gvendor/gvendor_source.h
     gvendor/gvendor_source.cpp
   )
+  target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_GVENDOR)
 endif()
 
 # Includes
@@ -71,8 +72,8 @@ target_compile_definitions(qt6_viewer PRIVATE
   QT6_VIEWER_VERSION="${QT6_VIEWER_VERSION}"
 )
 
-# gvendor public headers (Windows only)
-if (WIN32)
+# gvendor public headers (Windows only, opt-in diagnostic backend)
+if (WIN32 AND BUILD_QT_VIEWER_GVENDOR_BACKEND)
   target_include_directories(qt6_viewer PRIVATE
     ${CMAKE_SOURCE_DIR}/sdk/gvendor/include
     ${CMAKE_SOURCE_DIR}/sdk/gdriver_shared/include
@@ -85,9 +86,12 @@ target_link_libraries(qt6_viewer PRIVATE
   Qt${QT_VERSION_MAJOR}::Widgets
   gcapture
   gdisplay
-  gvendor
   dxgi d3d11 d3dcompiler
 )
+
+if (WIN32 AND BUILD_QT_VIEWER_GVENDOR_BACKEND)
+  target_link_libraries(qt6_viewer PRIVATE gvendor)
+endif()
 
 # ---- NVAPI: shared root variable from top-level ----
 if (EXISTS "${NVAPI_ROOT}/include" AND EXISTS "${NVAPI_ROOT}/lib/x64/nvapi64.lib")
@@ -114,8 +118,8 @@ add_custom_command(TARGET qt6_viewer POST_BUILD
     $<TARGET_FILE_DIR:qt6_viewer>
 )
 
-# Copy gvendor.dll next to qt6_viewer.exe (Windows)
-if (WIN32)
+# Copy gvendor.dll next to qt6_viewer.exe (Windows, opt-in diagnostic backend)
+if (WIN32 AND BUILD_QT_VIEWER_GVENDOR_BACKEND)
   add_custom_command(TARGET qt6_viewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       $<TARGET_FILE:gvendor>

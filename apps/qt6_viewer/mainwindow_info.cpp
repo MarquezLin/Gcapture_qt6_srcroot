@@ -62,7 +62,11 @@ void MainWindow::ensureDeviceCapabilityCache(int deviceIndex)
 {
     const int backend = ui && ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
 
-    if (deviceIndex < 0 || backend == 100)
+    if (deviceIndex < 0
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
+        || backend == 100
+#endif
+    )
     {
         cachedDeviceCapsBackend_ = -1;
         cachedDeviceCapsIndex_ = -1;

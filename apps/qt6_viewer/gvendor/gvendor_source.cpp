@@ -2,7 +2,6 @@
 
 #include <QMutexLocker>
 #include <algorithm>
-#include <chrono>
 
 namespace
 {
@@ -27,6 +26,23 @@ namespace
         if (detail && detail[0])
             return QStringLiteral("%1 (%2)").arg(QString::fromUtf8(gv_strerror(st)), QString::fromUtf8(detail));
         return QString::fromUtf8(gv_strerror(st));
+    }
+
+    static QString gv_pixfmt_name(gdriver_pixel_format_t fmt)
+    {
+        switch (fmt)
+        {
+        case GDRIVER_PIXFMT_YUY2:
+            return QStringLiteral("YUY2");
+        case GDRIVER_PIXFMT_UYVY:
+            return QStringLiteral("UYVY");
+        case GDRIVER_PIXFMT_RGB24:
+            return QStringLiteral("RGB24");
+        case GDRIVER_PIXFMT_Y210:
+            return QStringLiteral("Y210");
+        default:
+            return QStringLiteral("fmt%1").arg(static_cast<int>(fmt));
+        }
     }
 }
 
@@ -112,6 +128,20 @@ bool GVendorSource::start(int width, int height)
         return false;
     }
 
+    gv_signal_status_t signal = {};
+    if (gv_get_signal_status(handle_, &signal) == GV_OK)
+    {
+        emit errorOccurred(QStringLiteral("configured stream: %1x%2 fps=%3/%4 fmt=%5(%6) input=%7 locked=%8")
+                               .arg(signal.width)
+                               .arg(signal.height)
+                               .arg(signal.fps_num)
+                               .arg(signal.fps_den)
+                               .arg(gv_pixfmt_name(signal.pixel_format))
+                               .arg(static_cast<int>(signal.pixel_format))
+                               .arg(static_cast<int>(signal.input))
+                               .arg(signal.signal_locked));
+    }
+
     st = gv_start_stream(handle_);
     if (st != GV_OK)
     {
@@ -145,6 +175,10 @@ void GVendorSource::stop()
 
 void GVendorSource::captureLoop()
 {
+    uint64_t okFrames = 0;
+    uint32_t timeoutCount = 0;
+    emit errorOccurred(QStringLiteral("capture thread started"));
+
     while (running_)
     {
         gv_frame_t frame = {};
@@ -153,12 +187,30 @@ void GVendorSource::captureLoop()
             break;
         if (st == GV_OK)
         {
+            ++okFrames;
+            timeoutCount = 0;
+            if (okFrames == 1)
+            {
+                emit errorOccurred(QStringLiteral("frame ok: id=%1 bytes=%2 %3x%4 fmt=%5(%6) stride=%7")
+                                       .arg(frame.frame_id)
+                                       .arg(static_cast<qulonglong>(frame.data_size_bytes))
+                                       .arg(frame.width)
+                                       .arg(frame.height)
+                                       .arg(gv_pixfmt_name(frame.pixel_format))
+                                       .arg(static_cast<int>(frame.pixel_format))
+                                       .arg(frame.plane_stride_bytes[0]));
+            }
             onFrame(frame);
             gv_release_frame(handle_, &frame);
             continue;
         }
         if (st == GV_ETIMEOUT)
+        {
+            ++timeoutCount;
+            if (timeoutCount == 1 || timeoutCount == 5 || timeoutCount == 30)
+                emit errorOccurred(QStringLiteral("gv_wait_frame timeout x%1: %2").arg(timeoutCount).arg(gv_error(st, handle_)));
             continue;
+        }
 
         setError(QStringLiteral("gv_wait_frame failed: %1").arg(gv_error(st, handle_)));
         break;
@@ -170,6 +222,11 @@ void GVendorSource::onFrame(const gv_frame_t &frame)
     QImage img = convertFrameToImage(frame);
     if (!img.isNull())
         emit frameReady(img);
+    else
+        emit errorOccurred(QStringLiteral("frame convert failed: fmt=%1(%2) bytes=%3")
+                               .arg(gv_pixfmt_name(frame.pixel_format))
+                               .arg(static_cast<int>(frame.pixel_format))
+                               .arg(static_cast<qulonglong>(frame.data_size_bytes)));
 }
 
 QImage GVendorSource::convertFrameToImage(const gv_frame_t &frame) const
@@ -182,7 +239,10 @@ QImage GVendorSource::convertFrameToImage(const gv_frame_t &frame) const
     const uchar *src = static_cast<const uchar *>(frame.data);
 
     if (frame.pixel_format == GDRIVER_PIXFMT_RGB24)
-        return QImage(src, width, height, static_cast<int>(frame.plane_stride_bytes[0]), QImage::Format_RGB888).copy();
+    {
+        const int stride = frame.plane_stride_bytes[0] ? static_cast<int>(frame.plane_stride_bytes[0]) : width * 3;
+        return QImage(src, width, height, stride, QImage::Format_RGB888).copy();
+    }
 
     if (frame.pixel_format != GDRIVER_PIXFMT_YUY2)
         return QImage();
