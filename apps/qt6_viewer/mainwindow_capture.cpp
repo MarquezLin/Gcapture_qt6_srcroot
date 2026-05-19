@@ -81,6 +81,8 @@ void MainWindow::clearPreviewSurface()
 
 void MainWindow::closeCaptureSession()
 {
+    stopPreviewAudio();
+
     if (!h_)
         return;
 
@@ -211,6 +213,55 @@ void MainWindow::applySelectedRecordingAudioDevice()
         gcap_set_recording_audio_device(h_, nullptr);
     else
         gcap_set_recording_audio_device(h_, recordAudioDeviceIdUtf8_.toUtf8().constData());
+}
+
+void MainWindow::startPreviewAudio()
+{
+    stopPreviewAudio();
+
+    const QString videoDeviceName = currentDeviceText();
+    if (videoDeviceName.isEmpty())
+        return;
+
+    gcap_audio_device_t audio{};
+    const QByteArray videoNameUtf8 = videoDeviceName.toUtf8();
+    if (!gcap_audio_find_device_for_capture(videoNameUtf8.constData(), &audio))
+    {
+        MainWindow::postLog(QStringLiteral("[AudioPreview] no matching WASAPI capture endpoint for video device=%1")
+                                .arg(videoDeviceName));
+        return;
+    }
+
+    gcap_audio_capture_config_t cfg{};
+    cfg.device_id = audio.id;
+    cfg.sample_rate = audio.sample_rate;
+    cfg.channels = audio.channels;
+
+    const int st = gcap_start_audio_capture(&cfg);
+    if (st != GCAP_OK)
+    {
+        MainWindow::postLog(QStringLiteral("[AudioPreview] start failed for endpoint=%1 status=%2")
+                                .arg(QString::fromUtf8(audio.name))
+                                .arg(st),
+                            true);
+        return;
+    }
+
+    previewAudioActive_ = true;
+    MainWindow::postLog(QStringLiteral("[AudioPreview] started endpoint=%1 (%2 Hz, %3 ch)")
+                            .arg(QString::fromUtf8(audio.name))
+                            .arg(audio.sample_rate)
+                            .arg(audio.channels));
+}
+
+void MainWindow::stopPreviewAudio()
+{
+    if (!previewAudioActive_)
+        return;
+
+    gcap_stop_audio_capture();
+    previewAudioActive_ = false;
+    MainWindow::postLog(QStringLiteral("[AudioPreview] stopped"));
 }
 
 void MainWindow::onStart()
@@ -370,6 +421,7 @@ void MainWindow::onStart()
         return;
     }
 
+    startPreviewAudio();
     updateRuntimeStatusUi();
     refreshCaptureInfoFromSdkAndRuntime(false);
     refreshDisplayInfoFromCurrentState();
@@ -396,6 +448,7 @@ void MainWindow::onStop()
         return;
 
     stopRecordingSession(false);
+    stopPreviewAudio();
     gcap_stop(h_);
     closeCaptureSession();
     clearPreviewSurface();

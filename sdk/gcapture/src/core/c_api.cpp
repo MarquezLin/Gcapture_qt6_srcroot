@@ -1222,6 +1222,7 @@ extern "C"
             out[i].sample_rate = d.sample_rate;
             out[i].bits_per_sample = d.bits_per_sample;
             out[i].is_float = d.is_float ? 1 : 0;
+            out[i].is_default = d.is_default ? 1 : 0;
         }
 
         return n;
@@ -1237,14 +1238,43 @@ extern "C"
         return gcap_enum_audio_devices(out_devices, max_devices);
     }
 
+    extern "C" GCAP_API int gcap_audio_find_device_for_capture(const char *capture_device_name_utf8,
+                                                               gcap_audio_device_t *out_device)
+    {
+        if (!capture_device_name_utf8 || !*capture_device_name_utf8 || !out_device)
+            return 0;
+
+        gcap::audio::device d;
+        if (!gcap::audio::find_device_for_capture_name(capture_device_name_utf8, d))
+            return 0;
+
+        memset(out_device, 0, sizeof(*out_device));
+        strncpy_s(out_device->id, d.id.c_str(), GCAP_AUDIO_ID_MAX - 1);
+        strncpy_s(out_device->name, d.name.c_str(), GCAP_AUDIO_NAME_MAX - 1);
+        out_device->channels = d.channels;
+        out_device->sample_rate = d.sample_rate;
+        out_device->bits_per_sample = d.bits_per_sample;
+        out_device->is_float = d.is_float ? 1 : 0;
+        out_device->is_default = d.is_default ? 1 : 0;
+        return 1;
+    }
+
     extern "C" GCAP_API int gcap_start_audio_capture(const gcap_audio_capture_config_t *cfg)
     {
-        (void)cfg;
-        return GCAP_ENOTSUP;
+        std::string error;
+        const char *deviceId = (cfg && cfg->device_id && *cfg->device_id) ? cfg->device_id : nullptr;
+        if (!gcap::audio::start_preview(deviceId, &error))
+        {
+            if (!error.empty())
+                gcap::log_printf(GCAP_LOG_WARN, "[AudioPreview] start failed: %s", error.c_str());
+            return GCAP_EIO;
+        }
+        return GCAP_OK;
     }
 
     extern "C" GCAP_API void gcap_stop_audio_capture(void)
     {
+        gcap::audio::stop_preview();
     }
 
 } // extern "C"

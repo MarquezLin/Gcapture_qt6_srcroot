@@ -8,9 +8,9 @@
       - gcap_audio_enum_devices()
       - gcap_set_recording_audio_device() from gcapture.h
 
-    The low-level gcap_start_audio_capture()/gcap_stop_audio_capture() APIs are
-    experimental compatibility stubs in the current SDK and are not the
-    recommended recording path.
+    The low-level gcap_start_audio_capture()/gcap_stop_audio_capture() APIs run
+    a simple WASAPI preview monitor from a capture endpoint to the default
+    speaker. They are independent from the recording path.
 */
 
 #ifdef __cplusplus
@@ -69,6 +69,14 @@ extern "C"
         gcap_audio_device_t *out,
         int max_count);
 
+    /**
+     * Best-effort match from a video capture device friendly name to a WASAPI
+     * capture endpoint. Returns 1 and writes out when a likely endpoint is found.
+     */
+    GCAP_API int gcap_audio_find_device_for_capture(
+        const char *capture_device_name_utf8,
+        gcap_audio_device_t *out);
+
     /** Experimental low-level audio capture configuration. Prefer gcap_set_recording_audio_device() for recording. */
     typedef struct gcap_audio_capture_config_t
     {
@@ -77,11 +85,11 @@ extern "C"
         int channels;                     /** Requested channels, commonly 1 or 2. */
     } gcap_audio_capture_config_t;
 
-    /** Experimental low-level audio capture API. Current SDK may return GCAP_ENOTSUP. */
+    /** Start low-level WASAPI audio preview/capture from cfg->device_id to the default speaker. */
     GCAP_API int gcap_start_audio_capture(
         const gcap_audio_capture_config_t *cfg);
 
-    /** Stop experimental low-level audio capture if it was started. */
+    /** Stop low-level WASAPI audio preview/capture if it was started. */
     GCAP_API void gcap_stop_audio_capture(void);
 
 #ifdef __cplusplus

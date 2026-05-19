@@ -721,6 +721,9 @@ extern "C"
     /** Enumerate active WASAPI capture devices. Returns number written, or total if out_devices is null or max_devices <= 0. */
     GCAP_API int gcap_audio_enum_devices(gcap_audio_device_t *out_devices, int max_devices);
 
+    /** Best-effort match from the selected video capture device name to a WASAPI capture endpoint. */
+    GCAP_API int gcap_audio_find_device_for_capture(const char *capture_device_name_utf8, gcap_audio_device_t *out_device);
+
     /** Return stable SDK pixel format display name. Never returns null. */
     GCAP_API const char *gcap_pixfmt_name(gcap_pixfmt_t fmt);
 
