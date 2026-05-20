@@ -1087,10 +1087,14 @@ void dshow_dump_signal_diagnostics_by_index(int devIndex)
 }
 
 
+static DWORD gcap_make_fourcc(char a, char b, char c, char d);
+static bool gcap_is_dshow_fourcc_subtype(const GUID &g, DWORD fourcc);
+
 static bool dshow_known_capture_subtype(const GUID &sub)
 {
     return sub == MEDIASUBTYPE_NV12 || sub == MEDIASUBTYPE_YUY2 || sub == MEDIASUBTYPE_Y210 ||
            sub == MEDIASUBTYPE_RGB24 || sub == MEDIASUBTYPE_RGB32 || sub == MEDIASUBTYPE_ARGB32 ||
+           gcap_is_dshow_fourcc_subtype(sub, gcap_make_fourcc('v', '2', '1', '0')) ||
            sub == MFVideoFormat_NV12 || sub == MFVideoFormat_YUY2 || sub == MFVideoFormat_P010 ||
            sub == MFVideoFormat_Y210 || sub == MFVideoFormat_ARGB32;
 }
@@ -1099,10 +1103,14 @@ gcap_pixfmt_t gcap_subtype_to_pixfmt(const GUID &sub)
 {
     if (sub == MEDIASUBTYPE_NV12)
         return GCAP_FMT_NV12;
-    if (sub == MEDIASUBTYPE_YUY2)
+    if (sub == MEDIASUBTYPE_YUY2 ||
+        gcap_is_dshow_fourcc_subtype(sub, gcap_make_fourcc('H', 'D', 'Y', 'C')) ||
+        gcap_is_dshow_fourcc_subtype(sub, gcap_make_fourcc('U', 'Y', 'V', 'Y')))
         return GCAP_FMT_YUY2;
     if (sub == MEDIASUBTYPE_Y210)
         return GCAP_FMT_Y210;
+    if (gcap_is_dshow_fourcc_subtype(sub, gcap_make_fourcc('v', '2', '1', '0')))
+        return GCAP_FMT_V210;
     if (sub == MEDIASUBTYPE_RGB24 || sub == MEDIASUBTYPE_RGB32 || sub == MEDIASUBTYPE_ARGB32)
         return GCAP_FMT_ARGB;
 #ifdef MFVideoFormat_NV12

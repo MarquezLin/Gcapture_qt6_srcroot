@@ -188,6 +188,7 @@ void DShowRawRenderer::setNegotiated(const GUID &subtype, int width, int height,
 bool DShowRawRenderer::isSupportedSubtype() const
 {
     return subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MFVideoFormat_P010 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210 ||
+           isV210(subtype_) ||
            isHDYC(subtype_) || isUYVY(subtype_) ||
            subtype_ == MEDIASUBTYPE_RGB24 || subtype_ == MEDIASUBTYPE_RGB32 || subtype_ == MEDIASUBTYPE_ARGB32;
 }
@@ -199,6 +200,7 @@ GUID DShowRawRenderer::negotiatedFormat() const
     if (subtype_ == MEDIASUBTYPE_YUY2) return MEDIASUBTYPE_YUY2;
     if (isHDYC(subtype_) || isUYVY(subtype_)) return subtype_;
     if (subtype_ == MEDIASUBTYPE_Y210) return MEDIASUBTYPE_Y210;
+    if (isV210(subtype_)) return subtype_;
     if (subtype_ == MEDIASUBTYPE_RGB24) return MEDIASUBTYPE_RGB24;
     if (subtype_ == MEDIASUBTYPE_RGB32) return MEDIASUBTYPE_RGB32;
     if (subtype_ == MEDIASUBTYPE_ARGB32) return MEDIASUBTYPE_ARGB32;
@@ -280,6 +282,10 @@ bool DShowRawRenderer::copyLatestRaw(std::vector<uint8_t> &out, int &w, int &h, 
     {
         stride = width_ * 4;
     }
+    else if (isV210(subtype_))
+    {
+        stride = ((width_ + 5) / 6) * 16;
+    }
     else if (subtype_ == MFVideoFormat_P010)
     {
         // P010 is 4:2:0, 16 bits per sample; one luma row is width * 2 bytes.
@@ -325,6 +331,11 @@ bool DShowRawRenderer::copyLatestFrameToArgb(std::vector<uint8_t> &out, int &w, 
     if (subtype == MEDIASUBTYPE_Y210)
     {
         y210ToArgb(raw.data(), w, h, stride, out, stride);
+        return true;
+    }
+    if (isV210(subtype))
+    {
+        v210ToArgb(raw.data(), w, h, stride, out, stride);
         return true;
     }
     if (subtype == MEDIASUBTYPE_RGB24)
@@ -459,6 +470,14 @@ void DShowRawRenderer::y210ToArgb(const uint8_t *src, int width, int height, int
     dst.resize(static_cast<size_t>(dstStride) * static_cast<size_t>(height));
 
     gcap::y210_to_argb(src, width, height, srcStride, dst.data(), dstStride);
+}
+
+void DShowRawRenderer::v210ToArgb(const uint8_t *src, int width, int height, int srcStride, std::vector<uint8_t> &dst, int &dstStride)
+{
+    dstStride = width * 4;
+    dst.resize(static_cast<size_t>(dstStride) * static_cast<size_t>(height));
+
+    gcap::v210_to_argb(src, width, height, srcStride, dst.data(), dstStride);
 }
 
 uint64_t DShowRawRenderer::sampleCount() const

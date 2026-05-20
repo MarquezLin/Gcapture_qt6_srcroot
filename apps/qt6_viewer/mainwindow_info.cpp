@@ -25,6 +25,8 @@ static const char *packetFmtNameInfo(int fmt)
         return "YUY2";
     case GCAP_FMT_Y210:
         return "Y210";
+    case GCAP_FMT_V210:
+        return "V210";
     case GCAP_FMT_ARGB:
         return "ARGB";
     default:
@@ -177,7 +179,6 @@ void MainWindow::updateCapabilityLabel()
     ui->labelinfo1->setToolTip(tr("Capability list from a separate enumeration query. The active open graph may differ on some drivers:\n%1")
                                    .arg(display.join(QStringLiteral("\n"))));
 }
-
 
 int MainWindow::currentDeviceIndex() const
 {

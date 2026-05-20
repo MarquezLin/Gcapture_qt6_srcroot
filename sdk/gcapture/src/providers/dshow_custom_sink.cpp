@@ -38,6 +38,11 @@ namespace
         return custom_is_dshow_fourcc_subtype(g, custom_make_fourcc('H', 'D', 'Y', 'C')) ||
                custom_is_dshow_fourcc_subtype(g, custom_make_fourcc('U', 'Y', 'V', 'Y'));
     }
+
+    static bool custom_is_v210(const GUID &g)
+    {
+        return custom_is_dshow_fourcc_subtype(g, custom_make_fourcc('v', '2', '1', '0'));
+    }
 static void dshow_sink_log(const char *msg)
 {
     gcap_log_debug(msg);
@@ -256,6 +261,7 @@ STDMETHODIMP DShowCustomSinkPin::QueryAccept(const AM_MEDIA_TYPE *pmt)
     if (!pmt) return E_POINTER;
     if (pmt->majortype != MEDIATYPE_Video) return S_FALSE;
     if (pmt->subtype == MEDIASUBTYPE_NV12 || pmt->subtype == MFVideoFormat_P010 || pmt->subtype == MEDIASUBTYPE_YUY2 || pmt->subtype == MEDIASUBTYPE_Y210 ||
+        custom_is_v210(pmt->subtype) ||
         custom_is_hdyc_or_uyvy(pmt->subtype) ||
         pmt->subtype == MEDIASUBTYPE_RGB24 || pmt->subtype == MEDIASUBTYPE_RGB32 || pmt->subtype == MEDIASUBTYPE_ARGB32) return S_OK;
     return S_FALSE;

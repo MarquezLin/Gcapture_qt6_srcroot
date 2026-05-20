@@ -24,6 +24,8 @@ namespace
             return "YUY2";
         case GCAP_FMT_Y210:
             return "Y210";
+        case GCAP_FMT_V210:
+            return "V210";
         case GCAP_FMT_ARGB:
             return "ARGB";
         default:

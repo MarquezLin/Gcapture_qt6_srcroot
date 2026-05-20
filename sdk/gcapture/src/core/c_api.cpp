@@ -581,7 +581,7 @@ extern "C"
             std::vector<gcap_pixfmt_t> uniq;
             auto push_unique = [&](gcap_pixfmt_t fmt)
             {
-                if (fmt != GCAP_FMT_NV12 && fmt != GCAP_FMT_YUY2 && fmt != GCAP_FMT_Y210 && fmt != GCAP_FMT_P010 && fmt != GCAP_FMT_ARGB)
+                if (fmt != GCAP_FMT_NV12 && fmt != GCAP_FMT_YUY2 && fmt != GCAP_FMT_Y210 && fmt != GCAP_FMT_V210 && fmt != GCAP_FMT_P010 && fmt != GCAP_FMT_ARGB)
                     return;
                 for (auto e : uniq)
                     if (e == fmt)

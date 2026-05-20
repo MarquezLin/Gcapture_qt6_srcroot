@@ -13,6 +13,16 @@ static inline uint16_t normalize_y210_word(uint16_t v)
     return static_cast<uint16_t>((v >> 6) & 0x03FFu);
 }
 
+static inline uint16_t v210_component(uint32_t word, int shift)
+{
+    return static_cast<uint16_t>((word >> shift) & 0x03FFu);
+}
+
+static inline uint8_t ten_bit_to_byte(uint16_t v)
+{
+    return static_cast<uint8_t>((static_cast<uint32_t>(v & 0x03FFu) * 255u + 511u) / 1023u);
+}
+
 
 static inline void yuv_to_rgb(int Y, int U, int V, uint8_t &R, uint8_t &G, uint8_t &B)
 {
@@ -309,6 +319,98 @@ void gcap::y210_to_argb(const uint8_t *y210,
             }
 
             dst += 8;
+        }
+    }
+
+    if (p.sharpness != 128)
+        apply_sharpness_bgra(outARGB, width, height, outStride, p.sharpness);
+}
+
+void gcap::v210_to_argb(const uint8_t *v210,
+                        int width, int height,
+                        int strideV210,
+                        uint8_t *outARGB, int outStride)
+{
+    ProcAmpParams p;
+    v210_to_argb(v210, width, height, strideV210, outARGB, outStride, p);
+}
+
+void gcap::v210_to_argb(const uint8_t *v210,
+                        int width, int height,
+                        int strideV210,
+                        uint8_t *outARGB, int outStride,
+                        const ProcAmpParams &p)
+{
+    if (!v210 || !outARGB || width <= 0 || height <= 0)
+        return;
+
+    const int effectiveStride = (strideV210 > 0) ? strideV210 : ((width + 5) / 6) * 16;
+
+    auto write_pair = [&](uint8_t *dstRow, int x, uint16_t y0, uint16_t u, uint16_t y1, uint16_t v)
+    {
+        const int Y0 = ten_bit_to_byte(y0);
+        uint8_t U = ten_bit_to_byte(u);
+        const int Y1 = ten_bit_to_byte(y1);
+        uint8_t V = ten_bit_to_byte(v);
+
+        if (p.hue != 128)
+            apply_hue_to_uv(U, V, p);
+
+        uint8_t r0, g0, b0;
+        uint8_t r1, g1, b1;
+
+        yuv_to_rgb(Y0, U, V, r0, g0, b0);
+        if (p.brightness != 128 || p.contrast != 128 || p.saturation != 128)
+            apply_bcs_rgb(r0, g0, b0, p);
+
+        yuv_to_rgb(Y1, U, V, r1, g1, b1);
+        if (p.brightness != 128 || p.contrast != 128 || p.saturation != 128)
+            apply_bcs_rgb(r1, g1, b1, p);
+
+        uint8_t *d0 = dstRow + (size_t)x * 4u;
+        d0[0] = b0;
+        d0[1] = g0;
+        d0[2] = r0;
+        d0[3] = 255;
+
+        if (x + 1 < width)
+        {
+            uint8_t *d1 = dstRow + (size_t)(x + 1) * 4u;
+            d1[0] = b1;
+            d1[1] = g1;
+            d1[2] = r1;
+            d1[3] = 255;
+        }
+    };
+
+    for (int y = 0; y < height; ++y)
+    {
+        const uint8_t *srcRow = v210 + (size_t)y * (size_t)effectiveStride;
+        uint8_t *dstRow = outARGB + (size_t)y * (size_t)outStride;
+
+        for (int x = 0; x < width; x += 6)
+        {
+            uint32_t w[4] = {};
+            std::memcpy(w, srcRow + (size_t)(x / 6) * 16u, sizeof(w));
+
+            const uint16_t u0 = v210_component(w[0], 0);
+            const uint16_t y0 = v210_component(w[0], 10);
+            const uint16_t v0 = v210_component(w[0], 20);
+            const uint16_t y1 = v210_component(w[1], 0);
+            const uint16_t u2 = v210_component(w[1], 10);
+            const uint16_t y2 = v210_component(w[1], 20);
+            const uint16_t v2 = v210_component(w[2], 0);
+            const uint16_t y3 = v210_component(w[2], 10);
+            const uint16_t u4 = v210_component(w[2], 20);
+            const uint16_t y4 = v210_component(w[3], 0);
+            const uint16_t v4 = v210_component(w[3], 10);
+            const uint16_t y5 = v210_component(w[3], 20);
+
+            write_pair(dstRow, x + 0, y0, u0, (x + 1 < width) ? y1 : y0, v0);
+            if (x + 2 < width)
+                write_pair(dstRow, x + 2, y2, u2, (x + 3 < width) ? y3 : y2, v2);
+            if (x + 4 < width)
+                write_pair(dstRow, x + 4, y4, u4, (x + 5 < width) ? y5 : y4, v4);
         }
     }
 

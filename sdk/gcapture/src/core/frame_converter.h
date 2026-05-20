@@ -49,4 +49,15 @@ namespace gcap
                       int width, int height, int y210Stride,
                       uint8_t *outARGB, int outStride,
                       const ProcAmpParams &p);
+
+    // v210 (10-bit packed 4:2:2, 6 pixels per 16 bytes) -> ARGB
+    void v210_to_argb(const uint8_t *v210,
+                      int width, int height, int v210Stride,
+                      uint8_t *outARGB, int outStride);
+
+    // v210 (10-bit packed 4:2:2, 6 pixels per 16 bytes) -> ARGB + ProcAmp
+    void v210_to_argb(const uint8_t *v210,
+                      int width, int height, int v210Stride,
+                      uint8_t *outARGB, int outStride,
+                      const ProcAmpParams &p);
 }

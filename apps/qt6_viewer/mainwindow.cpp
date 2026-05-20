@@ -99,6 +99,8 @@ namespace
     {
         if (gcap_pixfmt_bit_depth(fmt) <= 0)
             return QString();
+        if (fmt == GCAP_FMT_YUY2)
+            return QStringLiteral("Format: YUY2/HDYC/UYVY");
         return QStringLiteral("Format: %1").arg(QString::fromUtf8(gcap_pixfmt_name(fmt)));
     }
 
@@ -120,6 +122,7 @@ namespace
             case GCAP_FMT_NV12:
             case GCAP_FMT_YUY2:
             case GCAP_FMT_Y210:
+            case GCAP_FMT_V210:
             case GCAP_FMT_P010:
             case GCAP_FMT_ARGB:
                 if (seen.insert(static_cast<int>(fmt)).second)
@@ -867,6 +870,7 @@ void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
     const QSignalBlocker blocker(ui->comboPixelFormat);
     const int previousData = ui->comboPixelFormat->currentData().toInt();
 
+    ui->comboPixelFormat->setToolTip(tr("Requested capture format for the next Start. The actual negotiated format is shown in BackendFmt."));
     ui->comboPixelFormat->clear();
     ui->comboPixelFormat->addItem(QStringLiteral("Format: Auto"), -1);
 

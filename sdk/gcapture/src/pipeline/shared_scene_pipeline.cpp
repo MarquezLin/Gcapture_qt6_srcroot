@@ -38,6 +38,11 @@ static inline uint16_t normalize_y210_word_for_upload(uint16_t v)
     return static_cast<uint16_t>((v >> 6) & 0x03FFu);
 }
 
+static inline uint16_t v210_component_for_upload(uint32_t word, int shift)
+{
+    return static_cast<uint16_t>((word >> shift) & 0x03FFu);
+}
+
 static const char *ss_dxgi_format_name(DXGI_FORMAT fmt)
 {
     switch (fmt)
@@ -1434,6 +1439,99 @@ bool SharedScenePipeline::upload_y210_frame(const uint8_t *data, int src_stride,
             d4[1] = U;
             d4[2] = Y1;
             d4[3] = V;
+        }
+    }
+
+    ctx_->Unmap(upload_y210_packed_.Get(), 0);
+    return true;
+}
+
+bool SharedScenePipeline::upload_v210_frame(const uint8_t *data, int src_stride, int frame_w, int frame_h)
+{
+    if (!ctx_ || !d3d_ || !data || frame_w <= 0 || frame_h <= 0)
+        return false;
+
+    const int packedStride = ((frame_w + 5) / 6) * 16;
+    const int effectiveStride = (src_stride > 0) ? src_stride : packedStride;
+    if (effectiveStride < packedStride)
+        return false;
+
+    const int w2 = (frame_w + 1) / 2;
+    if (upload_y210_packed_)
+    {
+        D3D11_TEXTURE2D_DESC desc{};
+        upload_y210_packed_->GetDesc(&desc);
+        if ((int)desc.Width != w2 || (int)desc.Height != frame_h || desc.Format != DXGI_FORMAT_R16G16B16A16_UINT)
+            upload_y210_packed_.Reset();
+    }
+
+    if (!upload_y210_packed_)
+    {
+        D3D11_TEXTURE2D_DESC td{};
+        td.Width = (UINT)w2;
+        td.Height = (UINT)frame_h;
+        td.MipLevels = 1;
+        td.ArraySize = 1;
+        td.SampleDesc.Count = 1;
+        td.Format = DXGI_FORMAT_R16G16B16A16_UINT;
+        td.Usage = D3D11_USAGE_DYNAMIC;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        td.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &upload_y210_packed_)))
+            return false;
+    }
+
+    D3D11_MAPPED_SUBRESOURCE m{};
+    if (FAILED(ctx_->Map(upload_y210_packed_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+        return false;
+
+    for (int row = 0; row < frame_h; ++row)
+    {
+        const uint8_t *srcRow = data + (size_t)row * (size_t)effectiveStride;
+        uint8_t *dstRow = static_cast<uint8_t *>(m.pData) + (size_t)row * (size_t)m.RowPitch;
+        uint16_t *dst16 = reinterpret_cast<uint16_t *>(dstRow);
+
+        for (int x = 0; x < frame_w; x += 6)
+        {
+            uint32_t words[4] = {};
+            std::memcpy(words, srcRow + (size_t)(x / 6) * 16u, sizeof(words));
+
+            const uint16_t u0 = v210_component_for_upload(words[0], 0);
+            const uint16_t y0 = v210_component_for_upload(words[0], 10);
+            const uint16_t v0 = v210_component_for_upload(words[0], 20);
+            const uint16_t y1 = v210_component_for_upload(words[1], 0);
+            const uint16_t u2 = v210_component_for_upload(words[1], 10);
+            const uint16_t y2 = v210_component_for_upload(words[1], 20);
+            const uint16_t v2 = v210_component_for_upload(words[2], 0);
+            const uint16_t y3 = v210_component_for_upload(words[2], 10);
+            const uint16_t u4 = v210_component_for_upload(words[2], 20);
+            const uint16_t y4 = v210_component_for_upload(words[3], 0);
+            const uint16_t v4 = v210_component_for_upload(words[3], 10);
+            const uint16_t y5 = v210_component_for_upload(words[3], 20);
+
+            uint16_t *d0 = dst16 + (size_t)(x / 2) * 4u;
+            d0[0] = y0;
+            d0[1] = u0;
+            d0[2] = (x + 1 < frame_w) ? y1 : y0;
+            d0[3] = v0;
+
+            if (x + 2 < frame_w)
+            {
+                uint16_t *d1 = dst16 + (size_t)((x + 2) / 2) * 4u;
+                d1[0] = y2;
+                d1[1] = u2;
+                d1[2] = (x + 3 < frame_w) ? y3 : y2;
+                d1[3] = v2;
+            }
+
+            if (x + 4 < frame_w)
+            {
+                uint16_t *d2 = dst16 + (size_t)((x + 4) / 2) * 4u;
+                d2[0] = y4;
+                d2[1] = u4;
+                d2[2] = (x + 5 < frame_w) ? y5 : y4;
+                d2[3] = v4;
+            }
         }
     }
 

@@ -50,6 +50,7 @@ public:
     bool upload_p010_frame(const uint8_t *y, int stride_y, const uint8_t *uv, int stride_uv, int frame_w, int frame_h);
     bool upload_yuy2_frame(const uint8_t *data, int src_stride, int frame_w, int frame_h);
     bool upload_y210_frame(const uint8_t *data, int src_stride, int frame_w, int frame_h);
+    bool upload_v210_frame(const uint8_t *data, int src_stride, int frame_w, int frame_h);
     bool render_uploaded_yuv_to_fp16(gcap_pixfmt_t fmt, int frame_w, int frame_h);
     bool copy_fp16_to_scene();
     bool readback_to_frame(int frame_w, int frame_h, uint64_t pts_ns, uint64_t frame_id,
