@@ -1,7 +1,6 @@
 #include "ffmpeg_video_recorder.h"
 
 #include <algorithm>
-#include <cstring>
 #include <string>
 
 #ifdef GCAP_ENABLE_FFMPEG
@@ -10,6 +9,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/opt.h>
+#include <libswscale/swscale.h>
 }
 #endif
 
@@ -44,10 +44,24 @@ static const char *fmtName(gcap_pixfmt_t fmt)
     }
 }
 
+static AVPixelFormat avInputFormat(gcap_pixfmt_t fmt)
+{
+    switch (fmt)
+    {
+    case GCAP_FMT_NV12: return AV_PIX_FMT_NV12;
+    case GCAP_FMT_YUY2: return AV_PIX_FMT_YUYV422;
+    case GCAP_FMT_ARGB:
+        // DirectShow RGB32/ARGB32 samples arrive in little-endian BGRA byte order.
+        return AV_PIX_FMT_BGRA;
+    case GCAP_FMT_P010: return AV_PIX_FMT_P010LE;
+    case GCAP_FMT_Y210: return AV_PIX_FMT_Y210LE;
+    default: return AV_PIX_FMT_NONE;
+    }
+}
+
 static bool supportedInput(gcap_pixfmt_t fmt)
 {
-    return fmt == GCAP_FMT_NV12 || fmt == GCAP_FMT_YUY2 || fmt == GCAP_FMT_ARGB ||
-           fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
+    return avInputFormat(fmt) != AV_PIX_FMT_NONE;
 }
 
 static bool wantsHevcMain10(gcap_pixfmt_t fmt, bool force)
@@ -55,352 +69,43 @@ static bool wantsHevcMain10(gcap_pixfmt_t fmt, bool force)
     return force || fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
 }
 
-static uint8_t clampByte(int v)
+static bool validateFrameView(const FfmpegVideoFrameView &view, AVPixelFormat srcFmt, std::string *error)
 {
-    return static_cast<uint8_t>(std::max(0, std::min(255, v)));
-}
-
-static uint8_t word10To8(uint16_t v)
-{
-    // P010/Y210 store 10-bit components left-aligned in 16-bit words.
-    return static_cast<uint8_t>(v >> 8);
-}
-
-static uint16_t word10LeftAlignedTo10(uint16_t v)
-{
-    // P010/Y210 valid 10-bit component is stored in bits 15..6.
-    return static_cast<uint16_t>((v >> 6) & 0x03FFu);
-}
-
-static uint16_t byte8To10(uint8_t v)
-{
-    return static_cast<uint16_t>((static_cast<unsigned>(v) * 1023u + 127u) / 255u);
-}
-
-static void rgbToBt709Limited(uint8_t r, uint8_t g, uint8_t b, uint8_t &y, uint8_t &u, uint8_t &v)
-{
-    const int yi = 16  + (( 47 * r + 157 * g +  16 * b + 128) >> 8);
-    const int ui = 128 + ((-26 * r -  87 * g + 112 * b + 128) >> 8);
-    const int vi = 128 + ((112 * r - 102 * g -  10 * b + 128) >> 8);
-    y = clampByte(yi);
-    u = clampByte(ui);
-    v = clampByte(vi);
-}
-
-static bool fillYuv420pFromInput(const FfmpegVideoFrameView &view, AVFrame *frame, std::string *error)
-{
-    const int w = view.width;
-    const int h = view.height;
-    if (!frame || w <= 0 || h <= 0 || (w & 1) || (h & 1))
+    if (view.width <= 0 || view.height <= 0 || (view.width & 1) || (view.height & 1))
     {
         setErr(error, "FFmpeg recorder requires even video size");
         return false;
     }
 
-    uint8_t *dstY = frame->data[0];
-    uint8_t *dstU = frame->data[1];
-    uint8_t *dstV = frame->data[2];
-    const int lsY = frame->linesize[0];
-    const int lsU = frame->linesize[1];
-    const int lsV = frame->linesize[2];
+    if (srcFmt == AV_PIX_FMT_NV12 || srcFmt == AV_PIX_FMT_P010LE)
+    {
+        if (!view.data[0] || !view.data[1] || view.stride[0] <= 0 || view.stride[1] <= 0)
+        {
+            setErr(error, std::string("invalid ") + fmtName(view.format) + " frame");
+            return false;
+        }
+        return true;
+    }
 
-    switch (view.format)
+    if (!view.data[0] || view.stride[0] <= 0)
     {
-    case GCAP_FMT_NV12:
-    {
-        if (!view.data[0] || !view.data[1] || view.stride[0] <= 0 || view.stride[1] <= 0)
-        {
-            setErr(error, "invalid NV12 frame");
-            return false;
-        }
-        for (int y = 0; y < h; ++y)
-            std::memcpy(dstY + y * lsY, view.data[0] + y * view.stride[0], static_cast<size_t>(w));
-        for (int y = 0; y < h / 2; ++y)
-        {
-            const uint8_t *src = view.data[1] + y * view.stride[1];
-            uint8_t *du = dstU + y * lsU;
-            uint8_t *dv = dstV + y * lsV;
-            for (int x = 0; x < w / 2; ++x)
-            {
-                du[x] = src[x * 2 + 0];
-                dv[x] = src[x * 2 + 1];
-            }
-        }
-        return true;
-    }
-    case GCAP_FMT_P010:
-    {
-        if (!view.data[0] || !view.data[1] || view.stride[0] <= 0 || view.stride[1] <= 0)
-        {
-            setErr(error, "invalid P010 frame");
-            return false;
-        }
-        for (int y = 0; y < h; ++y)
-        {
-            const uint16_t *src = reinterpret_cast<const uint16_t *>(view.data[0] + y * view.stride[0]);
-            uint8_t *dy = dstY + y * lsY;
-            for (int x = 0; x < w; ++x)
-                dy[x] = word10To8(src[x]);
-        }
-        for (int y = 0; y < h / 2; ++y)
-        {
-            const uint16_t *src = reinterpret_cast<const uint16_t *>(view.data[1] + y * view.stride[1]);
-            uint8_t *du = dstU + y * lsU;
-            uint8_t *dv = dstV + y * lsV;
-            for (int x = 0; x < w / 2; ++x)
-            {
-                du[x] = word10To8(src[x * 2 + 0]);
-                dv[x] = word10To8(src[x * 2 + 1]);
-            }
-        }
-        return true;
-    }
-    case GCAP_FMT_YUY2:
-    {
-        if (!view.data[0] || view.stride[0] <= 0)
-        {
-            setErr(error, "invalid YUY2 frame");
-            return false;
-        }
-        for (int y = 0; y < h; ++y)
-        {
-            const uint8_t *src = view.data[0] + y * view.stride[0];
-            uint8_t *dy = dstY + y * lsY;
-            for (int x = 0; x < w; x += 2)
-            {
-                dy[x + 0] = src[x * 2 + 0];
-                dy[x + 1] = src[x * 2 + 2];
-            }
-        }
-        for (int y = 0; y < h / 2; ++y)
-        {
-            const uint8_t *row0 = view.data[0] + (y * 2 + 0) * view.stride[0];
-            const uint8_t *row1 = view.data[0] + (y * 2 + 1) * view.stride[0];
-            uint8_t *du = dstU + y * lsU;
-            uint8_t *dv = dstV + y * lsV;
-            for (int x = 0; x < w / 2; ++x)
-            {
-                const int off = x * 4;
-                du[x] = static_cast<uint8_t>((int(row0[off + 1]) + int(row1[off + 1]) + 1) / 2);
-                dv[x] = static_cast<uint8_t>((int(row0[off + 3]) + int(row1[off + 3]) + 1) / 2);
-            }
-        }
-        return true;
-    }
-    case GCAP_FMT_Y210:
-    {
-        if (!view.data[0] || view.stride[0] <= 0)
-        {
-            setErr(error, "invalid Y210 frame");
-            return false;
-        }
-        for (int y = 0; y < h; ++y)
-        {
-            const uint16_t *src = reinterpret_cast<const uint16_t *>(view.data[0] + y * view.stride[0]);
-            uint8_t *dy = dstY + y * lsY;
-            for (int x = 0; x < w; x += 2)
-            {
-                dy[x + 0] = word10To8(src[x * 2 + 0]);
-                dy[x + 1] = word10To8(src[x * 2 + 2]);
-            }
-        }
-        for (int y = 0; y < h / 2; ++y)
-        {
-            const uint16_t *row0 = reinterpret_cast<const uint16_t *>(view.data[0] + (y * 2 + 0) * view.stride[0]);
-            const uint16_t *row1 = reinterpret_cast<const uint16_t *>(view.data[0] + (y * 2 + 1) * view.stride[0]);
-            uint8_t *du = dstU + y * lsU;
-            uint8_t *dv = dstV + y * lsV;
-            for (int x = 0; x < w / 2; ++x)
-            {
-                const int off = x * 4;
-                du[x] = static_cast<uint8_t>((int(word10To8(row0[off + 1])) + int(word10To8(row1[off + 1])) + 1) / 2);
-                dv[x] = static_cast<uint8_t>((int(word10To8(row0[off + 3])) + int(word10To8(row1[off + 3])) + 1) / 2);
-            }
-        }
-        return true;
-    }
-    case GCAP_FMT_ARGB:
-    {
-        if (!view.data[0] || view.stride[0] <= 0)
-        {
-            setErr(error, "invalid ARGB/RGB32 frame");
-            return false;
-        }
-        for (int y = 0; y < h; y += 2)
-        {
-            const uint8_t *row0 = view.data[0] + y * view.stride[0];
-            const uint8_t *row1 = view.data[0] + (y + 1) * view.stride[0];
-            uint8_t *dy0 = dstY + y * lsY;
-            uint8_t *dy1 = dstY + (y + 1) * lsY;
-            uint8_t *du = dstU + (y / 2) * lsU;
-            uint8_t *dv = dstV + (y / 2) * lsV;
-            for (int x = 0; x < w; x += 2)
-            {
-                uint8_t yy[4], uu[4], vv[4];
-                const uint8_t *p0 = row0 + (x + 0) * 4;
-                const uint8_t *p1 = row0 + (x + 1) * 4;
-                const uint8_t *p2 = row1 + (x + 0) * 4;
-                const uint8_t *p3 = row1 + (x + 1) * 4;
-                rgbToBt709Limited(p0[2], p0[1], p0[0], yy[0], uu[0], vv[0]);
-                rgbToBt709Limited(p1[2], p1[1], p1[0], yy[1], uu[1], vv[1]);
-                rgbToBt709Limited(p2[2], p2[1], p2[0], yy[2], uu[2], vv[2]);
-                rgbToBt709Limited(p3[2], p3[1], p3[0], yy[3], uu[3], vv[3]);
-                dy0[x + 0] = yy[0];
-                dy0[x + 1] = yy[1];
-                dy1[x + 0] = yy[2];
-                dy1[x + 1] = yy[3];
-                du[x / 2] = static_cast<uint8_t>((int(uu[0]) + int(uu[1]) + int(uu[2]) + int(uu[3]) + 2) / 4);
-                dv[x / 2] = static_cast<uint8_t>((int(vv[0]) + int(vv[1]) + int(vv[2]) + int(vv[3]) + 2) / 4);
-            }
-        }
-        return true;
-    }
-    default:
-        setErr(error, std::string("unsupported FFmpeg recorder input format: ") + fmtName(view.format));
+        setErr(error, std::string("invalid ") + fmtName(view.format) + " frame");
         return false;
     }
+    return true;
 }
 
-static bool fillYuv420p10FromInput(const FfmpegVideoFrameView &view, AVFrame *frame, std::string *error)
+static void configureColorSpace(SwsContext *sws, AVPixelFormat srcFmt)
 {
-    const int w = view.width;
-    const int h = view.height;
-    if (!frame || w <= 0 || h <= 0 || (w & 1) || (h & 1))
-    {
-        setErr(error, "FFmpeg Main10 recorder requires even video size");
-        return false;
-    }
+    if (!sws)
+        return;
 
-    uint16_t *dstY = reinterpret_cast<uint16_t *>(frame->data[0]);
-    uint16_t *dstU = reinterpret_cast<uint16_t *>(frame->data[1]);
-    uint16_t *dstV = reinterpret_cast<uint16_t *>(frame->data[2]);
-    const int lsY = frame->linesize[0] / 2;
-    const int lsU = frame->linesize[1] / 2;
-    const int lsV = frame->linesize[2] / 2;
-
-    switch (view.format)
-    {
-    case GCAP_FMT_P010:
-    {
-        if (!view.data[0] || !view.data[1] || view.stride[0] <= 0 || view.stride[1] <= 0)
-        {
-            setErr(error, "invalid P010 frame");
-            return false;
-        }
-        for (int y = 0; y < h; ++y)
-        {
-            const uint16_t *src = reinterpret_cast<const uint16_t *>(view.data[0] + y * view.stride[0]);
-            uint16_t *dy = dstY + y * lsY;
-            for (int x = 0; x < w; ++x)
-                dy[x] = word10LeftAlignedTo10(src[x]);
-        }
-        for (int y = 0; y < h / 2; ++y)
-        {
-            const uint16_t *src = reinterpret_cast<const uint16_t *>(view.data[1] + y * view.stride[1]);
-            uint16_t *du = dstU + y * lsU;
-            uint16_t *dv = dstV + y * lsV;
-            for (int x = 0; x < w / 2; ++x)
-            {
-                du[x] = word10LeftAlignedTo10(src[x * 2 + 0]);
-                dv[x] = word10LeftAlignedTo10(src[x * 2 + 1]);
-            }
-        }
-        return true;
-    }
-    case GCAP_FMT_Y210:
-    {
-        if (!view.data[0] || view.stride[0] <= 0)
-        {
-            setErr(error, "invalid Y210 frame");
-            return false;
-        }
-        for (int y = 0; y < h; ++y)
-        {
-            const uint16_t *src = reinterpret_cast<const uint16_t *>(view.data[0] + y * view.stride[0]);
-            uint16_t *dy = dstY + y * lsY;
-            for (int x = 0; x < w; x += 2)
-            {
-                dy[x + 0] = word10LeftAlignedTo10(src[x * 2 + 0]);
-                dy[x + 1] = word10LeftAlignedTo10(src[x * 2 + 2]);
-            }
-        }
-        for (int y = 0; y < h / 2; ++y)
-        {
-            const uint16_t *row0 = reinterpret_cast<const uint16_t *>(view.data[0] + (y * 2 + 0) * view.stride[0]);
-            const uint16_t *row1 = reinterpret_cast<const uint16_t *>(view.data[0] + (y * 2 + 1) * view.stride[0]);
-            uint16_t *du = dstU + y * lsU;
-            uint16_t *dv = dstV + y * lsV;
-            for (int x = 0; x < w / 2; ++x)
-            {
-                const int off = x * 4;
-                const unsigned u0 = word10LeftAlignedTo10(row0[off + 1]);
-                const unsigned u1 = word10LeftAlignedTo10(row1[off + 1]);
-                const unsigned v0 = word10LeftAlignedTo10(row0[off + 3]);
-                const unsigned v1 = word10LeftAlignedTo10(row1[off + 3]);
-                du[x] = static_cast<uint16_t>((u0 + u1 + 1u) / 2u);
-                dv[x] = static_cast<uint16_t>((v0 + v1 + 1u) / 2u);
-            }
-        }
-        return true;
-    }
-    case GCAP_FMT_NV12:
-    case GCAP_FMT_YUY2:
-    case GCAP_FMT_ARGB:
-    {
-        AVFrame *tmp = av_frame_alloc();
-        if (!tmp)
-        {
-            setErr(error, "av_frame_alloc temp failed");
-            return false;
-        }
-        tmp->format = AV_PIX_FMT_YUV420P;
-        tmp->width = w;
-        tmp->height = h;
-        int ret = av_frame_get_buffer(tmp, 32);
-        if (ret < 0)
-        {
-            setErr(error, "av_frame_get_buffer temp failed: " + ffErr(ret));
-            av_frame_free(&tmp);
-            return false;
-        }
-        ret = av_frame_make_writable(tmp);
-        if (ret < 0)
-        {
-            setErr(error, "av_frame_make_writable temp failed: " + ffErr(ret));
-            av_frame_free(&tmp);
-            return false;
-        }
-        if (!fillYuv420pFromInput(view, tmp, error))
-        {
-            av_frame_free(&tmp);
-            return false;
-        }
-        for (int y = 0; y < h; ++y)
-        {
-            const uint8_t *sy = tmp->data[0] + y * tmp->linesize[0];
-            uint16_t *dy = dstY + y * lsY;
-            for (int x = 0; x < w; ++x)
-                dy[x] = byte8To10(sy[x]);
-        }
-        for (int y = 0; y < h / 2; ++y)
-        {
-            const uint8_t *su = tmp->data[1] + y * tmp->linesize[1];
-            const uint8_t *sv = tmp->data[2] + y * tmp->linesize[2];
-            uint16_t *du = dstU + y * lsU;
-            uint16_t *dv = dstV + y * lsV;
-            for (int x = 0; x < w / 2; ++x)
-            {
-                du[x] = byte8To10(su[x]);
-                dv[x] = byte8To10(sv[x]);
-            }
-        }
-        av_frame_free(&tmp);
-        return true;
-    }
-    default:
-        setErr(error, std::string("unsupported Main10 input format: ") + fmtName(view.format));
-        return false;
-    }
+    const bool srcIsRgb = srcFmt == AV_PIX_FMT_BGRA;
+    const int srcRange = srcIsRgb ? 1 : 0;
+    const int dstRange = 0;
+    const int *coeff = sws_getCoefficients(SWS_CS_ITU709);
+    sws_setColorspaceDetails(sws, coeff, srcRange, coeff, dstRange,
+                             0, 1 << 16, 1 << 16);
 }
 #endif
 }
@@ -412,6 +117,7 @@ struct FfmpegVideoRecorder::Impl
     AVCodecContext *codec = nullptr;
     AVStream *stream = nullptr;
     AVPacket *pkt = nullptr;
+    SwsContext *sws = nullptr;
 #endif
 };
 
@@ -439,6 +145,11 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     if (cfg.path.empty() || cfg.width <= 0 || cfg.height <= 0 || cfg.fps_num <= 0 || cfg.fps_den <= 0)
     {
         setErr(error, "invalid FFmpeg recorder config");
+        return false;
+    }
+    if ((cfg.width & 1) || (cfg.height & 1))
+    {
+        setErr(error, "FFmpeg recorder requires even video size");
         return false;
     }
     if (!supportedInput(cfg.input_format))
@@ -598,7 +309,10 @@ bool FfmpegVideoRecorder::writeFrame(const FfmpegVideoFrameView &view, std::stri
         return false;
     }
 
-    const bool useHevcMain10 = wantsHevcMain10(cfg_.input_format, cfg_.force_hevc_main10);
+    const AVPixelFormat srcFmt = avInputFormat(view.format);
+    const AVPixelFormat dstFmt = impl_->codec->pix_fmt;
+    if (!validateFrameView(view, srcFmt, error))
+        return false;
 
     AVFrame *frame = av_frame_alloc();
     if (!frame)
@@ -606,7 +320,7 @@ bool FfmpegVideoRecorder::writeFrame(const FfmpegVideoFrameView &view, std::stri
         setErr(error, "av_frame_alloc failed");
         return false;
     }
-    frame->format = useHevcMain10 ? AV_PIX_FMT_YUV420P10LE : AV_PIX_FMT_YUV420P;
+    frame->format = dstFmt;
     frame->width = cfg_.width;
     frame->height = cfg_.height;
     frame->pts = view.pts;
@@ -627,10 +341,25 @@ bool FfmpegVideoRecorder::writeFrame(const FfmpegVideoFrameView &view, std::stri
         return false;
     }
 
-    const bool filled = useHevcMain10 ? fillYuv420p10FromInput(view, frame, error)
-                                      : fillYuv420pFromInput(view, frame, error);
-    if (!filled)
+    impl_->sws = sws_getCachedContext(impl_->sws,
+                                      view.width, view.height, srcFmt,
+                                      frame->width, frame->height, dstFmt,
+                                      SWS_BILINEAR | SWS_ACCURATE_RND,
+                                      nullptr, nullptr, nullptr);
+    if (!impl_->sws)
     {
+        setErr(error, std::string("sws_getCachedContext failed for ") + fmtName(view.format));
+        av_frame_free(&frame);
+        return false;
+    }
+    configureColorSpace(impl_->sws, srcFmt);
+
+    const uint8_t *srcData[4] = {view.data[0], view.data[1], view.data[2], view.data[3]};
+    int srcStride[4] = {view.stride[0], view.stride[1], view.stride[2], view.stride[3]};
+    ret = sws_scale(impl_->sws, srcData, srcStride, 0, view.height, frame->data, frame->linesize);
+    if (ret != view.height)
+    {
+        setErr(error, "sws_scale failed");
         av_frame_free(&frame);
         return false;
     }
@@ -690,6 +419,11 @@ void FfmpegVideoRecorder::close()
     }
     if (impl_)
     {
+        if (impl_->sws)
+        {
+            sws_freeContext(impl_->sws);
+            impl_->sws = nullptr;
+        }
         if (impl_->pkt)
             av_packet_free(&impl_->pkt);
         if (impl_->codec)
