@@ -4,9 +4,9 @@
 
 - `sdk/gcapture`：正式 capture SDK，輸出 `gcapture.dll` / `gcapture.lib`。目前主線 frame path 是 DirectShow，並保留 WinMF backend。
 - `sdk/gdisplay`：顯示器 / EDID 相關 SDK，輸出 `gdisplay.dll` / `gdisplay.lib`。
-- `apps/qt6_viewer`：Qt6 viewer demo，預設只 link 正式產品 SDK：`gcapture` 與 `gdisplay`。
+- `apps/qt6_viewer`：Qt6 viewer demo，link `gcapture`、`gdisplay`，並可透過 `GVendor Direct` 使用 XDMA direct-capture backend。
 
-`sdk/gvendor` 目前定位為工程診斷用 KS backend，不是預設產品路線。
+`sdk/gvendor` 目前是 XDMA direct-capture backend，提供給 viewer 的 `GVendor Direct` 使用。
 
 ## Build
 
@@ -57,33 +57,18 @@ gcapture.dll
 
 frame path 可以先維持 DirectShow，等 private shared-buffer frame API 成熟後再替換。
 
-## GVendor 診斷工具
+## GVendor XDMA backend
 
-`sdk/gvendor` 目前保留兩種診斷 backend：
+`sdk/gvendor` provides the XDMA direct-capture backend used by the Qt viewer `GVendor Direct` option. The old KS-direct path and `gvendor_probe.exe` console tool have been removed.
 
-- KS-direct：直接透過 `KsCreatePin` / `IOCTL_KS_READ_STREAM` 從 AVStream capture pin 讀 frame。
-
-目前提供的 driver package 沒有 expose XDMA user-mode interface，所以專案先不提供 XDMA backend 開關。KS-direct 已驗證可以抓到 frame，但目前定位是診斷 / fallback，不是 viewer 預設 backend。
-
-需要診斷工具時，在 CMake 開啟：
-
-```text
-BUILD_GVENDOR_PROBE=ON
-```
-
-常用參數：
-
-```text
-gvendor_probe.exe list
-gvendor_probe.exe sdi
-gvendor_probe.exe sdi --frames 100
-gvendor_probe.exe sdi --device 2
-```
-
-如果真的要把 `GVendor Direct` 放回 viewer 下拉選單，需另外開啟：
-
+Enable the viewer backend with:
 ```text
 BUILD_QT_VIEWER_GVENDOR_BACKEND=ON
+```
+
+Enable verbose XDMA flow logging with:
+```text
+GVENDOR_XDMA_DEBUG_LOG=ON
 ```
 
 ## 舊 CaptureSDK 狀態

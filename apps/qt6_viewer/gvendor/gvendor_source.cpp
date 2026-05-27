@@ -109,11 +109,32 @@ bool GVendorSource::start(int width, int height)
         return false;
     }
 
+    uint32_t streamWidth = width > 0 ? static_cast<uint32_t>(width) : 0u;
+    uint32_t streamHeight = height > 0 ? static_cast<uint32_t>(height) : 0u;
+
+    gv_signal_status_t preSignal = {};
+    if ((streamWidth == 0 || streamHeight == 0) && gv_get_signal_status(handle_, &preSignal) == GV_OK)
+    {
+        if (preSignal.signal_locked && preSignal.width > 0 && preSignal.height > 0)
+        {
+            streamWidth = preSignal.width;
+            streamHeight = preSignal.height;
+            emit errorOccurred(QStringLiteral("detected input size: %1x%2")
+                                   .arg(streamWidth)
+                                   .arg(streamHeight));
+        }
+    }
+
+    if (streamWidth == 0)
+        streamWidth = 1920u;
+    if (streamHeight == 0)
+        streamHeight = 1080u;
+
     gv_stream_desc_t desc = {};
     desc.channel_index = 0;
     desc.input = GDRIVER_INPUT_SDI;
-    desc.width = width > 0 ? static_cast<uint32_t>(width) : 1920u;
-    desc.height = height > 0 ? static_cast<uint32_t>(height) : 1080u;
+    desc.width = streamWidth;
+    desc.height = streamHeight;
     desc.fps_num = 30000;
     desc.fps_den = 1001;
     desc.pixel_format = GDRIVER_PIXFMT_YUY2;

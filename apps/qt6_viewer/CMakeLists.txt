@@ -50,7 +50,7 @@ else()
   add_executable(qt6_viewer ${VIEWER_SOURCES})
 endif()
 
-# Experimental vendor-direct backend (Windows): KS diagnostic path.
+# Experimental vendor-direct backend (Windows): XDMA direct-capture path.
 if (WIN32 AND BUILD_QT_VIEWER_GVENDOR_BACKEND)
   target_sources(qt6_viewer PRIVATE
     gvendor/gvendor_source.h

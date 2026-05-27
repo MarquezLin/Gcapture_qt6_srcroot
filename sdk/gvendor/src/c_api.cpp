@@ -1,7 +1,6 @@
 #ifdef _WIN32
 #include "gvendor.h"
-#include "ks_capture_session.h"
-#include "ks_device_enumerator.h"
+#include "xdma_capture_session.h"
 
 #include <new>
 #include <vector>
@@ -22,14 +21,14 @@ namespace
 
 struct gv_handle_t
 {
-    gvendor::KsCaptureSession session;
+    gvendor::XdmaCaptureSession session;
 };
 
 extern "C"
 {
     GVENDOR_API int gv_enumerate_devices(gv_device_entry_t *out, int max_devices)
     {
-        const std::vector<gvendor::KsCaptureDevice> devices = gvendor::enumerate_ks_capture_devices();
+        const std::vector<gvendor::XdmaDevice> devices = gvendor::enumerate_xdma_devices();
         if (!out || max_devices <= 0)
             return static_cast<int>(devices.size());
 
@@ -40,7 +39,7 @@ extern "C"
             gv_device_entry_t entry = {};
             copy_wide_to_utf8(device.friendly_name, entry.friendly_name, sizeof(entry.friendly_name));
             copy_wide_to_utf8(device.interface_path, entry.device_path, sizeof(entry.device_path));
-            entry.inferred_input = device.inferred_input;
+            entry.inferred_input = GDRIVER_INPUT_SDI;
             out[i] = entry;
         }
         return n;
@@ -73,7 +72,7 @@ extern "C"
             return GV_EINVAL;
         *out = nullptr;
 
-        const std::vector<gvendor::KsCaptureDevice> devices = gvendor::enumerate_ks_capture_devices();
+        const std::vector<gvendor::XdmaDevice> devices = gvendor::enumerate_xdma_devices();
         const size_t index = static_cast<size_t>(device_index);
         if (index >= devices.size())
             return GV_ENODEV;

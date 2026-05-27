@@ -27,23 +27,16 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
-# Optional engineering diagnostics. The product viewer uses gcapture by default;
-# gvendor is kept as an opt-in KS probe path while the driver private API is
-# still being defined.
-option(BUILD_GVENDOR_PROBE "Build the gvendor KS diagnostic probe tool" OFF)
-option(BUILD_QT_VIEWER_GVENDOR_BACKEND "Expose experimental GVendor backend in qt6_viewer" OFF)
+# Optional XDMA direct-capture backend for the Qt viewer.
+option(BUILD_QT_VIEWER_GVENDOR_BACKEND "Expose XDMA GVendor backend in qt6_viewer" ON)
 
 # SDK / DLLs
 add_subdirectory(sdk/gcapture)
 add_subdirectory(sdk/gdisplay)
 
-if (WIN32 AND (BUILD_GVENDOR_PROBE OR BUILD_QT_VIEWER_GVENDOR_BACKEND))
+if (WIN32 AND BUILD_QT_VIEWER_GVENDOR_BACKEND)
   add_subdirectory(sdk/gvendor)
 endif()
 
 # Apps / demos
 add_subdirectory(apps/qt6_viewer)
-
-if (WIN32 AND BUILD_GVENDOR_PROBE)
-  add_subdirectory(apps/gvendor_probe)
-endif()

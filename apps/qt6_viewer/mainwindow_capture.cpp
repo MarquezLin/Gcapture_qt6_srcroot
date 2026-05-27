@@ -309,7 +309,7 @@ void MainWindow::onStart()
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
     if (backend == 100)
     {
-        usingGVendor_ = gVendor_ && gVendor_->start(1920, 1080);
+        usingGVendor_ = gVendor_ && gVendor_->start(0, 0);
         if (!usingGVendor_)
         {
             QMessageBox::warning(this, QStringLiteral("GVendor Direct"),
@@ -318,7 +318,7 @@ void MainWindow::onStart()
         }
         else
         {
-            MainWindow::postLog(QStringLiteral("[GVendor] direct started device=%1 request=SDI/1920x1080")
+            MainWindow::postLog(QStringLiteral("[GVendor] direct started device=%1 request=SDI/auto")
                                     .arg(gVendor_ ? gVendor_->deviceName() : QStringLiteral("(unknown)")));
             if (ui->statusbar)
                 ui->statusbar->showMessage(QStringLiteral("GVendor Direct started: %1")

@@ -122,9 +122,9 @@ GVENDOR_API gv_status_t gv_configure_stream(gv_handle h, const gv_stream_desc_t 
 GVENDOR_API gv_status_t gv_start_stream(gv_handle h);
 GVENDOR_API gv_status_t gv_stop_stream(gv_handle h);
 
-/* Waits for one frame from the active KS stream. timeout_ms == 0 waits indefinitely. */
+/* Waits for one frame from the active XDMA stream. timeout_ms == 0 waits indefinitely. */
 GVENDOR_API gv_status_t gv_wait_frame(gv_handle h, uint32_t timeout_ms, gv_frame_t *out);
-/* KS-direct v0.1 uses SDK-owned staging memory, so release is currently a lightweight acknowledgment. */
+/* XDMA direct v0.1 uses SDK-owned staging memory, so release is currently a lightweight acknowledgment. */
 GVENDOR_API gv_status_t gv_release_frame(gv_handle h, const gv_frame_t *frame);
 
 GVENDOR_API const char *gv_strerror(gv_status_t status);
