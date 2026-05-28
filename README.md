@@ -4,9 +4,9 @@
 
 - `sdk/gcapture`：正式 capture SDK，輸出 `gcapture.dll` / `gcapture.lib`。目前主線 frame path 是 DirectShow，並保留 WinMF backend。
 - `sdk/gdisplay`：顯示器 / EDID 相關 SDK，輸出 `gdisplay.dll` / `gdisplay.lib`。
-- `apps/qt6_viewer`：Qt6 viewer demo，link `gcapture`、`gdisplay`，並可透過 `GVendor Direct` 使用 XDMA direct-capture backend。
+- `apps/qt6_viewer`：Qt6 viewer demo，link `gcapture`、`gdisplay`，並可透過 `GVendor Direct` 使用 standalone XDMA SDK。
 
-`sdk/gvendor` 目前是 XDMA direct-capture backend，提供給 viewer 的 `GVendor Direct` 使用。
+`sdk/gxdma` 是 standalone XDMA capture SDK，提供給 viewer 的 `GVendor Direct` 使用；`sdk/gvendor` 則是底層 XDMA driver access layer。
 
 ## Build
 
@@ -57,13 +57,13 @@ gcapture.dll
 
 frame path 可以先維持 DirectShow，等 private shared-buffer frame API 成熟後再替換。
 
-## GVendor XDMA backend
+## Standalone XDMA SDK
 
-`sdk/gvendor` provides the XDMA direct-capture backend used by the Qt viewer `GVendor Direct` option. The old KS-direct path and `gvendor_probe.exe` console tool have been removed.
+`sdk/gxdma` is the standalone XDMA capture SDK used by the Qt viewer `GVendor Direct` option. It uses `sdk/gvendor` for low-level XDMA driver access, but it is intentionally separate from `sdk/gcapture` while the XDMA driver path is still under development. The old KS-direct path and `gvendor_probe.exe` console tool have been removed.
 
-Enable the viewer backend with:
+Enable the standalone XDMA SDK/viewer integration with:
 ```text
-BUILD_QT_VIEWER_GVENDOR_BACKEND=ON
+BUILD_GXDMA_SDK=ON
 ```
 
 Enable verbose XDMA flow logging with:
@@ -82,4 +82,4 @@ GVENDOR_XDMA_DEBUG_LOG=ON
 - `gcapture.dll`
 - `gdisplay.dll`
 
-只有在開啟 `BUILD_QT_VIEWER_GVENDOR_BACKEND=ON` 時，viewer 才需要 `gvendor.dll`。
+只有在開啟 `BUILD_GXDMA_SDK=ON` 時，viewer 才需要 `gxdma.dll` / `gvendor.dll`。

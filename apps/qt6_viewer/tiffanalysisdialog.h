@@ -7,7 +7,7 @@
 class QPlainTextEdit;
 class QLabel;
 class QCheckBox;
-class d3dpreviewwidget;
+class TiffPreviewWidget;
 
 class TiffAnalysisDialog : public QDialog
 {
@@ -24,7 +24,7 @@ private:
     QPlainTextEdit *text_ = nullptr;
     QLabel *viewerDiagLabel_ = nullptr;
     QCheckBox *ditherCheck_ = nullptr;
-    d3dpreviewwidget *viewer_ = nullptr;
+    TiffPreviewWidget *viewer_ = nullptr;
 };
 
 #endif // TIFFANALYSISDIALOG_H

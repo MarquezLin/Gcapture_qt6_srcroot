@@ -67,6 +67,7 @@ void MainWindow::resetRuntimeTracking()
     framePacketLogCount_ = 0;
     ++framePacketSessionId_;
     initialPreviewSizeApplied_ = false;
+    lastFrameImage_ = QImage();
 }
 
 void MainWindow::clearPreviewSurface()
@@ -82,6 +83,14 @@ void MainWindow::clearPreviewSurface()
 void MainWindow::closeCaptureSession()
 {
     stopPreviewAudio();
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (usingGxdma_ && gxdma_)
+    {
+        gxdma_->stop();
+        usingGxdma_ = false;
+    }
+#endif
 
     if (!h_)
         return;
@@ -267,8 +276,8 @@ void MainWindow::stopPreviewAudio()
 void MainWindow::onStart()
 {
     if (h_
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
-        || usingGVendor_
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+        || usingGxdma_
 #endif
     )
     {
@@ -306,24 +315,51 @@ void MainWindow::onStart()
                        .arg(usePacketCallback_ ? "true" : "false")
                        .arg(packetLogOnly_ ? "true" : "false"));
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
-    if (backend == 100)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (backend == kQtViewerGxdmaBackend)
     {
-        usingGVendor_ = gVendor_ && gVendor_->start(0, 0);
-        if (!usingGVendor_)
+        if (!gxdma_)
         {
-            QMessageBox::warning(this, QStringLiteral("GVendor Direct"),
-                                 QStringLiteral("Start failed: %1")
-                                     .arg(gVendor_ ? gVendor_->lastError() : QStringLiteral("gVendor_ is null")));
+            QMessageBox::warning(this, QStringLiteral("GXDMA"), QStringLiteral("GXDMA source is not available."));
+            return;
         }
-        else
+
+        currentProfile_ = {};
+        currentProfile_.mode = GCAP_PROFILE_DEVICE_DEFAULT;
+        currentProfile_.format = GCAP_FMT_YUY2;
+        currentProfile_.fps_num = 30000;
+        currentProfile_.fps_den = 1001;
+
+        const bool started = gxdma_->start(hwnd, deviceIndex_, selectedPreviewBitDepthMode());
+        if (!started)
         {
-            MainWindow::postLog(QStringLiteral("[GVendor] direct started device=%1 request=SDI/auto")
-                                    .arg(gVendor_ ? gVendor_->deviceName() : QStringLiteral("(unknown)")));
+            usingGxdma_ = false;
+            clearPreviewSurface();
             if (ui->statusbar)
-                ui->statusbar->showMessage(QStringLiteral("GVendor Direct started: %1")
-                                               .arg(gVendor_ ? gVendor_->deviceName() : QStringLiteral("(unknown)")));
+                ui->statusbar->showMessage(QStringLiteral("GXDMA start failed"), 5000);
+            return;
         }
+
+        usingGxdma_ = true;
+        const gxdma_signal_status_t sig = gxdma_->signalStatus();
+        if (sig.width > 0)
+            currentProfile_.width = sig.width;
+        if (sig.height > 0)
+            currentProfile_.height = sig.height;
+        if (sig.fps_num > 0)
+            currentProfile_.fps_num = sig.fps_num;
+        if (sig.fps_den > 0)
+            currentProfile_.fps_den = sig.fps_den;
+
+        MainWindow::postLog(QStringLiteral("[GXDMA] started deviceIndex=%1 %2x%3 %4/%5")
+                                .arg(deviceIndex_)
+                                .arg(currentProfile_.width)
+                                .arg(currentProfile_.height)
+                                .arg(currentProfile_.fps_num)
+                                .arg(currentProfile_.fps_den));
+        updateRuntimeStatusUi();
+        refreshCaptureInfoFromSdkAndRuntime(false);
+        refreshDisplayInfoFromCurrentState();
         return;
     }
 #endif
@@ -429,27 +465,17 @@ void MainWindow::onStart()
 
 void MainWindow::onStop()
 {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
-    if (usingGVendor_)
-    {
-        if (gVendor_)
-            gVendor_->stop();
-        usingGVendor_ = false;
-        clearPreviewSurface();
-        invalidateDeviceCapabilityCache();
-        refreshCaptureInfoFromSdkAndRuntime(false);
-        refreshDisplayInfoFromCurrentState();
-        updateRuntimeStatusUi();
-        return;
-    }
+    if (!h_
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+        && !usingGxdma_
 #endif
-
-    if (!h_)
+    )
         return;
 
     stopRecordingSession(false);
     stopPreviewAudio();
-    gcap_stop(h_);
+    if (h_)
+        gcap_stop(h_);
     closeCaptureSession();
     clearPreviewSurface();
     lastVideoCallbackPtsNs_ = 0;
@@ -500,14 +526,15 @@ void MainWindow::onOpenSnapshot()
 
 void MainWindow::onRecord()
 {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
-    if (usingGVendor_)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (usingGxdma_)
     {
         QMessageBox::information(this, QStringLiteral("Record"),
-                                 QStringLiteral("GVendor Direct backend is enabled. This demo currently supports recording only via gcapture backend."));
+                                 QStringLiteral("GXDMA is currently preview-only. Recording will be added in the standalone XDMA SDK path later."));
         return;
     }
 #endif
+
     if (!h_)
     {
         QMessageBox::warning(this, QStringLiteral("Record"),

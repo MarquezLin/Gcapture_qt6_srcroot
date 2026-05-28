@@ -64,11 +64,7 @@ void MainWindow::ensureDeviceCapabilityCache(int deviceIndex)
 {
     const int backend = ui && ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
 
-    if (deviceIndex < 0
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
-        || backend == 100
-#endif
-    )
+    if (deviceIndex < 0)
     {
         cachedDeviceCapsBackend_ = -1;
         cachedDeviceCapsIndex_ = -1;
@@ -85,6 +81,14 @@ void MainWindow::ensureDeviceCapabilityCache(int deviceIndex)
     cachedDeviceCapsIndex_ = deviceIndex;
     cachedSupportedFormats_.clear();
     cachedPropertyPages_.clear();
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (backend == kQtViewerGxdmaBackend)
+    {
+        cachedSupportedFormats_ << QStringLiteral("YUY2");
+        return;
+    }
+#endif
 
     // Detailed StreamCaps and vendor property pages are DirectShow-specific APIs.
     // Do not query them with a WinMF device index, because backend indexes can differ.
@@ -253,6 +257,33 @@ void MainWindow::showAndActivateDialog(QWidget *dialog)
 
 void MainWindow::refreshCaptureRuntimeInfo()
 {
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (usingGxdma_ && gxdma_)
+    {
+        const gxdma_runtime_info_t rt = gxdma_->runtimeInfo();
+        const gxdma_preview_info_t pv = gxdma_->previewInfo();
+        gcap_signal_status_t sig{};
+        sig.width = rt.signal.width;
+        sig.height = rt.signal.height;
+        sig.fps_num = rt.signal.fps_num;
+        sig.fps_den = rt.signal.fps_den;
+        sig.pixfmt = GCAP_FMT_YUY2;
+        sig.bit_depth = rt.signal.bit_depth;
+        sig.csp = GCAP_CSP_BT709;
+        sig.range = GCAP_RANGE_LIMITED;
+
+        captureInfo_.signal = sig;
+        captureInfo_.signalProbe = sig;
+        captureInfo_.negotiated = sig;
+        captureInfo_.backendName = QString::fromUtf8(rt.backend_name);
+        captureInfo_.frameSource = QString::fromUtf8(rt.frame_source);
+        captureInfo_.pathName = QString::fromUtf8(rt.capture_path);
+        captureInfo_.captureFormat = QString::fromUtf8(rt.source_format);
+        captureInfo_.renderFormat = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
+        return;
+    }
+#endif
+
     if (!h_)
         return;
 
@@ -276,6 +307,11 @@ void MainWindow::refreshCaptureRuntimeInfo()
 
 void MainWindow::refreshCaptureDeviceProps(bool throttleDeviceProps)
 {
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (usingGxdma_)
+        return;
+#endif
+
     if (!h_)
         return;
 
@@ -370,6 +406,14 @@ void MainWindow::refreshDisplayInfoFromFrame(const QImage &img)
         displayInfo_.pipe.adapterName = gpuName_;
         displayInfo_.pipe.adapterIndex = gpuIndex_;
     }
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    else if (backend == kQtViewerGxdmaBackend || usingGxdma_)
+    {
+        displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::Xdma;
+        displayInfo_.pipe.adapterName = gpuName_;
+        displayInfo_.pipe.adapterIndex = gpuIndex_;
+    }
+#endif
     else if (actualBackend == GCAP_BACKEND_WINMF_CPU)
     {
         displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::WinMFCpu;

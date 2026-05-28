@@ -107,6 +107,14 @@ namespace
     static std::vector<gcap_pixfmt_t> enumerateSupportedPixelFormats(int backend, int deviceIndex)
     {
         std::vector<gcap_pixfmt_t> result;
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+        if (backend == kQtViewerGxdmaBackend)
+        {
+            Q_UNUSED(deviceIndex);
+            result.push_back(GCAP_FMT_YUY2);
+            return result;
+        }
+#endif
         const int fmtCount = gcap_enum_supported_pixel_formats(backend, deviceIndex, nullptr, 0);
         if (fmtCount <= 0)
             return result;
@@ -342,6 +350,14 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
     setWindowTitle(QStringLiteral("Gigabyte v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
 
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    gxdma_ = new GxdmaSource(this);
+    connect(gxdma_, &GxdmaSource::frameReady, this, &MainWindow::sigFrame, Qt::QueuedConnection);
+    connect(gxdma_, &GxdmaSource::errorOccurred, this, [this](const QString &message)
+            { MainWindow::postLog(QStringLiteral("[GXDMA] %1").arg(message), true); },
+            Qt::QueuedConnection);
+#endif
+
     setupRuntimeStatusTimer();
     setupDebugDock();
     setupProcAmpAction();
@@ -358,6 +374,10 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (gxdma_)
+        gxdma_->stop();
+#endif
     if (g_mainWindow == this)
     {
         gcap_set_log_callback(nullptr, nullptr);
@@ -469,6 +489,32 @@ void MainWindow::updateRuntimeStatusUi()
 
     if (!h_)
     {
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+        if (usingGxdma_ && gxdma_)
+        {
+            const gxdma_runtime_info_t rt = gxdma_->runtimeInfo();
+            const gxdma_preview_info_t pv = gxdma_->previewInfo();
+            const double signalFps = (rt.signal.fps_den > 0) ? (double(rt.signal.fps_num) / double(rt.signal.fps_den)) : 0.0;
+            const double runtimeFps = (rt.runtime_fps > 0.0) ? rt.runtime_fps : avgFps_;
+            const QString renderPath = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
+            const QString sb = QStringLiteral("Backend: %1 | Source: %2 | Input %3x%4 %5fps %6 | %7 | Runtime %8fps | Frames %9")
+                                   .arg(QString::fromUtf8(rt.backend_name))
+                                   .arg(QString::fromUtf8(rt.frame_source))
+                                   .arg(rt.signal.width)
+                                   .arg(rt.signal.height)
+                                   .arg(signalFps > 0.0 ? QString::number(signalFps, 'f', 2) : QStringLiteral("--"))
+                                   .arg(QString::fromUtf8(rt.signal.pixel_format))
+                                   .arg(renderPath)
+                                   .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
+                                   .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
+            if (lastRuntimeStatusText_ != sb)
+            {
+                ui->statusbar->showMessage(sb);
+                lastRuntimeStatusText_ = sb;
+            }
+            return;
+        }
+#endif
         const QString sb = QStringLiteral("Idle");
         if (lastRuntimeStatusText_ != sb)
         {
@@ -745,12 +791,8 @@ void MainWindow::setupBackendControls()
     ui->comboBackend->addItem("WinMF GPU", 1);
     ui->comboBackend->addItem("WinMF CPU", 0);
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
-    ui->comboBackend->addItem("GVendor Direct", 100);
-    gVendor_ = new GVendorSource(this);
-    connect(gVendor_, &GVendorSource::frameReady, this, &MainWindow::onFrameArrived, Qt::QueuedConnection);
-    connect(gVendor_, &GVendorSource::errorOccurred, this, [this](const QString &m)
-            { MainWindow::postLog(QStringLiteral("[GVendor] %1").arg(m), true); });
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    ui->comboBackend->addItem("GVendor Direct", kQtViewerGxdmaBackend);
 #endif
 
     const int dsIndex = ui->comboBackend->findData(2);
@@ -796,6 +838,19 @@ QString MainWindow::selectedPreviewBitDepthText() const
 
 void MainWindow::applyPreviewSettingsToActiveSession()
 {
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (usingGxdma_ && gxdma_)
+    {
+        const bool ok = gxdma_->setPreview(previewWindow_ ? previewWindow_->previewHwnd() : nullptr,
+                                           selectedPreviewBitDepthMode());
+        MainWindow::postLog(QStringLiteral("[Preview] GXDMA requested %1%2")
+                                .arg(selectedPreviewBitDepthText())
+                                .arg(ok ? QString() : QStringLiteral(" failed")),
+                            !ok);
+        updateRuntimeStatusUi();
+        return;
+    }
+#endif
     if (!h_)
         return;
 
@@ -904,37 +959,34 @@ void MainWindow::initializeDeviceList()
     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
     const QString previousDeviceName = ui->comboDevice->currentText();
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
-    if (backend == 100)
-    {
-        const QSignalBlocker blocker(ui->comboDevice);
-        ui->comboDevice->clear();
-        ui->comboDevice->addItem(QStringLiteral("GVendor Direct: GIGABYTE Capture"), 0);
-        ui->comboDevice->setCurrentIndex(0);
-        deviceIndex_ = 0;
-
-        invalidateDeviceCapabilityCache();
-        lastPixelFormatWarningKey_.clear();
-        MainWindow::postLog(QStringLiteral("[DeviceList] backend=100 devices=1 selectedIndex=0 selectedName=GVendor Direct: GIGABYTE Capture"));
-        refreshPixelFormatOptions(true);
-        return;
-    }
-#endif
-
     // gcap_enumerate() uses CaptureManager's currently selected backend.
     // Keep the SDK backend in sync with the UI before rebuilding the device list,
     // otherwise WinMF and DirectShow indexes can be mixed up.
-    gcap_set_backend(backend);
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (backend != kQtViewerGxdmaBackend)
+#endif
+        gcap_set_backend(backend);
 
     const QSignalBlocker blocker(ui->comboDevice);
     ui->comboDevice->clear();
 
-    gcap_device_info_t list[16];
-    int n = 0;
-    if (gcap_enumerate(list, 16, &n) == GCAP_OK)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (backend == kQtViewerGxdmaBackend)
     {
-        for (int i = 0; i < n; ++i)
-            ui->comboDevice->addItem(QString::fromUtf8(list[i].name), i);
+        const QStringList devices = GxdmaSource::enumerateDevices();
+        for (int i = 0; i < devices.size(); ++i)
+            ui->comboDevice->addItem(devices.at(i), i);
+    }
+    else
+#endif
+    {
+        gcap_device_info_t list[16];
+        int n = 0;
+        if (gcap_enumerate(list, 16, &n) == GCAP_OK)
+        {
+            for (int i = 0; i < n; ++i)
+                ui->comboDevice->addItem(QString::fromUtf8(list[i].name), i);
+        }
     }
 
     int restoreIndex = -1;
@@ -1049,13 +1101,13 @@ void MainWindow::setupConnections()
                 {
                     const int backend = ui->comboBackend->currentData().toInt();
                     const bool isGVendor =
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
-                        (backend == 100);
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+                        (backend == kQtViewerGxdmaBackend);
 #else
                         false;
 #endif
                     if (ui->comboDevice)
-                        ui->comboDevice->setEnabled(!isGVendor);
+                        ui->comboDevice->setEnabled(true);
 
                     // Re-enumerate devices when backend changes. Device index is only
                     // meaningful within the backend that produced the list.

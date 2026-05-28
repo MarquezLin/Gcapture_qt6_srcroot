@@ -13,6 +13,8 @@ static QString pipelineToString(const DisplayOutputInfo::Pipeline &p)
         return QStringLiteral("NV12→RGBA: CPU path (WinMF CPU)");
     case Path::DirectShow:
         return QStringLiteral("NV12→RGBA: N/A (DirectShow backend)");
+    case Path::Xdma:
+        return QStringLiteral("YUY2 -> RGB: GPU shader path (GXDMA)");
     default:
         return QStringLiteral("NV12→RGBA: (unknown)");
     }

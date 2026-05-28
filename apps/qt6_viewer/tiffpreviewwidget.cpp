@@ -1,4 +1,4 @@
-#include "d3dpreviewwidget.h"
+#include "tiffpreviewwidget.h"
 
 #include <QMutexLocker>
 #include <QResizeEvent>
@@ -62,19 +62,19 @@ static QByteArray compileShader(const char *source, const char *entry, const cha
 }
 #endif
 
-d3dpreviewwidget::d3dpreviewwidget(QWidget *parent)
+TiffPreviewWidget::TiffPreviewWidget(QWidget *parent)
     : QWidget{parent}
 {
     setAttribute(Qt::WA_NativeWindow, true);
     setAutoFillBackground(false);
 }
 
-d3dpreviewwidget::~d3dpreviewwidget()
+TiffPreviewWidget::~TiffPreviewWidget()
 {
     releaseAllD3d();
 }
 
-void d3dpreviewwidget::setFrame(const QImage &img)
+void TiffPreviewWidget::setFrame(const QImage &img)
 {
     {
         QMutexLocker lock(&frameMtx_);
@@ -92,7 +92,7 @@ void d3dpreviewwidget::setFrame(const QImage &img)
     renderNow();
 }
 
-void d3dpreviewwidget::setFrameRgba64(int width, int height, const QByteArray &rgba64, int strideBytes)
+void TiffPreviewWidget::setFrameRgba64(int width, int height, const QByteArray &rgba64, int strideBytes)
 {
     {
         QMutexLocker lock(&frameMtx_);
@@ -107,7 +107,7 @@ void d3dpreviewwidget::setFrameRgba64(int width, int height, const QByteArray &r
     renderNow();
 }
 
-void d3dpreviewwidget::clearFrame()
+void TiffPreviewWidget::clearFrame()
 {
     {
         QMutexLocker lock(&frameMtx_);
@@ -129,7 +129,7 @@ void d3dpreviewwidget::clearFrame()
     emit diagnosticsChanged();
 }
 
-void d3dpreviewwidget::setDitheringEnabled(bool enabled)
+void TiffPreviewWidget::setDitheringEnabled(bool enabled)
 {
     if (ditheringEnabled_ == enabled)
         return;
@@ -138,13 +138,13 @@ void d3dpreviewwidget::setDitheringEnabled(bool enabled)
     emit diagnosticsChanged();
 }
 
-bool d3dpreviewwidget::isDitheringEnabled() const { return ditheringEnabled_; }
+bool TiffPreviewWidget::isDitheringEnabled() const { return ditheringEnabled_; }
 
-QString d3dpreviewwidget::rendererName() const { return rendererName_; }
-QString d3dpreviewwidget::internalTextureFormatName() const { return internalTextureFormatName_; }
-QString d3dpreviewwidget::outputSurfaceFormatName() const { return outputSurfaceFormatName_; }
-bool d3dpreviewwidget::isTenBitOutputSurface() const { return outputSurface10Bit_; }
-QString d3dpreviewwidget::diagnosticsText() const
+QString TiffPreviewWidget::rendererName() const { return rendererName_; }
+QString TiffPreviewWidget::internalTextureFormatName() const { return internalTextureFormatName_; }
+QString TiffPreviewWidget::outputSurfaceFormatName() const { return outputSurfaceFormatName_; }
+bool TiffPreviewWidget::isTenBitOutputSurface() const { return outputSurface10Bit_; }
+QString TiffPreviewWidget::diagnosticsText() const
 {
     return QStringLiteral("Renderer: %1\nInternal Texture: %2\nOutput Surface: %3\n10-bit Output Surface: %4\nSwapChain 8-bit Fallback: %5\nDithering: %6")
         .arg(rendererName_.isEmpty() ? QStringLiteral("Unavailable") : rendererName_)
@@ -155,19 +155,19 @@ QString d3dpreviewwidget::diagnosticsText() const
         .arg(ditheringEnabled_ ? QStringLiteral("On") : QStringLiteral("Off"));
 }
 
-void d3dpreviewwidget::paintEvent(QPaintEvent *event)
+void TiffPreviewWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     renderNow();
 }
 
-void d3dpreviewwidget::resizeEvent(QResizeEvent *event)
+void TiffPreviewWidget::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     renderNow();
 }
 
-void d3dpreviewwidget::showEvent(QShowEvent *event)
+void TiffPreviewWidget::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
 #ifdef _WIN32
@@ -177,7 +177,7 @@ void d3dpreviewwidget::showEvent(QShowEvent *event)
     renderNow();
 }
 
-void d3dpreviewwidget::hideEvent(QHideEvent *event)
+void TiffPreviewWidget::hideEvent(QHideEvent *event)
 {
 #ifdef _WIN32
     releaseSwapChainResources();
@@ -186,7 +186,7 @@ void d3dpreviewwidget::hideEvent(QHideEvent *event)
     QWidget::hideEvent(event);
 }
 
-void d3dpreviewwidget::ensureDevice()
+void TiffPreviewWidget::ensureDevice()
 {
 #ifndef _WIN32
     rendererName_ = QStringLiteral("D3D11 unavailable");
@@ -242,7 +242,7 @@ void d3dpreviewwidget::ensureDevice()
 #endif
 }
 
-void d3dpreviewwidget::ensureSwapChain()
+void TiffPreviewWidget::ensureSwapChain()
 {
 #ifdef _WIN32
     ensureDevice();
@@ -307,7 +307,7 @@ void d3dpreviewwidget::ensureSwapChain()
 #endif
 }
 
-void d3dpreviewwidget::ensurePipeline()
+void TiffPreviewWidget::ensurePipeline()
 {
 #ifdef _WIN32
     ensureDevice();
@@ -382,7 +382,7 @@ void d3dpreviewwidget::ensurePipeline()
 #endif
 }
 
-void d3dpreviewwidget::ensureTextures()
+void TiffPreviewWidget::ensureTextures()
 {
 #ifdef _WIN32
     QMutexLocker lock(&frameMtx_);
@@ -439,7 +439,7 @@ void d3dpreviewwidget::ensureTextures()
 #endif
 }
 
-void d3dpreviewwidget::uploadPendingFrame()
+void TiffPreviewWidget::uploadPendingFrame()
 {
 #ifdef _WIN32
     QMutexLocker lock(&frameMtx_);
@@ -457,7 +457,7 @@ void d3dpreviewwidget::uploadPendingFrame()
 #endif
 }
 
-void d3dpreviewwidget::renderNow()
+void TiffPreviewWidget::renderNow()
 {
 #ifdef _WIN32
     if (!isVisible())
@@ -508,7 +508,7 @@ void d3dpreviewwidget::renderNow()
 #endif
 }
 
-void d3dpreviewwidget::releaseSwapChainResources()
+void TiffPreviewWidget::releaseSwapChainResources()
 {
 #ifdef _WIN32
     backbufferRtv_.Reset();
@@ -521,7 +521,7 @@ void d3dpreviewwidget::releaseSwapChainResources()
 #endif
 }
 
-void d3dpreviewwidget::releaseAllD3d()
+void TiffPreviewWidget::releaseAllD3d()
 {
 #ifdef _WIN32
     internalSrv_.Reset();

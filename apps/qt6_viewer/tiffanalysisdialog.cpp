@@ -7,7 +7,7 @@
 #include <QLabel>
 #include <QCheckBox>
 #include <QGroupBox>
-#include "d3dpreviewwidget.h"
+#include "tiffpreviewwidget.h"
 
 TiffAnalysisDialog::TiffAnalysisDialog(QWidget *parent)
     : QDialog(parent)
@@ -21,7 +21,7 @@ TiffAnalysisDialog::TiffAnalysisDialog(QWidget *parent)
 
     auto *viewerBox = new QGroupBox(QStringLiteral("10-bit Capable Viewer"), this);
     auto *viewerLayout = new QVBoxLayout(viewerBox);
-    viewer_ = new d3dpreviewwidget(viewerBox);
+    viewer_ = new TiffPreviewWidget(viewerBox);
     viewer_->setMinimumSize(420, 320);
     ditherCheck_ = new QCheckBox(QStringLiteral("Enable 10-bit dithering"), viewerBox);
     ditherCheck_->setChecked(true);
@@ -43,7 +43,7 @@ TiffAnalysisDialog::TiffAnalysisDialog(QWidget *parent)
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(viewer_, &d3dpreviewwidget::diagnosticsChanged, this, &TiffAnalysisDialog::refreshViewerDiagnostics);
+    connect(viewer_, &TiffPreviewWidget::diagnosticsChanged, this, &TiffAnalysisDialog::refreshViewerDiagnostics);
     connect(ditherCheck_, &QCheckBox::toggled, this, &TiffAnalysisDialog::onDitheringToggled);
     layout->addWidget(buttons);
 

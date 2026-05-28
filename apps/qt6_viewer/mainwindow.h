@@ -20,8 +20,9 @@
 #include "previewwindow.h"
 #include "tiff_analyzer.h"
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
-#include "gvendor/gvendor_source.h"
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+#include "gxdma/gxdma_source.h"
+static constexpr int kQtViewerGxdmaBackend = 100;
 #endif
 
 QT_BEGIN_NAMESPACE
@@ -71,10 +72,9 @@ private:
     int deviceIndex_ = 0;
     bool recording_ = false;
     bool previewAudioActive_ = false;
-
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVENDOR)
-    GVendorSource *gVendor_ = nullptr;
-    bool usingGVendor_ = false;
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    GxdmaSource *gxdma_ = nullptr;
+    bool usingGxdma_ = false;
 #endif
 
     // ---- 實際輸入來源資訊（由每一幀 frame 更新）----

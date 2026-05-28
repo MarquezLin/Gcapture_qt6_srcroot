@@ -167,6 +167,14 @@ bool MainWindow::saveSceneExports(const QString &basePath, gcap_snapshot_export_
 void MainWindow::onFrameArrived(const QImage &img)
 {
     lastFrameImage_ = img;
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
+    if (usingGxdma_)
+    {
+        if (!img.isNull())
+            applyInitialPreviewSizeFromSource(img.width(), img.height());
+        return;
+    }
+#endif
     if (!img.isNull() && previewWindow_)
         previewWindow_->setFrame(img);
     if (!img.isNull())

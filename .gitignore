@@ -7,6 +7,8 @@
 /lib/
 
 # Qt Creator / CMake
+/.qtcreator/
+/build-*/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake

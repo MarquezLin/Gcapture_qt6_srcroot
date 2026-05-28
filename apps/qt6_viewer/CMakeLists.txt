@@ -39,24 +39,27 @@ set(VIEWER_SOURCES
   tiffanalysisdialog.cpp
 )
 
+if (WIN32 AND BUILD_GXDMA_SDK)
+  list(APPEND VIEWER_SOURCES
+    gxdma/gxdma_source.h
+    gxdma/gxdma_source.cpp
+  )
+endif()
+
 if (QT_VERSION_MAJOR GREATER_EQUAL 6)
   qt_add_executable(qt6_viewer MANUAL_FINALIZATION ${VIEWER_SOURCES}
     resources.qrc
     app.rc
-    d3dpreviewwidget.h d3dpreviewwidget.cpp
+    tiffpreviewwidget.h tiffpreviewwidget.cpp
     previewwindow.h previewwindow.cpp previewwindow.ui
   )
 else()
   add_executable(qt6_viewer ${VIEWER_SOURCES})
 endif()
 
-# Experimental vendor-direct backend (Windows): XDMA direct-capture path.
-if (WIN32 AND BUILD_QT_VIEWER_GVENDOR_BACKEND)
-  target_sources(qt6_viewer PRIVATE
-    gvendor/gvendor_source.h
-    gvendor/gvendor_source.cpp
-  )
-  target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_GVENDOR)
+# XDMA is intentionally kept as a standalone SDK while the driver path is under development.
+if (WIN32 AND BUILD_GXDMA_SDK)
+  target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_XDMA_BACKEND)
 endif()
 
 # Includes
@@ -68,17 +71,15 @@ target_include_directories(qt6_viewer PRIVATE
   ${CMAKE_SOURCE_DIR}/sdk/gcapture/include
 )
 
+if (WIN32 AND BUILD_GXDMA_SDK)
+  target_include_directories(qt6_viewer PRIVATE
+    ${CMAKE_SOURCE_DIR}/sdk/gxdma/include
+  )
+endif()
+
 target_compile_definitions(qt6_viewer PRIVATE
   QT6_VIEWER_VERSION="${QT6_VIEWER_VERSION}"
 )
-
-# gvendor public headers (Windows only, opt-in diagnostic backend)
-if (WIN32 AND BUILD_QT_VIEWER_GVENDOR_BACKEND)
-  target_include_directories(qt6_viewer PRIVATE
-    ${CMAKE_SOURCE_DIR}/sdk/gvendor/include
-    ${CMAKE_SOURCE_DIR}/sdk/gdriver_shared/include
-  )
-endif()
 
 # Link
 # NOTE: do NOT use $<TARGET_LINKER_FILE:...> here; link targets directly.
@@ -89,8 +90,8 @@ target_link_libraries(qt6_viewer PRIVATE
   dxgi d3d11 d3dcompiler
 )
 
-if (WIN32 AND BUILD_QT_VIEWER_GVENDOR_BACKEND)
-  target_link_libraries(qt6_viewer PRIVATE gvendor)
+if (WIN32 AND BUILD_GXDMA_SDK)
+  target_link_libraries(qt6_viewer PRIVATE gxdma)
 endif()
 
 # ---- NVAPI: shared root variable from top-level ----
@@ -118,8 +119,13 @@ add_custom_command(TARGET qt6_viewer POST_BUILD
     $<TARGET_FILE_DIR:qt6_viewer>
 )
 
-# Copy gvendor.dll next to qt6_viewer.exe (Windows, opt-in diagnostic backend)
-if (WIN32 AND BUILD_QT_VIEWER_GVENDOR_BACKEND)
+# Copy standalone XDMA DLLs next to qt6_viewer.exe
+if (WIN32 AND BUILD_GXDMA_SDK)
+  add_custom_command(TARGET qt6_viewer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:gxdma>
+      $<TARGET_FILE_DIR:qt6_viewer>
+  )
   add_custom_command(TARGET qt6_viewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       $<TARGET_FILE:gvendor>
