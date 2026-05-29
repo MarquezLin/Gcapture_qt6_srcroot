@@ -61,6 +61,8 @@ frame path 可以先維持 DirectShow，等 private shared-buffer frame API 成�
 
 `sdk/gxdma` is the standalone XDMA capture SDK used by the Qt viewer `GVendor Direct` option. It uses `sdk/gvendor` for low-level XDMA driver access, but it is intentionally separate from `sdk/gcapture` while the XDMA driver path is still under development. The old KS-direct path and `gvendor_probe.exe` console tool have been removed.
 
+Customer-facing XDMA applications should include only `sdk/gxdma/include/gxdma_capture.h` and link `gxdma.lib`. `sdk/gvendor` and `sdk/gdriver_shared` are internal implementation details for the XDMA backend and are not part of the customer API surface.
+
 Enable the standalone XDMA SDK/viewer integration with:
 ```text
 BUILD_GXDMA_SDK=ON

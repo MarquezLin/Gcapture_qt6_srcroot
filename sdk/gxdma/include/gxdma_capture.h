@@ -1,5 +1,7 @@
 #pragma once
 
+/* Customer-facing GXDMA capture API. Do not include internal gvendor/gdriver headers in applications. */
+
 #include <stdint.h>
 
 #ifdef _WIN32
@@ -43,7 +45,6 @@ typedef struct
 {
     int index;
     char name[128];
-    char path[512];
 } gxdma_device_info_t;
 
 typedef struct
@@ -57,21 +58,16 @@ typedef struct
 {
     int width;
     int height;
-    int fps_num;
-    int fps_den;
+    double fps;
     int bit_depth;
     char pixel_format[32];
 } gxdma_signal_status_t;
 
 typedef struct
 {
-    gxdma_signal_status_t signal;
-    double runtime_fps;
+    gxdma_signal_status_t input_signal;
+    double capture_fps;
     uint64_t delivered_frames;
-    char backend_name[64];
-    char frame_source[64];
-    char capture_path[128];
-    char source_format[64];
 } gxdma_runtime_info_t;
 
 typedef struct

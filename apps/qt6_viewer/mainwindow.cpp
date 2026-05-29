@@ -494,16 +494,16 @@ void MainWindow::updateRuntimeStatusUi()
         {
             const gxdma_runtime_info_t rt = gxdma_->runtimeInfo();
             const gxdma_preview_info_t pv = gxdma_->previewInfo();
-            const double signalFps = (rt.signal.fps_den > 0) ? (double(rt.signal.fps_num) / double(rt.signal.fps_den)) : 0.0;
-            const double runtimeFps = (rt.runtime_fps > 0.0) ? rt.runtime_fps : avgFps_;
+            const double signalFps = rt.input_signal.fps;
+            const double runtimeFps = (rt.capture_fps > 0.0) ? rt.capture_fps : avgFps_;
             const QString renderPath = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
             const QString sb = QStringLiteral("Backend: %1 | Source: %2 | Input %3x%4 %5fps %6 | %7 | Runtime %8fps | Frames %9")
-                                   .arg(QString::fromUtf8(rt.backend_name))
-                                   .arg(QString::fromUtf8(rt.frame_source))
-                                   .arg(rt.signal.width)
-                                   .arg(rt.signal.height)
+                                   .arg(QStringLiteral("GXDMA"))
+                                   .arg(QStringLiteral("XDMA C2H"))
+                                   .arg(rt.input_signal.width)
+                                   .arg(rt.input_signal.height)
                                    .arg(signalFps > 0.0 ? QString::number(signalFps, 'f', 2) : QStringLiteral("--"))
-                                   .arg(QString::fromUtf8(rt.signal.pixel_format))
+                                   .arg(QString::fromUtf8(rt.input_signal.pixel_format))
                                    .arg(renderPath)
                                    .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
                                    .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));

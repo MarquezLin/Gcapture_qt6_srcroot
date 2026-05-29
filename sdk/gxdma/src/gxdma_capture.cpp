@@ -184,8 +184,7 @@ struct gxdma_handle_t
         querySignal();
         out.width = static_cast<int>(width);
         out.height = static_cast<int>(height);
-        out.fps_num = static_cast<int>(fpsNum);
-        out.fps_den = static_cast<int>(fpsDen ? fpsDen : 1);
+        out.fps = (fpsNum > 0 && fpsDen > 0) ? (double(fpsNum) / double(fpsDen)) : 0.0;
         out.bit_depth = static_cast<int>(bitDepth ? bitDepth : 8);
         copy_cstr(out.pixel_format, sizeof(out.pixel_format), "YUY2");
         return (out.width > 0 && out.height > 0) ? GXDMA_OK : GXDMA_ENODEV;
@@ -194,13 +193,9 @@ struct gxdma_handle_t
     gxdma_status_t getRuntimeInfo(gxdma_runtime_info_t &out)
     {
         std::memset(&out, 0, sizeof(out));
-        getSignalStatus(out.signal);
-        out.runtime_fps = runtimeFps;
+        getSignalStatus(out.input_signal);
+        out.capture_fps = runtimeFps;
         out.delivered_frames = deliveredFrames;
-        copy_cstr(out.backend_name, sizeof(out.backend_name), "GXDMA");
-        copy_cstr(out.capture_path, sizeof(out.capture_path), "XDMA C2H -> YUY2 frame callback");
-        copy_cstr(out.frame_source, sizeof(out.frame_source), "XDMA C2H");
-        copy_cstr(out.source_format, sizeof(out.source_format), "YUY2");
         return GXDMA_OK;
     }
 
@@ -586,7 +581,6 @@ extern "C"
             out_devices[i].index = i;
             copy_cstr(out_devices[i].name, sizeof(out_devices[i].name),
                       entries[i].friendly_name[0] ? entries[i].friendly_name : "XDMA Capture");
-            copy_cstr(out_devices[i].path, sizeof(out_devices[i].path), entries[i].device_path);
         }
         return written;
     }

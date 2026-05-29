@@ -346,17 +346,17 @@ void MainWindow::onStart()
             currentProfile_.width = sig.width;
         if (sig.height > 0)
             currentProfile_.height = sig.height;
-        if (sig.fps_num > 0)
-            currentProfile_.fps_num = sig.fps_num;
-        if (sig.fps_den > 0)
-            currentProfile_.fps_den = sig.fps_den;
+        if (sig.fps > 0.0)
+        {
+            currentProfile_.fps_num = static_cast<int>(sig.fps * 1000.0 + 0.5);
+            currentProfile_.fps_den = 1000;
+        }
 
-        MainWindow::postLog(QStringLiteral("[GXDMA] started deviceIndex=%1 %2x%3 %4/%5")
+        MainWindow::postLog(QStringLiteral("[GXDMA] started deviceIndex=%1 %2x%3 %4fps")
                                 .arg(deviceIndex_)
                                 .arg(currentProfile_.width)
                                 .arg(currentProfile_.height)
-                                .arg(currentProfile_.fps_num)
-                                .arg(currentProfile_.fps_den));
+                                .arg(sig.fps > 0.0 ? QString::number(sig.fps, 'f', 2) : QStringLiteral("--")));
         updateRuntimeStatusUi();
         refreshCaptureInfoFromSdkAndRuntime(false);
         refreshDisplayInfoFromCurrentState();

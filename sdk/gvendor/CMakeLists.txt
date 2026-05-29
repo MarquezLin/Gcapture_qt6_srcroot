@@ -27,8 +27,8 @@ set_target_properties(gvendor PROPERTIES
 target_include_directories(gvendor
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../gdriver_shared/include
   PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../gdriver_shared/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 

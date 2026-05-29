@@ -263,22 +263,22 @@ void MainWindow::refreshCaptureRuntimeInfo()
         const gxdma_runtime_info_t rt = gxdma_->runtimeInfo();
         const gxdma_preview_info_t pv = gxdma_->previewInfo();
         gcap_signal_status_t sig{};
-        sig.width = rt.signal.width;
-        sig.height = rt.signal.height;
-        sig.fps_num = rt.signal.fps_num;
-        sig.fps_den = rt.signal.fps_den;
+        sig.width = rt.input_signal.width;
+        sig.height = rt.input_signal.height;
+        sig.fps_num = rt.input_signal.fps > 0.0 ? static_cast<int>(rt.input_signal.fps * 1000.0 + 0.5) : 0;
+        sig.fps_den = rt.input_signal.fps > 0.0 ? 1000 : 0;
         sig.pixfmt = GCAP_FMT_YUY2;
-        sig.bit_depth = rt.signal.bit_depth;
+        sig.bit_depth = rt.input_signal.bit_depth;
         sig.csp = GCAP_CSP_BT709;
         sig.range = GCAP_RANGE_LIMITED;
 
         captureInfo_.signal = sig;
         captureInfo_.signalProbe = sig;
         captureInfo_.negotiated = sig;
-        captureInfo_.backendName = QString::fromUtf8(rt.backend_name);
-        captureInfo_.frameSource = QString::fromUtf8(rt.frame_source);
-        captureInfo_.pathName = QString::fromUtf8(rt.capture_path);
-        captureInfo_.captureFormat = QString::fromUtf8(rt.source_format);
+        captureInfo_.backendName = QStringLiteral("GXDMA");
+        captureInfo_.frameSource = QStringLiteral("XDMA C2H");
+        captureInfo_.pathName = QStringLiteral("XDMA C2H -> YUY2 frame callback");
+        captureInfo_.captureFormat = QString::fromUtf8(rt.input_signal.pixel_format);
         captureInfo_.renderFormat = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
         return;
     }

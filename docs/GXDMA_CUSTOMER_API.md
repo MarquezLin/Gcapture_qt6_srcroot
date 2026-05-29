@@ -27,6 +27,19 @@ gvendor.dll
 sdk/gxdma/include
 ```
 
+客戶端只需要 include：
+
+```c
+#include <gxdma_capture.h>
+```
+
+下面這些是 SDK 內部檔案，不是客戶 API：
+
+```text
+sdk/gvendor/include/gvendor.h
+sdk/gdriver_shared/include
+```
+
 link：
 
 ```text
@@ -204,7 +217,6 @@ typedef struct
 {
     int index;
     char name[128];
-    char path[512];
 } gxdma_device_info_t;
 ```
 
@@ -212,11 +224,6 @@ typedef struct
 | --- | --- |
 | `index` | 裝置 index，之後給 `gxdma_open()` 使用 |
 | `name` | 顯示名稱，例如 `XDMA Capture Device 0` |
-| `path` | Windows device path，主要給 debug 用 |
-
-注意：
-
-`path` 通常很長，而且是 Windows PnP symbolic link。一般產品 UI 不建議顯示給使用者，看起來會很亂。客戶 UI 通常顯示 `name` 就好。
 
 ## gxdma_preview_desc_t
 
@@ -252,8 +259,7 @@ typedef struct
 {
     int width;
     int height;
-    int fps_num;
-    int fps_den;
+    double fps;
     int bit_depth;
     char pixel_format[32];
 } gxdma_signal_status_t;
@@ -263,22 +269,10 @@ typedef struct
 | --- | --- |
 | `width` | input 寬度 |
 | `height` | input 高度 |
-| `fps_num` | FPS numerator |
-| `fps_den` | FPS denominator |
+| `fps` | input FPS，SDK 已經換算好，例如 `29.97` |
 | `bit_depth` | input bit depth |
 | `pixel_format` | pixel format 字串，目前預期是 `YUY2` |
 
-FPS 算法：
-
-```text
-fps = fps_num / fps_den
-```
-
-例如：
-
-```text
-30000 / 1001 = 29.97 fps
-```
 
 ## gxdma_runtime_info_t
 
@@ -287,25 +281,17 @@ runtime debug/status 資訊。
 ```c
 typedef struct
 {
-    gxdma_signal_status_t signal;
-    double runtime_fps;
+    gxdma_signal_status_t input_signal;
+    double capture_fps;
     uint64_t delivered_frames;
-    char backend_name[64];
-    char frame_source[64];
-    char capture_path[128];
-    char source_format[64];
 } gxdma_runtime_info_t;
 ```
 
 | 欄位 | 意義 |
 | --- | --- |
-| `signal` | 目前 signal 狀態 |
-| `runtime_fps` | 實際 runtime 測到的 FPS |
+| `input_signal` | 目前 input signal 狀態 |
+| `capture_fps` | SDK capture runtime 測到的 FPS |
 | `delivered_frames` | SDK 已交付/處理的 frame 數 |
-| `backend_name` | backend 名稱，目前是 `GXDMA` |
-| `frame_source` | frame 來源，目前是 `XDMA C2H` |
-| `capture_path` | capture path 描述，不包含 preview/render |
-| `source_format` | source format，例如 `YUY2` |
 
 這個 struct 適合顯示在：
 
@@ -717,11 +703,10 @@ gxdma_signal_status_t sig = {0};
 gxdma_status_t st = gxdma_get_signal_status(handle, &sig);
 
 if (st == GXDMA_OK) {
-    double fps = sig.fps_den ? (double)sig.fps_num / sig.fps_den : 0.0;
     printf("%dx%d %.2f fps %s\n",
            sig.width,
            sig.height,
-           fps,
+           sig.fps,
            sig.pixel_format);
 }
 ```
@@ -953,7 +938,6 @@ frame callback 可以保留給 snapshot、初始解析度調整、debug。
 - frame callback 不是主要 SDK preview path。
 - callback data pointer 只在 callback 期間有效。
 - callback thread 不是 UI thread。
-- `device.path` 是 debug/internal 資訊，不建議顯示在正式 UI。
 
 ## 正常 log 範例
 
