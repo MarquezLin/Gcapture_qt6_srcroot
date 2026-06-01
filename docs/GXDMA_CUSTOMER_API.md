@@ -46,6 +46,14 @@ link：
 gxdma.lib
 ```
 
+最小 Qt UI 範例：
+
+```text
+samples/gxdma_qt_preview
+```
+
+這個 sample 只示範 GXDMA API，不依賴原本 `apps/qt6_viewer`。
+
 CMake build option：
 
 ```text

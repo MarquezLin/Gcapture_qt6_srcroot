@@ -29,6 +29,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 # Optional standalone XDMA SDK / Qt viewer path.
 option(BUILD_GXDMA_SDK "Build standalone XDMA SDK and viewer integration" ON)
+option(BUILD_GXDMA_SAMPLES "Build standalone XDMA customer samples" ON)
 
 # SDK / DLLs
 add_subdirectory(sdk/gcapture)
@@ -41,3 +42,7 @@ endif()
 
 # Apps / demos
 add_subdirectory(apps/qt6_viewer)
+
+if (WIN32 AND BUILD_GXDMA_SDK AND BUILD_GXDMA_SAMPLES)
+  add_subdirectory(samples/gxdma_qt_preview)
+endif()

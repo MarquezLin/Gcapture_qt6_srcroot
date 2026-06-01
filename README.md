@@ -55,6 +55,16 @@ gcapture.dll
 - `IOCTL_GDRIVER_SET_INPUT`
 - `IOCTL_GDRIVER_GET_STATS`
 
+Minimal customer-facing Qt sample:
+```text
+samples/gxdma_qt_preview
+```
+
+Build target:
+```text
+gxdma_qt_preview
+```
+
 frame path 可以先維持 DirectShow，等 private shared-buffer frame API 成熟後再替換。
 
 ## Standalone XDMA SDK

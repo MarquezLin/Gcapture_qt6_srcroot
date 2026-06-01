@@ -1,0 +1,211 @@
+#include "mainwindow.h"
+#include "ui_mainwindow.h"
+
+#include <QDateTime>
+#include <QMetaObject>
+
+MainWindow::MainWindow(QWidget *parent)
+    : QWidget(parent), ui_(new Ui::MainWindow)
+{
+    ui_->setupUi(this);
+
+    ui_->previewHost->setAttribute(Qt::WA_NativeWindow, true);
+    ui_->previewHost->setStyleSheet(QStringLiteral("background: black;"));
+    ui_->logEdit->setMaximumBlockCount(300);
+
+    connect(ui_->refreshButton, &QPushButton::clicked, this, [this]() { refreshDevices(); });
+    connect(ui_->startButton, &QPushButton::clicked, this, [this]() { startCapture(); });
+    connect(ui_->stopButton, &QPushButton::clicked, this, [this]() { stopCapture(); });
+
+    setRunningUi(false);
+    refreshDevices();
+}
+
+MainWindow::~MainWindow()
+{
+    stopCapture();
+    delete ui_;
+}
+
+void MainWindow::refreshDevices()
+{
+    ui_->deviceCombo->clear();
+    devices_ = {};
+
+    const int count = gxdma_enumerate_devices(devices_.data(), GXDMA_MAX_DEVICES);
+    deviceCount_ = count > 0 ? count : 0;
+
+    for (int i = 0; i < deviceCount_; ++i)
+    {
+        const QString name = QString::fromUtf8(devices_[i].name);
+        ui_->deviceCombo->addItem(name.isEmpty() ? QStringLiteral("XDMA Capture") : name, devices_[i].index);
+    }
+
+    if (deviceCount_ <= 0)
+    {
+        ui_->deviceCombo->addItem(QStringLiteral("No XDMA device found"), -1);
+        appendLog(QStringLiteral("No XDMA device found"));
+    }
+    else
+    {
+        appendLog(QStringLiteral("Found %1 XDMA device(s)").arg(deviceCount_));
+    }
+}
+
+void MainWindow::startCapture()
+{
+    if (handle_)
+        stopCapture();
+
+    if (ui_->deviceCombo->currentData().toInt() < 0)
+    {
+        appendLog(QStringLiteral("Start skipped: no device selected"));
+        return;
+    }
+
+    gxdma_status_t st = gxdma_create(&handle_);
+    if (st != GXDMA_OK || !handle_)
+    {
+        showError(QStringLiteral("gxdma_create"), st);
+        handle_ = nullptr;
+        return;
+    }
+
+    gxdma_set_callbacks(handle_, &MainWindow::onFrame, &MainWindow::onError, this);
+
+    gxdma_preview_desc_t preview{};
+    preview.hwnd = reinterpret_cast<void *>(ui_->previewHost->winId());
+    preview.enable_preview = 1;
+    preview.swapchain_bitdepth = GXDMA_PREVIEW_BITDEPTH_AUTO;
+
+    st = gxdma_set_preview(handle_, &preview);
+    if (st != GXDMA_OK)
+    {
+        showError(QStringLiteral("gxdma_set_preview"), st);
+        stopCapture();
+        return;
+    }
+
+    const int deviceIndex = ui_->deviceCombo->currentData().toInt();
+    st = gxdma_open(handle_, deviceIndex);
+    if (st != GXDMA_OK)
+    {
+        showError(QStringLiteral("gxdma_open"), st);
+        stopCapture();
+        return;
+    }
+
+    st = gxdma_start(handle_);
+    if (st != GXDMA_OK)
+    {
+        showError(QStringLiteral("gxdma_start"), st);
+        stopCapture();
+        return;
+    }
+
+    frameCount_ = 0;
+    setRunningUi(true);
+    appendLog(QStringLiteral("Started device index %1").arg(deviceIndex));
+    updateSignalStatus();
+}
+
+void MainWindow::stopCapture()
+{
+    if (handle_)
+    {
+        gxdma_stop(handle_);
+        gxdma_destroy(handle_);
+        handle_ = nullptr;
+        appendLog(QStringLiteral("Stopped"));
+    }
+
+    setRunningUi(false);
+    ui_->statusLabel->setText(QStringLiteral("Idle"));
+}
+
+void MainWindow::updateSignalStatus()
+{
+    if (!handle_)
+        return;
+
+    gxdma_runtime_info_t info{};
+    if (gxdma_get_runtime_info(handle_, &info) != GXDMA_OK)
+        return;
+
+    ui_->statusLabel->setText(QStringLiteral("%1x%2 %3 fps %4 | capture %5 fps | frames %6")
+                                  .arg(info.input_signal.width)
+                                  .arg(info.input_signal.height)
+                                  .arg(info.input_signal.fps > 0.0 ? QString::number(info.input_signal.fps, 'f', 2)
+                                                                    : QStringLiteral("--"))
+                                  .arg(QString::fromUtf8(info.input_signal.pixel_format))
+                                  .arg(info.capture_fps > 0.0 ? QString::number(info.capture_fps, 'f', 2)
+                                                              : QStringLiteral("--"))
+                                  .arg(static_cast<qulonglong>(info.delivered_frames)));
+}
+
+void MainWindow::setRunningUi(bool running)
+{
+    ui_->startButton->setEnabled(!running);
+    ui_->stopButton->setEnabled(running);
+    ui_->refreshButton->setEnabled(!running);
+    ui_->deviceCombo->setEnabled(!running);
+}
+
+void MainWindow::showError(const QString &apiName, gxdma_status_t status)
+{
+    appendLog(QStringLiteral("%1 failed: %2").arg(apiName, QString::fromUtf8(gxdma_strerror(status))));
+}
+
+void MainWindow::appendLog(const QString &message)
+{
+    const QString line = QStringLiteral("[%1] %2")
+                             .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz")))
+                             .arg(message);
+    ui_->logEdit->appendPlainText(line);
+}
+
+void MainWindow::onFrame(const gxdma_frame_t *frame, void *user)
+{
+    MainWindow *self = static_cast<MainWindow *>(user);
+    if (!self || !frame)
+        return;
+
+    const uint64_t count = ++self->frameCount_;
+    if (count <= 5 || (count % 60) == 0)
+    {
+        const int width = frame->width;
+        const int height = frame->height;
+        const uint64_t frameId = frame->frame_id;
+        QMetaObject::invokeMethod(self,
+                                  [self, count, frameId, width, height]()
+                                  {
+                                      self->appendLog(QStringLiteral("frame #%1 id=%2 %3x%4")
+                                                          .arg(static_cast<qulonglong>(count))
+                                                          .arg(static_cast<qulonglong>(frameId))
+                                                          .arg(width)
+                                                          .arg(height));
+                                      self->updateSignalStatus();
+                                  },
+                                  Qt::QueuedConnection);
+    }
+}
+
+void MainWindow::onError(gxdma_status_t status, const char *message, void *user)
+{
+    MainWindow *self = static_cast<MainWindow *>(user);
+    if (!self)
+        return;
+
+    const QString text = message && message[0]
+                             ? QString::fromUtf8(message)
+                             : QString::fromUtf8(gxdma_strerror(status));
+
+    QMetaObject::invokeMethod(self,
+                              [self, status, text]()
+                              {
+                                  self->appendLog(QStringLiteral("message %1: %2")
+                                                      .arg(static_cast<int>(status))
+                                                      .arg(text));
+                              },
+                              Qt::QueuedConnection);
+}
