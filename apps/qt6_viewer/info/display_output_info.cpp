@@ -6,17 +6,17 @@ static QString pipelineToString(const DisplayOutputInfo::Pipeline &p)
     switch (p.path)
     {
     case Path::WinMFGpu:
-        return QStringLiteral("NV12→RGBA: GPU path (WinMF GPU), Adapter: %1 (index %2)")
+        return QStringLiteral("NV12 -> RGBA: GPU path (WinMF GPU), Adapter: %1 (index %2)")
             .arg(p.adapterName.isEmpty() ? QStringLiteral("(default)") : p.adapterName)
             .arg(p.adapterIndex);
     case Path::WinMFCpu:
-        return QStringLiteral("NV12→RGBA: CPU path (WinMF CPU)");
+        return QStringLiteral("NV12 -> RGBA: CPU path (WinMF CPU)");
     case Path::DirectShow:
-        return QStringLiteral("NV12→RGBA: N/A (DirectShow backend)");
+        return QStringLiteral("NV12 -> RGBA: N/A (DirectShow backend)");
     case Path::Xdma:
-        return QStringLiteral("YUY2 -> RGB: GPU shader path (GXDMA)");
+        return QStringLiteral("YUY2 -> RGB: GPU shader path (GVFG)");
     default:
-        return QStringLiteral("NV12→RGBA: (unknown)");
+        return QStringLiteral("NV12 -> RGBA: (unknown)");
     }
 }
 

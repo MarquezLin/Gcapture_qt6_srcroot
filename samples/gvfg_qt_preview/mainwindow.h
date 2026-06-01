@@ -1,12 +1,15 @@
 #pragma once
 
-#include <gxdma_capture.h>
+#include <gvfg_capture.h>
 
 #include <QWidget>
 
 #include <array>
 #include <atomic>
 #include <cstdint>
+
+class QCloseEvent;
+class PreviewWindow;
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -23,21 +26,27 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
 private:
     void refreshDevices();
+    void showPreviewWindow();
     void startCapture();
     void stopCapture();
+    bool applyPreview();
     void updateSignalStatus();
     void setRunningUi(bool running);
-    void showError(const QString &apiName, gxdma_status_t status);
+    void showError(const QString &apiName, gvfg_status_t status);
     void appendLog(const QString &message);
 
-    static void onFrame(const gxdma_frame_t *frame, void *user);
-    static void onError(gxdma_status_t status, const char *message, void *user);
+    static void onFrame(const gvfg_frame_t *frame, void *user);
+    static void onError(gvfg_status_t status, const char *message, void *user);
 
     Ui::MainWindow *ui_ = nullptr;
-    std::array<gxdma_device_info_t, GXDMA_MAX_DEVICES> devices_{};
+    PreviewWindow *previewWindow_ = nullptr;
+    std::array<gvfg_device_info_t, GVFG_MAX_DEVICES> devices_{};
     int deviceCount_ = 0;
-    gxdma_handle handle_ = nullptr;
+    gvfg_handle handle_ = nullptr;
     std::atomic<uint64_t> frameCount_{0};
 };

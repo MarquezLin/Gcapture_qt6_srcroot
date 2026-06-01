@@ -5,15 +5,15 @@
 #include <QString>
 #include <QStringList>
 
-#include <gxdma_capture.h>
+#include <gvfg_capture.h>
 
-class GxdmaSource : public QObject
+class GvfgSource : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit GxdmaSource(QObject *parent = nullptr);
-    ~GxdmaSource() override;
+    explicit GvfgSource(QObject *parent = nullptr);
+    ~GvfgSource() override;
 
     static QStringList enumerateDevices();
 
@@ -22,18 +22,18 @@ public:
     void stop();
     bool isRunning() const { return running_; }
 
-    gxdma_signal_status_t signalStatus() const;
-    gxdma_runtime_info_t runtimeInfo() const;
-    gxdma_preview_info_t previewInfo() const;
+    gvfg_signal_status_t signalStatus() const;
+    gvfg_runtime_info_t runtimeInfo() const;
+    gvfg_preview_info_t previewInfo() const;
 
 signals:
     void frameReady(const QImage &image);
     void errorOccurred(const QString &message);
 
 private:
-    static void onFrame(const gxdma_frame_t *frame, void *user);
-    static void onError(gxdma_status_t status, const char *message, void *user);
+    static void onFrame(const gvfg_frame_t *frame, void *user);
+    static void onError(gvfg_status_t status, const char *message, void *user);
 
-    gxdma_handle handle_ = nullptr;
+    gvfg_handle handle_ = nullptr;
     bool running_ = false;
 };

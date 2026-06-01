@@ -20,9 +20,9 @@
 #include "previewwindow.h"
 #include "tiff_analyzer.h"
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-#include "gxdma/gxdma_source.h"
-static constexpr int kQtViewerGxdmaBackend = 100;
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+#include "gvfg/gvfg_source.h"
+static constexpr int kQtViewerGvfgBackend = 100;
 #endif
 
 QT_BEGIN_NAMESPACE
@@ -72,37 +72,37 @@ private:
     int deviceIndex_ = 0;
     bool recording_ = false;
     bool previewAudioActive_ = false;
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    GxdmaSource *gxdma_ = nullptr;
-    bool usingGxdma_ = false;
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    GvfgSource *gvfg_ = nullptr;
+    bool usingGvfg_ = false;
 #endif
 
-    // ---- 實際輸入來源資訊（由每一幀 frame 更新）----
-    uint64_t lastFramePtsNs_ = 0; // 最後一幀的 pts
-    int lastFrameWidth_ = 0;      // 最後一幀寬
-    int lastFrameHeight_ = 0;     // 最後一幀高
-    double avgFps_ = 0.0;         // 平滑後的實際 FPS
+    // Frame-source state updated by arriving frames.
+    uint64_t lastFramePtsNs_ = 0;
+    int lastFrameWidth_ = 0;
+    int lastFrameHeight_ = 0;
+    double avgFps_ = 0.0;
 
-    // ---- 錄影相關資訊（給 UI 顯示）----
-    gcap_profile_t currentProfile_{}; // onStart 時記錄目前用的 profile
-    QDateTime recordStartTime_;       // 開始錄影時間（用來估算 bitrate）
-    QString recordPath_;              // 錄影檔完整路徑
-    QString recordEncoderName_;       // encoder 名稱（H.264/HEVC …）
+    // Recording state shown in the UI.
+    gcap_profile_t currentProfile_{};
+    QDateTime recordStartTime_;
+    QString recordPath_;
+    QString recordEncoderName_;
     QImage lastFrameImage_;
     QString recordAudioDeviceIdUtf8_;
 
-    // ---- GPU / Adapter 選擇（給 NV12→RGBA 用）----
-    int gpuIndex_ = -1; // 對應 DXGI EnumAdapters1 的 index，-1 = default
-    QString gpuName_;   // UI 上顯示的 GPU 名稱（與 ComboBox 同步）
+    // GPU adapter selection for NV12 -> RGBA rendering.
+    int gpuIndex_ = -1;
+    QString gpuName_;
 
-    // ---- Debug Log 視窗 ----
+    // Debug log panel.
     QDockWidget *debugDock_ = nullptr;
     QPlainTextEdit *debugText_ = nullptr;
 
     static void s_vcb(const gcap_frame_t *f, void *u);
     static void s_pcb(const gcap_frame_packet_t *pkt, void *u);
     static void s_ecb(gcap_status_t c, const char *m, void *u);
-    // === 全專案共用的集中 log 入口（UI + DLL callback 都用這個）===
+    // Shared log entry point for UI and DLL callbacks.
     static void postLog(const QString &line, bool isError = false);
 
     inputinfodialog *infoDlg_ = nullptr;

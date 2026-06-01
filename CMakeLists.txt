@@ -27,22 +27,22 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
-# Optional standalone XDMA SDK / Qt viewer path.
-option(BUILD_GXDMA_SDK "Build standalone XDMA SDK and viewer integration" ON)
-option(BUILD_GXDMA_SAMPLES "Build standalone XDMA customer samples" ON)
+# Optional standalone GVFG SDK / Qt viewer path.
+option(BUILD_GVFG_SDK "Build standalone GVFG SDK and viewer integration" ON)
+option(BUILD_GVFG_SAMPLES "Build standalone GVFG customer samples" ON)
 
 # SDK / DLLs
 add_subdirectory(sdk/gcapture)
 add_subdirectory(sdk/gdisplay)
 
-if (WIN32 AND BUILD_GXDMA_SDK)
+if (WIN32 AND BUILD_GVFG_SDK)
   add_subdirectory(sdk/gvendor)
-  add_subdirectory(sdk/gxdma)
+  add_subdirectory(sdk/gvfg)
 endif()
 
 # Apps / demos
 add_subdirectory(apps/qt6_viewer)
 
-if (WIN32 AND BUILD_GXDMA_SDK AND BUILD_GXDMA_SAMPLES)
-  add_subdirectory(samples/gxdma_qt_preview)
+if (WIN32 AND BUILD_GVFG_SDK AND BUILD_GVFG_SAMPLES)
+  add_subdirectory(samples/gvfg_qt_preview)
 endif()

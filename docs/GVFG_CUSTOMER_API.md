@@ -1,36 +1,36 @@
-# GXDMA 客戶 API 使用說明
+# GVFG 客戶 API 使用說明
 
-這份文件說明 XDMA capture SDK 對外要給客戶使用的 C API。
+這份文件說明 VFG100 / GVFG capture SDK 對外給客戶使用的 C API。API 名稱統一使用 `gvfg_` prefix；`XDMA` 只代表目前底層 driver/backend。
 
 目前 API 定義在：
 
 ```text
-sdk/gxdma/include/gxdma_capture.h
+sdk/gvfg/include/gvfg_capture.h
 ```
 
-`gxdma` 是獨立的 XDMA capture SDK。它和 `gcapture` 分開，所以只需要 XDMA 功能的客戶，不需要看到或使用 DirectShow / Media Foundation 那一批 API。
+`gvfg` 是獨立的 GVFG capture SDK。它和 `gcapture` 分開，所以只需要 VFG100 / GVFG 功能的客戶，不需要看到或使用 DirectShow / Media Foundation 那一批 API。
 
-後續 XDMA driver 還會持續開發，所以這份文件先以中文維護。等 API 和流程穩定後，再整理英文版給客戶。
+後續 XDMA driver/backend 還會持續開發，所以這份文件先以中文維護。等 API 和流程穩定後，再整理英文版給客戶。
 
 ## 要提供給客戶的檔案
 
-Windows app 使用 XDMA capture 時，執行檔旁邊需要放：
+Windows app 使用 GVFG capture 時，執行檔旁邊需要放：
 
 ```text
-gxdma.dll
+gvfg.dll
 gvendor.dll
 ```
 
 開發時需要 include：
 
 ```text
-sdk/gxdma/include
+sdk/gvfg/include
 ```
 
 客戶端只需要 include：
 
 ```c
-#include <gxdma_capture.h>
+#include <gvfg_capture.h>
 ```
 
 下面這些是 SDK 內部檔案，不是客戶 API：
@@ -43,21 +43,21 @@ sdk/gdriver_shared/include
 link：
 
 ```text
-gxdma.lib
+gvfg.lib
 ```
 
 最小 Qt UI 範例：
 
 ```text
-samples/gxdma_qt_preview
+samples/gvfg_qt_preview
 ```
 
-這個 sample 只示範 GXDMA API，不依賴原本 `apps/qt6_viewer`。
+這個 sample 只示範 GVFG API，不依賴原本 `apps/qt6_viewer`。
 
 CMake build option：
 
 ```text
-BUILD_GXDMA_SDK=ON
+BUILD_GVFG_SDK=ON
 ```
 
 如果要開 XDMA flow debug log：
@@ -75,10 +75,10 @@ debug log 目前會走 `OutputDebugStringA`，viewer 也會把部分 log 顯示�
 ```text
 客戶 App
   |
-  | include gxdma_capture.h
-  | link gxdma.lib
+  | include gvfg_capture.h
+  | link gvfg.lib
   v
-gxdma.dll
+gvfg.dll
   |
   | 對外提供簡單 XDMA capture API
   | 管理 preview、callback、runtime info
@@ -96,7 +96,7 @@ XDMA Windows driver
 ```text
 XDMA C2H 讀到 YUY2 frame
 -> gvendor 收 driver buffer
--> gxdma 拿 frame
+-> gvfg 拿 frame
 -> D3D SharedScenePipeline
 -> GPU shader 做 YUY2 -> RGB
 -> D3D swapchain present 到客戶提供的 HWND
@@ -113,21 +113,21 @@ XDMA C2H 讀到 YUY2 frame
 一般客戶程式照這個順序：
 
 ```text
-gxdma_enumerate_devices
--> gxdma_create
--> gxdma_set_callbacks
--> gxdma_open
--> gxdma_start
+gvfg_enumerate_devices
+-> gvfg_create
+-> gvfg_set_callbacks
+-> gvfg_open
+-> gvfg_start
 -> capture running
--> gxdma_get_signal_status / gxdma_get_runtime_info
--> gxdma_stop
--> gxdma_destroy
+-> gvfg_get_signal_status / gvfg_get_runtime_info
+-> gvfg_stop
+-> gvfg_destroy
 ```
 
 簡單說：
 
 1. 先列出 XDMA 裝置。
-2. 建立一個 `gxdma_handle`。
+2. 建立一個 `gvfg_handle`。
 3. 設 callback。
 4. open device。
 5. start stream。
@@ -136,18 +136,18 @@ gxdma_enumerate_devices
 如果客戶想使用 SDK 內建 D3D preview helper，才需要多呼叫：
 
 ```text
-gxdma_set_preview
-gxdma_get_preview_info
+gvfg_set_preview
+gvfg_get_preview_info
 ```
 
-如果客戶要自己畫畫面，就不要呼叫 `gxdma_set_preview()`，直接使用 frame callback 或未來的 GPU texture API。
+如果客戶要自己畫畫面，就不要呼叫 `gvfg_set_preview()`，直接使用 frame callback 或未來的 GPU texture API。
 
 ## 型別說明
 
-### gxdma_handle
+### gvfg_handle
 
 ```c
-typedef struct gxdma_handle_t *gxdma_handle;
+typedef struct gvfg_handle_t *gvfg_handle;
 ```
 
 這是 SDK session handle。
@@ -157,66 +157,66 @@ typedef struct gxdma_handle_t *gxdma_handle;
 生命週期：
 
 ```text
-gxdma_create
+gvfg_create
 -> 使用 handle
--> gxdma_destroy
+-> gvfg_destroy
 ```
 
-## gxdma_status_t
+## gvfg_status_t
 
 大部分 API 都會回傳這個 status。
 
 ```c
 typedef enum
 {
-    GXDMA_OK = 0,
-    GXDMA_EINVAL = -1,
-    GXDMA_ENODEV = -2,
-    GXDMA_ESTATE = -3,
-    GXDMA_EIO = -4,
-    GXDMA_ENOTSUP = -5,
-    GXDMA_ETIMEOUT = -6
-} gxdma_status_t;
+    GVFG_OK = 0,
+    GVFG_EINVAL = -1,
+    GVFG_ENODEV = -2,
+    GVFG_ESTATE = -3,
+    GVFG_EIO = -4,
+    GVFG_ENOTSUP = -5,
+    GVFG_ETIMEOUT = -6
+} gvfg_status_t;
 ```
 
 | 值 | 意義 |
 | --- | --- |
-| `GXDMA_OK` | 成功 |
-| `GXDMA_EINVAL` | 參數錯誤，例如傳入 null pointer |
-| `GXDMA_ENODEV` | 找不到裝置，或目前沒有有效 signal |
-| `GXDMA_ESTATE` | 狀態錯誤，例如還沒 open 就 start |
-| `GXDMA_EIO` | driver I/O 錯誤 |
-| `GXDMA_ENOTSUP` | 功能尚未支援，或 preview pipeline 無法建立 |
-| `GXDMA_ETIMEOUT` | 等待 frame / event timeout |
+| `GVFG_OK` | 成功 |
+| `GVFG_EINVAL` | 參數錯誤，例如傳入 null pointer |
+| `GVFG_ENODEV` | 找不到裝置，或目前沒有有效 signal |
+| `GVFG_ESTATE` | 狀態錯誤，例如還沒 open 就 start |
+| `GVFG_EIO` | driver I/O 錯誤 |
+| `GVFG_ENOTSUP` | 功能尚未支援，或 preview pipeline 無法建立 |
+| `GVFG_ETIMEOUT` | 等待 frame / event timeout |
 
 如果要把錯誤碼轉成人能看的字串，用：
 
 ```c
-gxdma_strerror(status)
+gvfg_strerror(status)
 ```
 
-## gxdma_preview_bitdepth_t
+## gvfg_preview_bitdepth_t
 
 preview swapchain bit-depth 設定。
 
 ```c
 typedef enum
 {
-    GXDMA_PREVIEW_BITDEPTH_AUTO = 0,
-    GXDMA_PREVIEW_BITDEPTH_10BIT = 10,
-    GXDMA_PREVIEW_BITDEPTH_8BIT = 8
-} gxdma_preview_bitdepth_t;
+    GVFG_PREVIEW_BITDEPTH_AUTO = 0,
+    GVFG_PREVIEW_BITDEPTH_10BIT = 10,
+    GVFG_PREVIEW_BITDEPTH_8BIT = 8
+} gvfg_preview_bitdepth_t;
 ```
 
 | 值 | 意義 |
 | --- | --- |
-| `GXDMA_PREVIEW_BITDEPTH_AUTO` | 讓 SDK 自己判斷 |
-| `GXDMA_PREVIEW_BITDEPTH_10BIT` | 要求 10-bit swapchain，如果環境支援 |
-| `GXDMA_PREVIEW_BITDEPTH_8BIT` | 強制 8-bit swapchain |
+| `GVFG_PREVIEW_BITDEPTH_AUTO` | 讓 SDK 自己判斷 |
+| `GVFG_PREVIEW_BITDEPTH_10BIT` | 要求 10-bit swapchain，如果環境支援 |
+| `GVFG_PREVIEW_BITDEPTH_8BIT` | 強制 8-bit swapchain |
 
 目前 XDMA input 是 8-bit YUY2，所以通常會建立 8-bit BGRA swapchain。
 
-## gxdma_device_info_t
+## gvfg_device_info_t
 
 列舉裝置時回傳的裝置資料。
 
@@ -225,15 +225,15 @@ typedef struct
 {
     int index;
     char name[128];
-} gxdma_device_info_t;
+} gvfg_device_info_t;
 ```
 
 | 欄位 | 意義 |
 | --- | --- |
-| `index` | 裝置 index，之後給 `gxdma_open()` 使用 |
+| `index` | 裝置 index，之後給 `gvfg_open()` 使用 |
 | `name` | 顯示名稱，例如 `XDMA Capture Device 0` |
 
-## gxdma_preview_desc_t
+## gvfg_preview_desc_t
 
 preview 設定。
 
@@ -243,14 +243,14 @@ typedef struct
     void *hwnd;
     int enable_preview;
     int swapchain_bitdepth;
-} gxdma_preview_desc_t;
+} gvfg_preview_desc_t;
 ```
 
 | 欄位 | 意義 |
 | --- | --- |
 | `hwnd` | 要讓 SDK 畫 preview 的 Win32 `HWND` |
 | `enable_preview` | `1` 啟用 preview，`0` 關閉 preview |
-| `swapchain_bitdepth` | `gxdma_preview_bitdepth_t` 的值 |
+| `swapchain_bitdepth` | `gvfg_preview_bitdepth_t` 的值 |
 
 注意：
 
@@ -258,7 +258,7 @@ typedef struct
 - capture running 的時候，這個 window 必須還活著。
 - 如果 app 是 Qt / WinForms / WPF，要拿到真正可用的 native HWND。
 
-## gxdma_signal_status_t
+## gvfg_signal_status_t
 
 目前 input signal 狀態。
 
@@ -270,7 +270,7 @@ typedef struct
     double fps;
     int bit_depth;
     char pixel_format[32];
-} gxdma_signal_status_t;
+} gvfg_signal_status_t;
 ```
 
 | 欄位 | 意義 |
@@ -282,17 +282,17 @@ typedef struct
 | `pixel_format` | pixel format 字串，目前預期是 `YUY2` |
 
 
-## gxdma_runtime_info_t
+## gvfg_runtime_info_t
 
 runtime debug/status 資訊。
 
 ```c
 typedef struct
 {
-    gxdma_signal_status_t input_signal;
+    gvfg_signal_status_t input_signal;
     double capture_fps;
     uint64_t delivered_frames;
-} gxdma_runtime_info_t;
+} gvfg_runtime_info_t;
 ```
 
 | 欄位 | 意義 |
@@ -310,14 +310,14 @@ typedef struct
 
 注意：
 
-`gxdma_runtime_info_t` 是 core capture runtime 狀態，不描述 preview/render。  
-如果要查 SDK 內建 D3D preview helper 的 render/swapchain 狀態，請用 `gxdma_get_preview_info()`。
+`gvfg_runtime_info_t` 是 core capture runtime 狀態，不描述 preview/render。  
+如果要查 SDK 內建 D3D preview helper 的 render/swapchain 狀態，請用 `gvfg_get_preview_info()`。
 
-## gxdma_preview_info_t
+## gvfg_preview_info_t
 
 optional preview helper 的狀態。
 
-如果客戶自己畫畫面，不使用 `gxdma_set_preview()`，這個 struct 通常不需要使用。
+如果客戶自己畫畫面，不使用 `gvfg_set_preview()`，這個 struct 通常不需要使用。
 
 ```c
 typedef struct
@@ -330,7 +330,7 @@ typedef struct
     int swapchain_10bit;
     char render_path[128];
     char backbuffer_format[64];
-} gxdma_preview_info_t;
+} gvfg_preview_info_t;
 ```
 
 | 欄位 | 意義 |
@@ -346,7 +346,7 @@ typedef struct
 
 這些資訊只描述 SDK 內建 preview helper，不代表客戶 app 自己的 rendering pipeline。
 
-## gxdma_frame_t
+## gvfg_frame_t
 
 frame callback 的 payload。
 
@@ -359,7 +359,7 @@ typedef struct
     int height;
     uint64_t pts_ns;
     uint64_t frame_id;
-} gxdma_frame_t;
+} gvfg_frame_t;
 ```
 
 | 欄位 | 意義 |
@@ -393,11 +393,11 @@ callback thread
 ## Callback 型別
 
 ```c
-typedef void (*gxdma_on_frame_cb)(const gxdma_frame_t *frame, void *user);
-typedef void (*gxdma_on_error_cb)(gxdma_status_t status, const char *message, void *user);
+typedef void (*gvfg_on_frame_cb)(const gvfg_frame_t *frame, void *user);
+typedef void (*gvfg_on_error_cb)(gvfg_status_t status, const char *message, void *user);
 ```
 
-### gxdma_on_frame_cb
+### gvfg_on_frame_cb
 
 SDK 有 frame readback / fallback frame 時呼叫。
 
@@ -410,7 +410,7 @@ SDK 有 frame readback / fallback frame 時呼叫。
 
 目前不建議把它當作主要高效 preview path。主要 preview 仍然是 D3D swapchain。
 
-### gxdma_on_error_cb
+### gvfg_on_error_cb
 
 SDK 有錯誤或警告訊息時呼叫。
 
@@ -422,22 +422,22 @@ SDK 有錯誤或警告訊息時呼叫。
 
 ## Function 說明
 
-## gxdma_enumerate_devices
+## gvfg_enumerate_devices
 
 ```c
-enum { GXDMA_MAX_DEVICES = 16 };
+enum { GVFG_MAX_DEVICES = 16 };
 
-int gxdma_enumerate_devices(gxdma_device_info_t *out_devices, int max_devices);
+int gvfg_enumerate_devices(gvfg_device_info_t *out_devices, int max_devices);
 ```
 
-列出目前系統上的 XDMA capture device。
+列出目前系統上的 GVFG capture device。
 
 ### 參數
 
 | 參數 | 說明 |
 | --- | --- |
 | `out_devices` | 輸出 array。如果只想取得數量，可傳 `NULL` |
-| `max_devices` | `out_devices` 最多可寫入幾個；SDK 上限是 `GXDMA_MAX_DEVICES` / 16 |
+| `max_devices` | `out_devices` 最多可寫入幾個；SDK 上限是 `GVFG_MAX_DEVICES` / 16 |
 
 ### 回傳值
 
@@ -450,21 +450,21 @@ int gxdma_enumerate_devices(gxdma_device_info_t *out_devices, int max_devices);
 ### 範例
 
 ```c
-gxdma_device_info_t devices[GXDMA_MAX_DEVICES] = {0};
-int count = gxdma_enumerate_devices(devices, GXDMA_MAX_DEVICES);
+gvfg_device_info_t devices[GVFG_MAX_DEVICES] = {0};
+int count = gvfg_enumerate_devices(devices, GVFG_MAX_DEVICES);
 
 for (int i = 0; i < count; ++i) {
     printf("device %d: %s\n", devices[i].index, devices[i].name);
 }
 ```
 
-## gxdma_create
+## gvfg_create
 
 ```c
-gxdma_status_t gxdma_create(gxdma_handle *out_handle);
+gvfg_status_t gvfg_create(gvfg_handle *out_handle);
 ```
 
-建立一個 XDMA capture session。
+建立一個 GVFG capture session。
 
 ### 參數
 
@@ -474,7 +474,7 @@ gxdma_status_t gxdma_create(gxdma_handle *out_handle);
 
 ### 回傳值
 
-成功回傳 `GXDMA_OK`。
+成功回傳 `GVFG_OK`。
 
 ### 注意
 
@@ -483,26 +483,26 @@ gxdma_status_t gxdma_create(gxdma_handle *out_handle);
 用完必須呼叫：
 
 ```c
-gxdma_destroy(handle);
+gvfg_destroy(handle);
 ```
 
-## gxdma_destroy
+## gvfg_destroy
 
 ```c
-gxdma_status_t gxdma_destroy(gxdma_handle handle);
+gvfg_status_t gvfg_destroy(gvfg_handle handle);
 ```
 
-釋放 XDMA capture session。
+釋放 GVFG capture session。
 
 ### 參數
 
 | 參數 | 說明 |
 | --- | --- |
-| `handle` | `gxdma_create()` 回傳的 handle |
+| `handle` | `gvfg_create()` 回傳的 handle |
 
 ### 回傳值
 
-目前固定回傳 `GXDMA_OK`。
+目前固定回傳 `GVFG_OK`。
 
 ### 注意
 
@@ -511,16 +511,16 @@ gxdma_status_t gxdma_destroy(gxdma_handle handle);
 建議正常流程還是明確呼叫：
 
 ```c
-gxdma_stop(handle);
-gxdma_destroy(handle);
+gvfg_stop(handle);
+gvfg_destroy(handle);
 ```
 
-## gxdma_set_callbacks
+## gvfg_set_callbacks
 
 ```c
-gxdma_status_t gxdma_set_callbacks(gxdma_handle handle,
-                                   gxdma_on_frame_cb on_frame,
-                                   gxdma_on_error_cb on_error,
+gvfg_status_t gvfg_set_callbacks(gvfg_handle handle,
+                                   gvfg_on_frame_cb on_frame,
+                                   gvfg_on_error_cb on_error,
                                    void *user);
 ```
 
@@ -537,7 +537,7 @@ gxdma_status_t gxdma_set_callbacks(gxdma_handle handle,
 
 ### 回傳值
 
-成功回傳 `GXDMA_OK`。
+成功回傳 `GVFG_OK`。
 
 ### 注意
 
@@ -545,10 +545,10 @@ callback 是從 SDK worker thread 呼叫。
 
 如果是 GUI app，不要在 callback 裡直接更新 UI，請 marshal 到 UI thread。
 
-## gxdma_set_preview
+## gvfg_set_preview
 
 ```c
-gxdma_status_t gxdma_set_preview(gxdma_handle handle, const gxdma_preview_desc_t *desc);
+gvfg_status_t gvfg_set_preview(gvfg_handle handle, const gvfg_preview_desc_t *desc);
 ```
 
 設定 optional D3D preview helper 要畫到哪個 window。
@@ -565,47 +565,47 @@ gxdma_status_t gxdma_set_preview(gxdma_handle handle, const gxdma_preview_desc_t
 
 ### 回傳值
 
-成功回傳 `GXDMA_OK`。
+成功回傳 `GVFG_OK`。
 
 ### 範例
 
 ```c
-gxdma_preview_desc_t preview = {0};
+gvfg_preview_desc_t preview = {0};
 preview.hwnd = (void *)hwnd;
 preview.enable_preview = 1;
-preview.swapchain_bitdepth = GXDMA_PREVIEW_BITDEPTH_AUTO;
+preview.swapchain_bitdepth = GVFG_PREVIEW_BITDEPTH_AUTO;
 
-gxdma_set_preview(handle, &preview);
+gvfg_set_preview(handle, &preview);
 ```
 
 ### 注意
 
-一般建議在 `gxdma_start()` 前呼叫。
+一般建議在 `gvfg_start()` 前呼叫。
 
 目前也可在 running 中呼叫，用來更新 preview target 或 bit-depth request。
 
-## gxdma_open
+## gvfg_open
 
 ```c
-gxdma_status_t gxdma_open(gxdma_handle handle, int device_index);
+gvfg_status_t gvfg_open(gvfg_handle handle, int device_index);
 ```
 
-開啟指定的 XDMA device。
+開啟指定的 GVFG device。
 
 ### 參數
 
 | 參數 | 說明 |
 | --- | --- |
 | `handle` | session handle |
-| `device_index` | `gxdma_enumerate_devices()` 得到的 device index |
+| `device_index` | `gvfg_enumerate_devices()` 得到的 device index |
 
 ### 回傳值
 
-成功回傳 `GXDMA_OK`。
+成功回傳 `GVFG_OK`。
 
 ### 目前行為
 
-`gxdma_open()` 目前會：
+`gvfg_open()` 目前會：
 
 1. open XDMA device。
 2. 設定 SDI input。
@@ -621,13 +621,13 @@ configure: effective ... 1280x720
 
 代表一開始預設可能是 1920x1080，但 driver 讀到實際 signal 是 1280x720，所以最後 stream 會用 1280x720。
 
-## gxdma_start
+## gvfg_start
 
 ```c
-gxdma_status_t gxdma_start(gxdma_handle handle);
+gvfg_status_t gvfg_start(gvfg_handle handle);
 ```
 
-開始 XDMA streaming。
+開始 GVFG streaming。
 
 ### 參數
 
@@ -637,11 +637,11 @@ gxdma_status_t gxdma_start(gxdma_handle handle);
 
 ### 回傳值
 
-成功回傳 `GXDMA_OK`。
+成功回傳 `GVFG_OK`。
 
 ### 目前行為
 
-`gxdma_start()` 會：
+`gvfg_start()` 會：
 
 1. configure stream。
 2. 建立 D3D preview pipeline。
@@ -660,13 +660,13 @@ gxdma_status_t gxdma_start(gxdma_handle handle);
 [SharedScene] preview render path ...
 ```
 
-## gxdma_stop
+## gvfg_stop
 
 ```c
-gxdma_status_t gxdma_stop(gxdma_handle handle);
+gvfg_status_t gvfg_stop(gvfg_handle handle);
 ```
 
-停止 XDMA streaming。
+停止 GVFG streaming。
 
 ### 參數
 
@@ -676,18 +676,18 @@ gxdma_status_t gxdma_stop(gxdma_handle handle);
 
 ### 回傳值
 
-成功回傳 `GXDMA_OK`。
+成功回傳 `GVFG_OK`。
 
 ### 注意
 
 即使目前沒有 running，也可以呼叫。  
 SDK 會做安全檢查。
 
-## gxdma_get_signal_status
+## gvfg_get_signal_status
 
 ```c
-gxdma_status_t gxdma_get_signal_status(gxdma_handle handle,
-                                       gxdma_signal_status_t *out_status);
+gvfg_status_t gvfg_get_signal_status(gvfg_handle handle,
+                                       gvfg_signal_status_t *out_status);
 ```
 
 取得目前 input signal 狀態。
@@ -701,16 +701,16 @@ gxdma_status_t gxdma_get_signal_status(gxdma_handle handle,
 
 ### 回傳值
 
-如果有有效 width / height，回傳 `GXDMA_OK`。  
+如果有有效 width / height，回傳 `GVFG_OK`。  
 否則回傳錯誤狀態。
 
 ### 範例
 
 ```c
-gxdma_signal_status_t sig = {0};
-gxdma_status_t st = gxdma_get_signal_status(handle, &sig);
+gvfg_signal_status_t sig = {0};
+gvfg_status_t st = gvfg_get_signal_status(handle, &sig);
 
-if (st == GXDMA_OK) {
+if (st == GVFG_OK) {
     printf("%dx%d %.2f fps %s\n",
            sig.width,
            sig.height,
@@ -719,11 +719,11 @@ if (st == GXDMA_OK) {
 }
 ```
 
-## gxdma_get_runtime_info
+## gvfg_get_runtime_info
 
 ```c
-gxdma_status_t gxdma_get_runtime_info(gxdma_handle handle,
-                                      gxdma_runtime_info_t *out_info);
+gvfg_status_t gvfg_get_runtime_info(gvfg_handle handle,
+                                      gvfg_runtime_info_t *out_info);
 ```
 
 取得 core capture runtime 診斷資訊。
@@ -737,7 +737,7 @@ gxdma_status_t gxdma_get_runtime_info(gxdma_handle handle,
 
 ### 回傳值
 
-成功回傳 `GXDMA_OK`。
+成功回傳 `GVFG_OK`。
 
 ### 建議用途
 
@@ -752,14 +752,14 @@ gxdma_status_t gxdma_get_runtime_info(gxdma_handle handle,
 例如 viewer status bar 可以顯示：
 
 ```text
-Backend: GXDMA | Source: XDMA C2H | Input 1280x720 29.97fps YUY2 | Runtime 29.97fps | Frames 120
+Backend: GVFG | Source: XDMA C2H | Input 1280x720 29.97fps YUY2 | Runtime 29.97fps | Frames 120
 ```
 
-## gxdma_get_preview_info
+## gvfg_get_preview_info
 
 ```c
-gxdma_status_t gxdma_get_preview_info(gxdma_handle handle,
-                                      gxdma_preview_info_t *out_info);
+gvfg_status_t gvfg_get_preview_info(gvfg_handle handle,
+                                      gvfg_preview_info_t *out_info);
 ```
 
 取得 optional D3D preview helper 狀態。
@@ -773,11 +773,11 @@ gxdma_status_t gxdma_get_preview_info(gxdma_handle handle,
 
 ### 回傳值
 
-成功回傳 `GXDMA_OK`。
+成功回傳 `GVFG_OK`。
 
 ### 建議用途
 
-只有在客戶使用 `gxdma_set_preview()` 時才需要呼叫。
+只有在客戶使用 `gvfg_set_preview()` 時才需要呼叫。
 
 可以用來顯示：
 
@@ -789,13 +789,13 @@ gxdma_status_t gxdma_get_preview_info(gxdma_handle handle,
 
 如果客戶自己畫畫面，render 狀態應該由客戶自己的 app 顯示，不應該依賴這個 function。
 
-## gxdma_strerror
+## gvfg_strerror
 
 ```c
-const char *gxdma_strerror(gxdma_status_t status);
+const char *gvfg_strerror(gvfg_status_t status);
 ```
 
-把 `gxdma_status_t` 轉成字串。
+把 `gvfg_status_t` 轉成字串。
 
 ### 參數
 
@@ -811,19 +811,19 @@ const char *gxdma_strerror(gxdma_status_t status);
 ### 範例
 
 ```c
-gxdma_status_t st = gxdma_start(handle);
-if (st != GXDMA_OK) {
-    printf("gxdma_start failed: %s\n", gxdma_strerror(st));
+gvfg_status_t st = gvfg_start(handle);
+if (st != GVFG_OK) {
+    printf("gvfg_start failed: %s\n", gvfg_strerror(st));
 }
 ```
 
 ## 最小使用範例
 
 ```c
-#include "gxdma_capture.h"
+#include "gvfg_capture.h"
 #include <stdio.h>
 
-static void on_frame(const gxdma_frame_t *frame, void *user)
+static void on_frame(const gvfg_frame_t *frame, void *user)
 {
     (void)user;
 
@@ -842,33 +842,33 @@ static void on_frame(const gxdma_frame_t *frame, void *user)
     */
 }
 
-static void on_error(gxdma_status_t status, const char *message, void *user)
+static void on_error(gvfg_status_t status, const char *message, void *user)
 {
     (void)user;
-    printf("gxdma message %d: %s\n",
+    printf("gvfg message %d: %s\n",
            (int)status,
            message ? message : "");
 }
 
 int start_xdma_preview(void *hwnd)
 {
-    gxdma_device_info_t devices[GXDMA_MAX_DEVICES] = {0};
-    int device_count = gxdma_enumerate_devices(devices, GXDMA_MAX_DEVICES);
+    gvfg_device_info_t devices[GVFG_MAX_DEVICES] = {0};
+    int device_count = gvfg_enumerate_devices(devices, GVFG_MAX_DEVICES);
 
     if (device_count <= 0) {
-        printf("No XDMA device found\n");
+        printf("No GVFG device found\n");
         return -1;
     }
 
-    gxdma_handle handle = NULL;
-    gxdma_status_t st = gxdma_create(&handle);
+    gvfg_handle handle = NULL;
+    gvfg_status_t st = gvfg_create(&handle);
 
-    if (st != GXDMA_OK) {
-        printf("gxdma_create failed: %s\n", gxdma_strerror(st));
+    if (st != GVFG_OK) {
+        printf("gvfg_create failed: %s\n", gvfg_strerror(st));
         return -1;
     }
 
-    gxdma_set_callbacks(handle, on_frame, on_error, NULL);
+    gvfg_set_callbacks(handle, on_frame, on_error, NULL);
 
     /*
       Optional:
@@ -876,24 +876,24 @@ int start_xdma_preview(void *hwnd)
       如果客戶自己畫畫面，可以整段省略。
     */
     if (hwnd) {
-        gxdma_preview_desc_t preview = {0};
+        gvfg_preview_desc_t preview = {0};
         preview.hwnd = hwnd;
         preview.enable_preview = 1;
-        preview.swapchain_bitdepth = GXDMA_PREVIEW_BITDEPTH_AUTO;
-        gxdma_set_preview(handle, &preview);
+        preview.swapchain_bitdepth = GVFG_PREVIEW_BITDEPTH_AUTO;
+        gvfg_set_preview(handle, &preview);
     }
 
-    st = gxdma_open(handle, devices[0].index);
-    if (st != GXDMA_OK) {
-        printf("gxdma_open failed: %s\n", gxdma_strerror(st));
-        gxdma_destroy(handle);
+    st = gvfg_open(handle, devices[0].index);
+    if (st != GVFG_OK) {
+        printf("gvfg_open failed: %s\n", gvfg_strerror(st));
+        gvfg_destroy(handle);
         return -1;
     }
 
-    st = gxdma_start(handle);
-    if (st != GXDMA_OK) {
-        printf("gxdma_start failed: %s\n", gxdma_strerror(st));
-        gxdma_destroy(handle);
+    st = gvfg_start(handle);
+    if (st != GVFG_OK) {
+        printf("gvfg_start failed: %s\n", gvfg_strerror(st));
+        gvfg_destroy(handle);
         return -1;
     }
 
@@ -903,8 +903,8 @@ int start_xdma_preview(void *hwnd)
 
       停止時：
 
-      gxdma_stop(handle);
-      gxdma_destroy(handle);
+      gvfg_stop(handle);
+      gvfg_destroy(handle);
     */
 
     return 0;
@@ -917,14 +917,14 @@ Qt viewer 目前使用 optional preview helper：
 
 ```text
 previewWindow_->previewHwnd()
--> 傳給 gxdma_set_preview()
--> gxdma 用 D3D swapchain 畫到 previewHost
+-> 傳給 gvfg_set_preview()
+-> gvfg 用 D3D swapchain 畫到 previewHost
 ```
 
 Qt callback：
 
 ```text
-gxdma worker thread
+gvfg worker thread
 -> emit frameReady(QImage copy)
 -> Qt queued connection
 -> UI thread 更新 snapshot/狀態
@@ -940,9 +940,9 @@ frame callback 可以保留給 snapshot、初始解析度調整、debug。
 目前版本限制：
 
 - input format 目前固定走 YUY2。
-- `gxdma` 還沒有對外提供 recording API。
+- `gvfg` 還沒有對外提供 recording API。
 - 目前沒有 expose 手動選 input source 的 API，內部先固定 SDI。
-- `gxdma_set_preview()` 是 optional helper，不是 core capture 必要 API。
+- `gvfg_set_preview()` 是 optional helper，不是 core capture 必要 API。
 - frame callback 不是主要 SDK preview path。
 - callback data pointer 只在 callback 期間有效。
 - callback thread 不是 UI thread。

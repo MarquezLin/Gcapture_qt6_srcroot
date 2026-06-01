@@ -39,10 +39,10 @@ set(VIEWER_SOURCES
   tiffanalysisdialog.cpp
 )
 
-if (WIN32 AND BUILD_GXDMA_SDK)
+if (WIN32 AND BUILD_GVFG_SDK)
   list(APPEND VIEWER_SOURCES
-    gxdma/gxdma_source.h
-    gxdma/gxdma_source.cpp
+    gvfg/gvfg_source.h
+    gvfg/gvfg_source.cpp
   )
 endif()
 
@@ -58,8 +58,8 @@ else()
 endif()
 
 # XDMA is intentionally kept as a standalone SDK while the driver path is under development.
-if (WIN32 AND BUILD_GXDMA_SDK)
-  target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_XDMA_BACKEND)
+if (WIN32 AND BUILD_GVFG_SDK)
+  target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_GVFG_BACKEND)
 endif()
 
 # Includes
@@ -71,9 +71,9 @@ target_include_directories(qt6_viewer PRIVATE
   ${CMAKE_SOURCE_DIR}/sdk/gcapture/include
 )
 
-if (WIN32 AND BUILD_GXDMA_SDK)
+if (WIN32 AND BUILD_GVFG_SDK)
   target_include_directories(qt6_viewer PRIVATE
-    ${CMAKE_SOURCE_DIR}/sdk/gxdma/include
+    ${CMAKE_SOURCE_DIR}/sdk/gvfg/include
   )
 endif()
 
@@ -90,8 +90,8 @@ target_link_libraries(qt6_viewer PRIVATE
   dxgi d3d11 d3dcompiler
 )
 
-if (WIN32 AND BUILD_GXDMA_SDK)
-  target_link_libraries(qt6_viewer PRIVATE gxdma)
+if (WIN32 AND BUILD_GVFG_SDK)
+  target_link_libraries(qt6_viewer PRIVATE gvfg)
 endif()
 
 # ---- NVAPI: shared root variable from top-level ----
@@ -120,10 +120,10 @@ add_custom_command(TARGET qt6_viewer POST_BUILD
 )
 
 # Copy standalone XDMA DLLs next to qt6_viewer.exe
-if (WIN32 AND BUILD_GXDMA_SDK)
+if (WIN32 AND BUILD_GVFG_SDK)
   add_custom_command(TARGET qt6_viewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      $<TARGET_FILE:gxdma>
+      $<TARGET_FILE:gvfg>
       $<TARGET_FILE_DIR:qt6_viewer>
   )
   add_custom_command(TARGET qt6_viewer POST_BUILD

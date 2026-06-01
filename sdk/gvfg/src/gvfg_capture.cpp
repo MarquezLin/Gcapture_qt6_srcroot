@@ -1,4 +1,4 @@
-#include "gxdma_capture.h"
+#include "gvfg_capture.h"
 
 #include "gcapture.h"
 #include "gvendor.h"
@@ -37,18 +37,18 @@ namespace
         return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
     }
 
-    gxdma_status_t map_status(gv_status_t st)
+    gvfg_status_t map_status(gv_status_t st)
     {
         switch (st)
         {
-        case GV_OK: return GXDMA_OK;
-        case GV_EINVAL: return GXDMA_EINVAL;
-        case GV_ENODEV: return GXDMA_ENODEV;
-        case GV_ESTATE: return GXDMA_ESTATE;
-        case GV_ETIMEOUT: return GXDMA_ETIMEOUT;
-        case GV_ENOTSUP: return GXDMA_ENOTSUP;
+        case GV_OK: return GVFG_OK;
+        case GV_EINVAL: return GVFG_EINVAL;
+        case GV_ENODEV: return GVFG_ENODEV;
+        case GV_ESTATE: return GVFG_ESTATE;
+        case GV_ETIMEOUT: return GVFG_ETIMEOUT;
+        case GV_ENOTSUP: return GVFG_ENOTSUP;
         case GV_EIO:
-        default: return GXDMA_EIO;
+        default: return GVFG_EIO;
         }
     }
 
@@ -88,14 +88,14 @@ namespace
     }
 }
 
-struct gxdma_handle_t
+struct gvfg_handle_t
 {
-    ~gxdma_handle_t()
+    ~gvfg_handle_t()
     {
         close();
     }
 
-    gxdma_status_t open(int index)
+    gvfg_status_t open(int index)
     {
         close();
 
@@ -116,22 +116,22 @@ struct gxdma_handle_t
         }
 
         querySignal();
-        return GXDMA_OK;
+        return GVFG_OK;
     }
 
-    gxdma_status_t start()
+    gvfg_status_t start()
     {
         if (!handle)
-            return GXDMA_ESTATE;
+            return GVFG_ESTATE;
         if (running)
-            return GXDMA_OK;
+            return GVFG_OK;
 
-        const gxdma_status_t cfg = configureStream();
-        if (cfg != GXDMA_OK)
+        const gvfg_status_t cfg = configureStream();
+        if (cfg != GVFG_OK)
             return cfg;
 
         if (previewHwnd && !createRenderPipeline())
-            emitError(GXDMA_ENOTSUP, "XDMA preview pipeline unavailable");
+            emitError(GVFG_ENOTSUP, "GVFG preview pipeline unavailable");
 
         const gv_status_t st = gv_start_stream(handle);
         if (st != GV_OK)
@@ -142,17 +142,17 @@ struct gxdma_handle_t
 
         running = true;
         captureThread = std::thread([this]() { captureLoop(); });
-        return GXDMA_OK;
+        return GVFG_OK;
     }
 
-    gxdma_status_t stop()
+    gvfg_status_t stop()
     {
         running = false;
         if (captureThread.joinable())
             captureThread.join();
         if (handle)
             gv_stop_stream(handle);
-        return GXDMA_OK;
+        return GVFG_OK;
     }
 
     void close()
@@ -167,7 +167,7 @@ struct gxdma_handle_t
         currentIndex = -1;
     }
 
-    gxdma_status_t setPreview(const gxdma_preview_desc_t &desc)
+    gvfg_status_t setPreview(const gvfg_preview_desc_t &desc)
     {
         previewDesc = desc;
         previewHwnd = desc.enable_preview ? desc.hwnd : nullptr;
@@ -175,10 +175,10 @@ struct gxdma_handle_t
             pipeline->configurePreview(toGcapPreviewDesc());
         if (previewHwnd && width > 0 && height > 0)
             createRenderPipeline();
-        return GXDMA_OK;
+        return GVFG_OK;
     }
 
-    gxdma_status_t getSignalStatus(gxdma_signal_status_t &out)
+    gvfg_status_t getSignalStatus(gvfg_signal_status_t &out)
     {
         std::memset(&out, 0, sizeof(out));
         querySignal();
@@ -187,19 +187,19 @@ struct gxdma_handle_t
         out.fps = (fpsNum > 0 && fpsDen > 0) ? (double(fpsNum) / double(fpsDen)) : 0.0;
         out.bit_depth = static_cast<int>(bitDepth ? bitDepth : 8);
         copy_cstr(out.pixel_format, sizeof(out.pixel_format), "YUY2");
-        return (out.width > 0 && out.height > 0) ? GXDMA_OK : GXDMA_ENODEV;
+        return (out.width > 0 && out.height > 0) ? GVFG_OK : GVFG_ENODEV;
     }
 
-    gxdma_status_t getRuntimeInfo(gxdma_runtime_info_t &out)
+    gvfg_status_t getRuntimeInfo(gvfg_runtime_info_t &out)
     {
         std::memset(&out, 0, sizeof(out));
         getSignalStatus(out.input_signal);
         out.capture_fps = runtimeFps;
         out.delivered_frames = deliveredFrames;
-        return GXDMA_OK;
+        return GVFG_OK;
     }
 
-    gxdma_status_t getPreviewInfo(gxdma_preview_info_t &out)
+    gvfg_status_t getPreviewInfo(gvfg_preview_info_t &out)
     {
         std::memset(&out, 0, sizeof(out));
         out.enabled = previewHwnd ? 1 : 0;
@@ -217,7 +217,7 @@ struct gxdma_handle_t
                                           : "Preview helper disabled"));
         copy_cstr(out.backbuffer_format, sizeof(out.backbuffer_format),
                   pipeline ? dxgi_format_name(pipeline->preview_backbuffer_format()) : "N/A");
-        return GXDMA_OK;
+        return GVFG_OK;
     }
 
     void querySignal()
@@ -241,10 +241,10 @@ struct gxdma_handle_t
             bitDepth = sig.bit_depth;
     }
 
-    gxdma_status_t configureStream()
+    gvfg_status_t configureStream()
     {
         if (!handle)
-            return GXDMA_ESTATE;
+            return GVFG_ESTATE;
 
         querySignal();
         if (width == 0)
@@ -269,7 +269,7 @@ struct gxdma_handle_t
             emitError(map_status(st), gv_error_text(st, handle));
             return map_status(st);
         }
-        return GXDMA_OK;
+        return GVFG_OK;
     }
 
     gcap_preview_desc_t toGcapPreviewDesc() const
@@ -280,13 +280,13 @@ struct gxdma_handle_t
         desc.use_fp16_pipeline = 1;
         switch (previewDesc.swapchain_bitdepth)
         {
-        case GXDMA_PREVIEW_BITDEPTH_8BIT:
+        case GVFG_PREVIEW_BITDEPTH_8BIT:
             desc.swapchain_10bit = GCAP_PREVIEW_BITDEPTH_8BIT;
             break;
-        case GXDMA_PREVIEW_BITDEPTH_10BIT:
+        case GVFG_PREVIEW_BITDEPTH_10BIT:
             desc.swapchain_10bit = GCAP_PREVIEW_BITDEPTH_10BIT;
             break;
-        case GXDMA_PREVIEW_BITDEPTH_AUTO:
+        case GVFG_PREVIEW_BITDEPTH_AUTO:
         default:
             desc.swapchain_10bit = GCAP_PREVIEW_BITDEPTH_AUTO;
             break;
@@ -439,7 +439,7 @@ struct gxdma_handle_t
         gcap_frame_t readback{};
         if (pipeline->readback_to_frame(w, h, frame.timestamp_ns ? frame.timestamp_ns : now_ns(), frame.frame_id, &readback))
         {
-            gxdma_frame_t out{};
+            gvfg_frame_t out{};
             out.data = readback.data[0];
             out.stride = readback.stride[0];
             out.width = readback.width;
@@ -466,7 +466,7 @@ struct gxdma_handle_t
 
         if (!fallbackLogged)
         {
-            emitError(GXDMA_ENOTSUP, "GPU preview/readback unavailable; using CPU YUY2 preview fallback");
+            emitError(GVFG_ENOTSUP, "GPU preview/readback unavailable; using CPU YUY2 preview fallback");
             fallbackLogged = true;
         }
 
@@ -499,7 +499,7 @@ struct gxdma_handle_t
             }
         }
 
-        gxdma_frame_t out{};
+        gvfg_frame_t out{};
         out.data = fallbackBgra.data();
         out.stride = w * 4;
         out.width = w;
@@ -509,7 +509,7 @@ struct gxdma_handle_t
         onFrame(&out, callbackUser);
     }
 
-    void emitError(gxdma_status_t code, const char *msg)
+    void emitError(gvfg_status_t code, const char *msg)
     {
         if (onError)
             onError(code, msg ? msg : "", callbackUser);
@@ -528,7 +528,7 @@ struct gxdma_handle_t
 
     gv_handle handle = nullptr;
     int currentIndex = -1;
-    gxdma_preview_desc_t previewDesc{};
+    gvfg_preview_desc_t previewDesc{};
     void *previewHwnd = nullptr;
 
     uint32_t width = 0;
@@ -540,8 +540,8 @@ struct gxdma_handle_t
     uint64_t deliveredFrames = 0;
     double runtimeFps = 0.0;
 
-    gxdma_on_frame_cb onFrame = nullptr;
-    gxdma_on_error_cb onError = nullptr;
+    gvfg_on_frame_cb onFrame = nullptr;
+    gvfg_on_error_cb onError = nullptr;
     void *callbackUser = nullptr;
     bool fallbackLogged = false;
     std::vector<uint8_t> fallbackBgra;
@@ -562,10 +562,10 @@ struct gxdma_handle_t
 
 extern "C"
 {
-    int gxdma_enumerate_devices(gxdma_device_info_t *out_devices, int max_devices)
+    int gvfg_enumerate_devices(gvfg_device_info_t *out_devices, int max_devices)
     {
-        gv_device_entry_t entries[GXDMA_MAX_DEVICES] = {};
-        const int maxCount = static_cast<int>(GXDMA_MAX_DEVICES);
+        gv_device_entry_t entries[GVFG_MAX_DEVICES] = {};
+        const int maxCount = static_cast<int>(GVFG_MAX_DEVICES);
         const int cap = (std::min)(max_devices > 0 ? max_devices : maxCount, maxCount);
         const int n = gv_enumerate_devices(entries, cap);
         if (n <= 0)
@@ -580,99 +580,99 @@ extern "C"
             out_devices[i] = {};
             out_devices[i].index = i;
             copy_cstr(out_devices[i].name, sizeof(out_devices[i].name),
-                      entries[i].friendly_name[0] ? entries[i].friendly_name : "XDMA Capture");
+                      entries[i].friendly_name[0] ? entries[i].friendly_name : "GVFG Capture");
         }
         return written;
     }
 
-    gxdma_status_t gxdma_create(gxdma_handle *out_handle)
+    gvfg_status_t gvfg_create(gvfg_handle *out_handle)
     {
         if (!out_handle)
-            return GXDMA_EINVAL;
-        auto h = std::make_unique<gxdma_handle_t>();
+            return GVFG_EINVAL;
+        auto h = std::make_unique<gvfg_handle_t>();
         *out_handle = h.release();
-        return GXDMA_OK;
+        return GVFG_OK;
     }
 
-    gxdma_status_t gxdma_destroy(gxdma_handle handle)
+    gvfg_status_t gvfg_destroy(gvfg_handle handle)
     {
         delete handle;
-        return GXDMA_OK;
+        return GVFG_OK;
     }
 
-    gxdma_status_t gxdma_set_callbacks(gxdma_handle handle,
-                                       gxdma_on_frame_cb on_frame,
-                                       gxdma_on_error_cb on_error,
+    gvfg_status_t gvfg_set_callbacks(gvfg_handle handle,
+                                       gvfg_on_frame_cb on_frame,
+                                       gvfg_on_error_cb on_error,
                                        void *user)
     {
         if (!handle)
-            return GXDMA_EINVAL;
+            return GVFG_EINVAL;
         handle->onFrame = on_frame;
         handle->onError = on_error;
         handle->callbackUser = user;
-        return GXDMA_OK;
+        return GVFG_OK;
     }
 
-    gxdma_status_t gxdma_set_preview(gxdma_handle handle, const gxdma_preview_desc_t *desc)
+    gvfg_status_t gvfg_set_preview(gvfg_handle handle, const gvfg_preview_desc_t *desc)
     {
         if (!handle || !desc)
-            return GXDMA_EINVAL;
+            return GVFG_EINVAL;
         return handle->setPreview(*desc);
     }
 
-    gxdma_status_t gxdma_open(gxdma_handle handle, int device_index)
+    gvfg_status_t gvfg_open(gvfg_handle handle, int device_index)
     {
         if (!handle)
-            return GXDMA_EINVAL;
+            return GVFG_EINVAL;
         return handle->open(device_index);
     }
 
-    gxdma_status_t gxdma_start(gxdma_handle handle)
+    gvfg_status_t gvfg_start(gvfg_handle handle)
     {
         if (!handle)
-            return GXDMA_EINVAL;
+            return GVFG_EINVAL;
         return handle->start();
     }
 
-    gxdma_status_t gxdma_stop(gxdma_handle handle)
+    gvfg_status_t gvfg_stop(gvfg_handle handle)
     {
         if (!handle)
-            return GXDMA_EINVAL;
+            return GVFG_EINVAL;
         return handle->stop();
     }
 
-    gxdma_status_t gxdma_get_signal_status(gxdma_handle handle, gxdma_signal_status_t *out_status)
+    gvfg_status_t gvfg_get_signal_status(gvfg_handle handle, gvfg_signal_status_t *out_status)
     {
         if (!handle || !out_status)
-            return GXDMA_EINVAL;
+            return GVFG_EINVAL;
         return handle->getSignalStatus(*out_status);
     }
 
-    gxdma_status_t gxdma_get_runtime_info(gxdma_handle handle, gxdma_runtime_info_t *out_info)
+    gvfg_status_t gvfg_get_runtime_info(gvfg_handle handle, gvfg_runtime_info_t *out_info)
     {
         if (!handle || !out_info)
-            return GXDMA_EINVAL;
+            return GVFG_EINVAL;
         return handle->getRuntimeInfo(*out_info);
     }
 
-    gxdma_status_t gxdma_get_preview_info(gxdma_handle handle, gxdma_preview_info_t *out_info)
+    gvfg_status_t gvfg_get_preview_info(gvfg_handle handle, gvfg_preview_info_t *out_info)
     {
         if (!handle || !out_info)
-            return GXDMA_EINVAL;
+            return GVFG_EINVAL;
         return handle->getPreviewInfo(*out_info);
     }
 
-    const char *gxdma_strerror(gxdma_status_t status)
+    const char *gvfg_strerror(gvfg_status_t status)
     {
         switch (status)
         {
-        case GXDMA_OK: return "OK";
-        case GXDMA_EINVAL: return "Invalid argument";
-        case GXDMA_ENODEV: return "No XDMA device";
-        case GXDMA_ESTATE: return "Invalid state";
-        case GXDMA_EIO: return "I/O error";
-        case GXDMA_ENOTSUP: return "Not supported";
-        case GXDMA_ETIMEOUT: return "Timeout";
+        case GVFG_OK: return "OK";
+        case GVFG_EINVAL: return "Invalid argument";
+        case GVFG_ENODEV: return "No GVFG device";
+        case GVFG_ESTATE: return "Invalid state";
+        case GVFG_EIO: return "I/O error";
+        case GVFG_ENOTSUP: return "Not supported";
+        case GVFG_ETIMEOUT: return "Timeout";
         default: return "Unknown";
         }
     }

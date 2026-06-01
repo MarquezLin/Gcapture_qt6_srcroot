@@ -107,8 +107,8 @@ namespace
     static std::vector<gcap_pixfmt_t> enumerateSupportedPixelFormats(int backend, int deviceIndex)
     {
         std::vector<gcap_pixfmt_t> result;
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-        if (backend == kQtViewerGxdmaBackend)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+        if (backend == kQtViewerGvfgBackend)
         {
             Q_UNUSED(deviceIndex);
             result.push_back(GCAP_FMT_YUY2);
@@ -145,7 +145,7 @@ namespace
 
     static QString formatPropertyPageDisplay(const gcap_property_page_t &page)
     {
-        return QStringLiteral("%1 — %2")
+        return QStringLiteral("%1 - %2")
             .arg(QString::fromUtf8(page.page_name))
             .arg(page.capture_pin ? QStringLiteral("Capture Pin") : QStringLiteral("Filter"));
     }
@@ -350,11 +350,11 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
     setWindowTitle(QStringLiteral("Gigabyte v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    gxdma_ = new GxdmaSource(this);
-    connect(gxdma_, &GxdmaSource::frameReady, this, &MainWindow::sigFrame, Qt::QueuedConnection);
-    connect(gxdma_, &GxdmaSource::errorOccurred, this, [this](const QString &message)
-            { MainWindow::postLog(QStringLiteral("[GXDMA] %1").arg(message), true); },
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    gvfg_ = new GvfgSource(this);
+    connect(gvfg_, &GvfgSource::frameReady, this, &MainWindow::sigFrame, Qt::QueuedConnection);
+    connect(gvfg_, &GvfgSource::errorOccurred, this, [this](const QString &message)
+            { MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message), true); },
             Qt::QueuedConnection);
 #endif
 
@@ -374,9 +374,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    if (gxdma_)
-        gxdma_->stop();
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (gvfg_)
+        gvfg_->stop();
 #endif
     if (g_mainWindow == this)
     {
@@ -412,8 +412,7 @@ void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
     if (self->usePacketCallback_)
         return;
 
-    // 背景 callback thread 不要直接碰 MainWindow 狀態；
-    // 先把 frame 拷成安全的 QImage，再排回 UI thread。
+    // Copy the frame before crossing from the callback thread to the UI thread.
     QImage img((const uchar *)f->data[0], f->width, f->height, f->stride[0], QImage::Format_ARGB32);
     const QImage safeImg = img.copy();
     const uint64_t ptsNs = f->pts_ns;
@@ -459,17 +458,17 @@ void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)
 
     const QByteArray ba = m ? QByteArray(m) : QByteArray();
 
-    // ecb_ 訊息可能是 UTF-8，也可能是 Windows ACP（例如含 hr_msg 的中文）
+    // SDK error text can be UTF-8 or Windows ACP depending on the source.
     QString msg = QString::fromUtf8(ba);
-    if (msg.contains(QChar(0xFFFD))) // UTF-8 解碼失敗常會出現替代字元
+    if (msg.contains(QChar(0xFFFD)))
         msg = QString::fromLocal8Bit(ba);
 
-    // === 先進集中 log（UI + 檔案）===
+    // Centralized log sink for UI and file logging.
     MainWindow::postLog(
         QStringLiteral("[gcapture][%1] %2").arg(int(c)).arg(msg),
         c != GCAP_OK);
 
-    // === 只有錯誤才跳視窗 ===
+    // Show a dialog only for errors.
     if (c != GCAP_OK && g_mainWindow)
     {
         QMetaObject::invokeMethod(
@@ -489,16 +488,16 @@ void MainWindow::updateRuntimeStatusUi()
 
     if (!h_)
     {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-        if (usingGxdma_ && gxdma_)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+        if (usingGvfg_ && gvfg_)
         {
-            const gxdma_runtime_info_t rt = gxdma_->runtimeInfo();
-            const gxdma_preview_info_t pv = gxdma_->previewInfo();
+            const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
+            const gvfg_preview_info_t pv = gvfg_->previewInfo();
             const double signalFps = rt.input_signal.fps;
             const double runtimeFps = (rt.capture_fps > 0.0) ? rt.capture_fps : avgFps_;
             const QString renderPath = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
             const QString sb = QStringLiteral("Backend: %1 | Source: %2 | Input %3x%4 %5fps %6 | %7 | Runtime %8fps | Frames %9")
-                                   .arg(QStringLiteral("GXDMA"))
+                                   .arg(QStringLiteral("GVFG"))
                                    .arg(QStringLiteral("XDMA C2H"))
                                    .arg(rt.input_signal.width)
                                    .arg(rt.input_signal.height)
@@ -599,7 +598,7 @@ void MainWindow::onShowEdid()
         return;
     }
 
-    // 把 raw EDID 轉成 hex dump
+    // Convert raw EDID to a hex dump.
     QString hex;
     const QByteArray &raw = res.raw;
     for (int i = 0; i < raw.size(); ++i)
@@ -610,38 +609,38 @@ void MainWindow::onShowEdid()
         hex += QString("%1 ").arg(static_cast<quint8>(raw[i]), 2, 16, QLatin1Char('0')).toUpper();
     }
 
-    // 解析 summary（highLevelText = HTML, basicText = 純文字）
+    // Build the EDID summary.
     EdidSummary sum = summarizeEdid(raw, res.decoded);
 
-    // 組成整體 HTML
+    // Compose the dialog HTML.
     QString html;
 
-    // 1) 高階摘要（已經是 HTML + <br>）
+    // 1) High-level summary, already formatted as HTML.
     if (!sum.highLevelText.isEmpty())
     {
         html += sum.highLevelText;
         html += "<br><br>";
     }
 
-    // 2) basicText：現在 summarizeEdidBasic 已經回傳 HTML
+    // 2) Basic summary, already formatted as HTML.
     if (!sum.basicText.isEmpty())
     {
         html += sum.basicText;
         html += "<br><br>";
     }
 
-    // 3) Source / Size 資訊
+    // 3) Source and size.
     html += tr("Source: %1<br>Size: %2 bytes<br>")
                 .arg(res.sourceName.toHtmlEscaped())
                 .arg(raw.size());
     html += "<br><br>";
 
-    // 4) Raw EDID（hex dump）
+    // 4) Raw EDID hex dump.
     html += "<b>Raw EDID</b>";
     html += hex.toHtmlEscaped().replace("\n", "<br>");
     html += "<br><br>";
 
-    // 5) edid-decode 原始輸出
+    // 5) Raw edid-decode output.
     html += "<b>Decoded by edid-decode</b><br>";
     if (res.decoded.isEmpty())
     {
@@ -652,7 +651,7 @@ void MainWindow::onShowEdid()
         html += res.decoded.toHtmlEscaped().replace("\n", "<br>");
     }
 
-    // 顯示對話框（改用 QTextEdit + setHtml）
+    // Show the dialog with a QTextEdit using HTML content.
     QDialog dlg(this);
     dlg.setWindowTitle(tr("EDID Viewer"));
     QVBoxLayout *layout = new QVBoxLayout(&dlg);
@@ -791,8 +790,8 @@ void MainWindow::setupBackendControls()
     ui->comboBackend->addItem("WinMF GPU", 1);
     ui->comboBackend->addItem("WinMF CPU", 0);
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    ui->comboBackend->addItem("GVendor Direct", kQtViewerGxdmaBackend);
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    ui->comboBackend->addItem("GVendor Direct", kQtViewerGvfgBackend);
 #endif
 
     const int dsIndex = ui->comboBackend->findData(2);
@@ -838,12 +837,12 @@ QString MainWindow::selectedPreviewBitDepthText() const
 
 void MainWindow::applyPreviewSettingsToActiveSession()
 {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    if (usingGxdma_ && gxdma_)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (usingGvfg_ && gvfg_)
     {
-        const bool ok = gxdma_->setPreview(previewWindow_ ? previewWindow_->previewHwnd() : nullptr,
+        const bool ok = gvfg_->setPreview(previewWindow_ ? previewWindow_->previewHwnd() : nullptr,
                                            selectedPreviewBitDepthMode());
-        MainWindow::postLog(QStringLiteral("[Preview] GXDMA requested %1%2")
+        MainWindow::postLog(QStringLiteral("[Preview] GVFG requested %1%2")
                                 .arg(selectedPreviewBitDepthText())
                                 .arg(ok ? QString() : QStringLiteral(" failed")),
                             !ok);
@@ -962,18 +961,18 @@ void MainWindow::initializeDeviceList()
     // gcap_enumerate() uses CaptureManager's currently selected backend.
     // Keep the SDK backend in sync with the UI before rebuilding the device list,
     // otherwise WinMF and DirectShow indexes can be mixed up.
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    if (backend != kQtViewerGxdmaBackend)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (backend != kQtViewerGvfgBackend)
 #endif
         gcap_set_backend(backend);
 
     const QSignalBlocker blocker(ui->comboDevice);
     ui->comboDevice->clear();
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    if (backend == kQtViewerGxdmaBackend)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (backend == kQtViewerGvfgBackend)
     {
-        const QStringList devices = GxdmaSource::enumerateDevices();
+        const QStringList devices = GvfgSource::enumerateDevices();
         for (int i = 0; i < devices.size(); ++i)
             ui->comboDevice->addItem(devices.at(i), i);
     }
@@ -1101,8 +1100,8 @@ void MainWindow::setupConnections()
                 {
                     const int backend = ui->comboBackend->currentData().toInt();
                     const bool isGVendor =
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-                        (backend == kQtViewerGxdmaBackend);
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+                        (backend == kQtViewerGvfgBackend);
 #else
                         false;
 #endif
@@ -1241,13 +1240,13 @@ void MainWindow::onOpenGigabyteRaw()
 
 void MainWindow::postLog(const QString &line, bool isError)
 {
-    // 1) 寫到檔案（透過 Qt message handler）
+    // 1) Write through the Qt message handler.
     if (isError)
         qWarning().noquote() << line;
     else
         qInfo().noquote() << line;
 
-    // 2) 同時送到 UI（若存在）
+    // 2) Mirror to the UI when available.
     if (g_mainWindow)
     {
         QMetaObject::invokeMethod(

@@ -1,23 +1,23 @@
-if (NOT DEFINED GXDMA_SDK_VERSION)
-  set(GXDMA_SDK_VERSION "0.1.0" CACHE STRING "gxdma SDK version")
+if (NOT DEFINED GVFG_SDK_VERSION)
+  set(GVFG_SDK_VERSION "0.1.0" CACHE STRING "GVFG SDK version")
 endif()
 
-project(gxdma VERSION ${GXDMA_SDK_VERSION} LANGUAGES CXX)
+project(gvfg VERSION ${GVFG_SDK_VERSION} LANGUAGES CXX)
 
-add_library(gxdma SHARED
-    include/gxdma_capture.h
-    src/gxdma_capture.cpp
+add_library(gvfg SHARED
+    include/gvfg_capture.h
+    src/gvfg_capture.cpp
     src/gcapture_log_bridge.cpp
     ${CMAKE_SOURCE_DIR}/sdk/gcapture/src/pipeline/shared_scene_pipeline.cpp
 )
 
-set_target_properties(gxdma PROPERTIES
+set_target_properties(gvfg PROPERTIES
     AUTOMOC OFF
     AUTOUIC OFF
     AUTORCC OFF
 )
 
-target_include_directories(gxdma
+target_include_directories(gvfg
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
@@ -28,17 +28,17 @@ target_include_directories(gxdma
         ${CMAKE_SOURCE_DIR}/sdk/gcapture/src/pipeline
 )
 
-target_compile_definitions(gxdma PRIVATE
-    GXDMA_BUILD
-    GXDMA_SDK_VERSION="${GXDMA_SDK_VERSION}"
+target_compile_definitions(gvfg PRIVATE
+    GVFG_BUILD
+    GVFG_SDK_VERSION="${GVFG_SDK_VERSION}"
 )
 
-target_link_libraries(gxdma PRIVATE
+target_link_libraries(gvfg PRIVATE
     gvendor
     ole32 user32 windowscodecs
     dxgi d3d11 d2d1 dwrite D3DCompiler
 )
 
 if (MSVC)
-  target_compile_options(gxdma PRIVATE /utf-8)
+  target_compile_options(gvfg PRIVATE /utf-8)
 endif()

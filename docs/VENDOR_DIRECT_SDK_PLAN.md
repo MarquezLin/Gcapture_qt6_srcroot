@@ -2,37 +2,40 @@
 
 ## Current Direction
 
-The vendor-direct path is now the standalone XDMA SDK in `sdk/gxdma`, backed by
-the low-level driver access in `sdk/gvendor`, and exposed through the Qt viewer
-as `GVendor Direct`.
+Vendor Direct 目前改成使用獨立的 GVFG SDK：
 
-The previous KS-direct diagnostic path has been removed. There is no separate
-`gvendor_probe.exe` console tool anymore; debugging should use the viewer plus
-the XDMA debug logging define.
+- 對外 facade：`sdk/gvfg`
+- 低階 driver access：`sdk/gvendor`
+- Viewer 整合：`apps/qt6_viewer` 的 `GVendor Direct`
+
+GVFG 是客戶看到的 SDK/API 名稱。XDMA 只保留為底層 driver/backend 說明。
 
 ## Build Options
 
 ```text
-BUILD_GXDMA_SDK=ON
+BUILD_GVFG_SDK=ON
+BUILD_GVFG_SAMPLES=ON
 GVENDOR_XDMA_DEBUG_LOG=ON
 ```
 
-`BUILD_GXDMA_SDK` includes `sdk/gvendor`, builds `gxdma.dll`, and copies
-`gxdma.dll` / `gvendor.dll` next to `qt6_viewer.exe`.
+`BUILD_GVFG_SDK` 會 build `gvfg.dll`，並把 `gvfg.dll` / `gvendor.dll` 複製到 viewer 輸出資料夾。
 
-`GVENDOR_XDMA_DEBUG_LOG` enables verbose XDMA flow logs through
-`OutputDebugStringA`.
+`GVENDOR_XDMA_DEBUG_LOG` 會開啟底層 XDMA flow log。
 
 ## Active Components
 
-- `sdk/gcapture`: product capture SDK and DirectShow / WinMF backends.
-- `sdk/gxdma`: standalone XDMA capture SDK facade.
-- `sdk/gvendor`: low-level XDMA driver access.
-- `apps/qt6_viewer`: viewer UI; `GVendor Direct` uses `gxdma` directly.
+- `sdk/gvfg`: customer-facing GVFG capture SDK。
+- `sdk/gvendor`: internal low-level XDMA driver access。
+- `apps/qt6_viewer`: viewer demo，`GVendor Direct` 透過 GVFG SDK 啟動。
+- `samples/gvfg_qt_preview`: 最小客戶 sample。
 
 ## Customer API
 
-See `docs/GXDMA_CUSTOMER_API.md` for the public XDMA API usage guide.
+請看：
+
+```text
+docs/GVFG_CUSTOMER_API.md
+```
 
 ## Removed Components
 

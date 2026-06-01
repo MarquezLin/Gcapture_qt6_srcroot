@@ -53,7 +53,7 @@ static QString formatVideoCapDisplay(const gcap_video_cap_t &cap)
 
 static QString formatPropertyPageDisplay(const gcap_property_page_t &page)
 {
-    return QStringLiteral("%1 — %2")
+    return QStringLiteral("%1 - %2")
         .arg(QString::fromUtf8(page.page_name))
         .arg(page.capture_pin ? QStringLiteral("Capture Pin") : QStringLiteral("Filter"));
 }
@@ -82,8 +82,8 @@ void MainWindow::ensureDeviceCapabilityCache(int deviceIndex)
     cachedSupportedFormats_.clear();
     cachedPropertyPages_.clear();
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    if (backend == kQtViewerGxdmaBackend)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (backend == kQtViewerGvfgBackend)
     {
         cachedSupportedFormats_ << QStringLiteral("YUY2");
         return;
@@ -257,11 +257,11 @@ void MainWindow::showAndActivateDialog(QWidget *dialog)
 
 void MainWindow::refreshCaptureRuntimeInfo()
 {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    if (usingGxdma_ && gxdma_)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (usingGvfg_ && gvfg_)
     {
-        const gxdma_runtime_info_t rt = gxdma_->runtimeInfo();
-        const gxdma_preview_info_t pv = gxdma_->previewInfo();
+        const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
+        const gvfg_preview_info_t pv = gvfg_->previewInfo();
         gcap_signal_status_t sig{};
         sig.width = rt.input_signal.width;
         sig.height = rt.input_signal.height;
@@ -275,7 +275,7 @@ void MainWindow::refreshCaptureRuntimeInfo()
         captureInfo_.signal = sig;
         captureInfo_.signalProbe = sig;
         captureInfo_.negotiated = sig;
-        captureInfo_.backendName = QStringLiteral("GXDMA");
+        captureInfo_.backendName = QStringLiteral("GVFG");
         captureInfo_.frameSource = QStringLiteral("XDMA C2H");
         captureInfo_.pathName = QStringLiteral("XDMA C2H -> YUY2 frame callback");
         captureInfo_.captureFormat = QString::fromUtf8(rt.input_signal.pixel_format);
@@ -307,8 +307,8 @@ void MainWindow::refreshCaptureRuntimeInfo()
 
 void MainWindow::refreshCaptureDeviceProps(bool throttleDeviceProps)
 {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    if (usingGxdma_)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (usingGvfg_)
         return;
 #endif
 
@@ -406,8 +406,8 @@ void MainWindow::refreshDisplayInfoFromFrame(const QImage &img)
         displayInfo_.pipe.adapterName = gpuName_;
         displayInfo_.pipe.adapterIndex = gpuIndex_;
     }
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    else if (backend == kQtViewerGxdmaBackend || usingGxdma_)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    else if (backend == kQtViewerGvfgBackend || usingGvfg_)
     {
         displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::Xdma;
         displayInfo_.pipe.adapterName = gpuName_;

@@ -84,11 +84,11 @@ void MainWindow::closeCaptureSession()
 {
     stopPreviewAudio();
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    if (usingGxdma_ && gxdma_)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (usingGvfg_ && gvfg_)
     {
-        gxdma_->stop();
-        usingGxdma_ = false;
+        gvfg_->stop();
+        usingGvfg_ = false;
     }
 #endif
 
@@ -276,8 +276,8 @@ void MainWindow::stopPreviewAudio()
 void MainWindow::onStart()
 {
     if (h_
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-        || usingGxdma_
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+        || usingGvfg_
 #endif
     )
     {
@@ -315,12 +315,12 @@ void MainWindow::onStart()
                        .arg(usePacketCallback_ ? "true" : "false")
                        .arg(packetLogOnly_ ? "true" : "false"));
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    if (backend == kQtViewerGxdmaBackend)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (backend == kQtViewerGvfgBackend)
     {
-        if (!gxdma_)
+        if (!gvfg_)
         {
-            QMessageBox::warning(this, QStringLiteral("GXDMA"), QStringLiteral("GXDMA source is not available."));
+            QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("GVFG source is not available."));
             return;
         }
 
@@ -330,18 +330,18 @@ void MainWindow::onStart()
         currentProfile_.fps_num = 30000;
         currentProfile_.fps_den = 1001;
 
-        const bool started = gxdma_->start(hwnd, deviceIndex_, selectedPreviewBitDepthMode());
+        const bool started = gvfg_->start(hwnd, deviceIndex_, selectedPreviewBitDepthMode());
         if (!started)
         {
-            usingGxdma_ = false;
+            usingGvfg_ = false;
             clearPreviewSurface();
             if (ui->statusbar)
-                ui->statusbar->showMessage(QStringLiteral("GXDMA start failed"), 5000);
+                ui->statusbar->showMessage(QStringLiteral("GVFG start failed"), 5000);
             return;
         }
 
-        usingGxdma_ = true;
-        const gxdma_signal_status_t sig = gxdma_->signalStatus();
+        usingGvfg_ = true;
+        const gvfg_signal_status_t sig = gvfg_->signalStatus();
         if (sig.width > 0)
             currentProfile_.width = sig.width;
         if (sig.height > 0)
@@ -352,7 +352,7 @@ void MainWindow::onStart()
             currentProfile_.fps_den = 1000;
         }
 
-        MainWindow::postLog(QStringLiteral("[GXDMA] started deviceIndex=%1 %2x%3 %4fps")
+        MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 %2x%3 %4fps")
                                 .arg(deviceIndex_)
                                 .arg(currentProfile_.width)
                                 .arg(currentProfile_.height)
@@ -466,8 +466,8 @@ void MainWindow::onStart()
 void MainWindow::onStop()
 {
     if (!h_
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-        && !usingGxdma_
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+        && !usingGvfg_
 #endif
     )
         return;
@@ -526,11 +526,11 @@ void MainWindow::onOpenSnapshot()
 
 void MainWindow::onRecord()
 {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_XDMA_BACKEND)
-    if (usingGxdma_)
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (usingGvfg_)
     {
         QMessageBox::information(this, QStringLiteral("Record"),
-                                 QStringLiteral("GXDMA is currently preview-only. Recording will be added in the standalone XDMA SDK path later."));
+                                 QStringLiteral("GVFG is currently preview-only. Recording will be added in the standalone GVFG SDK path later."));
         return;
     }
 #endif
