@@ -79,6 +79,15 @@ typedef struct gv_signal_status_t
     uint32_t fps_den;
     gdriver_pixel_format_t pixel_format;
     uint32_t bit_depth;
+    uint32_t fpga_valid_mask;       /* bit0:0x0c, bit1:0x18, bit2:0x1c, bit3:0x180 */
+    uint32_t fpga_width_valid;      /* Non-zero when FPGA 0x10 read succeeded. */
+    uint32_t fpga_height_valid;     /* Non-zero when FPGA 0x14 read succeeded. */
+    uint32_t fpga_width_raw;        /* Raw FPGA 0x10 width register. */
+    uint32_t fpga_height_raw;       /* Raw FPGA 0x14 height register. */
+    uint32_t fpga_video_format_raw; /* 0x0c: 0=yuv422, 1=rgb, 2=yuv444, 3=yuv420 */
+    uint32_t fpga_frame_rate_raw;   /* 0x18 low nibble: frame-rate code */
+    uint32_t fpga_bit_depth_raw;    /* 0x1c: 8 or 10 */
+    uint32_t fpga_status_raw;       /* 0x180: bit0 SDI lock, bit1 SDI DDR, bit2 HDMI lock, bit3 HDMI DDR */
 } gv_signal_status_t;
 
 typedef struct gv_frame_t
@@ -108,6 +117,41 @@ typedef struct gv_stream_stats_t
     uint64_t interrupt_count;
 } gv_stream_stats_t;
 
+typedef enum gv_event_type_t
+{
+    GV_EVENT_VIDEO_IRQ = 1,
+    GV_EVENT_PLUG_IN = 2,
+    GV_EVENT_PLUG_OUT = 3,
+    GV_EVENT_CAPTURE_PAUSED = 4,
+    GV_EVENT_CAPTURE_RESUMED = 5
+} gv_event_type_t;
+
+enum
+{
+    GV_EVENT_MASK_VIDEO_IRQ = 1u << 0,
+    GV_EVENT_MASK_PLUG_IN = 1u << 1,
+    GV_EVENT_MASK_PLUG_OUT = 1u << 2,
+    GV_EVENT_MASK_CAPTURE_PAUSED = 1u << 3,
+    GV_EVENT_MASK_CAPTURE_RESUMED = 1u << 4,
+    GV_EVENT_MASK_HOTPLUG = GV_EVENT_MASK_PLUG_IN |
+                            GV_EVENT_MASK_PLUG_OUT |
+                            GV_EVENT_MASK_CAPTURE_PAUSED |
+                            GV_EVENT_MASK_CAPTURE_RESUMED,
+    GV_EVENT_MASK_DEFAULT = GV_EVENT_MASK_HOTPLUG,
+    GV_EVENT_MASK_ALL = GV_EVENT_MASK_VIDEO_IRQ | GV_EVENT_MASK_HOTPLUG
+};
+
+typedef struct gv_event_t
+{
+    gv_event_type_t type;
+    uint32_t channel;
+    uint32_t irq_bit;
+    uint32_t irq_mask;
+    uint64_t timestamp_ns;
+} gv_event_t;
+
+typedef void (*gv_event_callback_t)(const gv_event_t *event, void *user);
+
 GVENDOR_API int gv_enumerate_devices(gv_device_entry_t *out, int max_devices);
 GVENDOR_API gv_status_t gv_open_default(gv_handle *out);
 GVENDOR_API gv_status_t gv_open_device_index(int device_index, gv_handle *out);
@@ -118,6 +162,7 @@ GVENDOR_API gv_status_t gv_get_signal_status(gv_handle h, gv_signal_status_t *ou
 GVENDOR_API gv_status_t gv_get_stream_stats(gv_handle h, gv_stream_stats_t *out);
 
 GVENDOR_API gv_status_t gv_set_input(gv_handle h, gdriver_input_t input, uint32_t channel_index);
+GVENDOR_API gv_status_t gv_set_event_callback(gv_handle h, gv_event_callback_t callback, void *user, uint32_t event_mask);
 GVENDOR_API gv_status_t gv_configure_stream(gv_handle h, const gv_stream_desc_t *desc);
 GVENDOR_API gv_status_t gv_start_stream(gv_handle h);
 GVENDOR_API gv_status_t gv_stop_stream(gv_handle h);

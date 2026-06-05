@@ -60,6 +60,42 @@ namespace
         return gv_strerror(st);
     }
 
+    gvfg_event_type_t map_event_type(gv_event_type_t type)
+    {
+        switch (type)
+        {
+        case GV_EVENT_VIDEO_IRQ:
+            return GVFG_EVENT_VIDEO_IRQ;
+        case GV_EVENT_PLUG_IN:
+            return GVFG_EVENT_PLUG_IN;
+        case GV_EVENT_PLUG_OUT:
+            return GVFG_EVENT_PLUG_OUT;
+        case GV_EVENT_CAPTURE_PAUSED:
+            return GVFG_EVENT_CAPTURE_PAUSED;
+        case GV_EVENT_CAPTURE_RESUMED:
+            return GVFG_EVENT_CAPTURE_RESUMED;
+        default:
+            return GVFG_EVENT_VIDEO_IRQ;
+        }
+    }
+
+    uint32_t map_event_mask_to_vendor(uint32_t mask)
+    {
+        const uint32_t effective = mask ? mask : GVFG_EVENT_MASK_DEFAULT;
+        uint32_t out = 0;
+        if (effective & GVFG_EVENT_MASK_VIDEO_IRQ)
+            out |= GV_EVENT_MASK_VIDEO_IRQ;
+        if (effective & GVFG_EVENT_MASK_PLUG_IN)
+            out |= GV_EVENT_MASK_PLUG_IN;
+        if (effective & GVFG_EVENT_MASK_PLUG_OUT)
+            out |= GV_EVENT_MASK_PLUG_OUT;
+        if (effective & GVFG_EVENT_MASK_CAPTURE_PAUSED)
+            out |= GV_EVENT_MASK_CAPTURE_PAUSED;
+        if (effective & GVFG_EVENT_MASK_CAPTURE_RESUMED)
+            out |= GV_EVENT_MASK_CAPTURE_RESUMED;
+        return out ? out : GV_EVENT_MASK_DEFAULT;
+    }
+
     const char *dxgi_format_name(DXGI_FORMAT fmt)
     {
         switch (fmt)
@@ -70,6 +106,94 @@ namespace
         case DXGI_FORMAT_R16G16B16A16_FLOAT: return "R16G16B16A16_FLOAT";
         default: return "DXGI_FORMAT_OTHER";
         }
+    }
+
+    const char *gdriver_pixel_format_name(gdriver_pixel_format_t fmt)
+    {
+        switch (fmt)
+        {
+        case GDRIVER_PIXFMT_YUY2:
+            return "YUY2";
+        case GDRIVER_PIXFMT_Y210:
+            return "Y210";
+        case GDRIVER_PIXFMT_RGB24:
+            return "RGB24";
+        case GDRIVER_PIXFMT_NV12:
+            return "NV12";
+        case GDRIVER_PIXFMT_P010:
+            return "P010";
+        case GDRIVER_PIXFMT_YUV444:
+            return "YUV444";
+        default:
+            return "UNKNOWN";
+        }
+    }
+
+    bool fpga_field_valid(uint32_t mask, int bit)
+    {
+        return (mask & (1u << bit)) != 0;
+    }
+
+    const char *fpga_video_format_name(uint32_t value)
+    {
+        switch (value & 0x3u)
+        {
+        case 0:
+            return "YUV422";
+        case 1:
+            return "RGB";
+        case 2:
+            return "YUV444";
+        case 3:
+            return "YUV420";
+        default:
+            return "UNKNOWN";
+        }
+    }
+
+    const char *fpga_frame_rate_name(uint32_t value)
+    {
+        switch (value & 0x0fu)
+        {
+        case 0x0:
+            return "None";
+        case 0x1:
+            return "Reserved";
+        case 0x2:
+            return "23.98";
+        case 0x3:
+            return "24";
+        case 0x4:
+            return "47.95";
+        case 0x5:
+            return "25";
+        case 0x6:
+            return "29.97";
+        case 0x7:
+            return "30";
+        case 0x8:
+            return "48";
+        case 0x9:
+            return "50";
+        case 0xa:
+            return "59.94";
+        case 0xb:
+            return "60";
+        default:
+            return "UNKNOWN";
+        }
+    }
+
+    void copy_binary4(char *dst, size_t dstSize, uint32_t value)
+    {
+        if (!dst || dstSize == 0)
+            return;
+        const uint32_t code = value & 0x0fu;
+        char bits[5] = {};
+        for (int i = 0; i < 4; ++i)
+            bits[i] = (code & (1u << (3 - i))) ? '1' : '0';
+        bits[4] = '\0';
+        copy_cstr(dst, dstSize, bits);
     }
 
     int clamp_u8(int v)
@@ -107,6 +231,7 @@ struct gvfg_handle_t
         }
 
         currentIndex = index;
+        syncVendorEventCallback();
         const gv_status_t stInput = gv_set_input(handle, GDRIVER_INPUT_SDI, 0);
         if (stInput != GV_OK)
         {
@@ -161,10 +286,20 @@ struct gvfg_handle_t
         releaseRenderPipeline();
         if (handle)
         {
+            gv_set_event_callback(handle, nullptr, nullptr, 0);
             gv_close(handle);
             handle = nullptr;
         }
         currentIndex = -1;
+    }
+
+    gvfg_status_t setEventCallback(gvfg_on_event_cb callback, void *user, uint32_t mask)
+    {
+        onEvent = callback;
+        eventCallbackUser = user;
+        eventMask = mask ? mask : GVFG_EVENT_MASK_DEFAULT;
+        syncVendorEventCallback();
+        return GVFG_OK;
     }
 
     gvfg_status_t setPreview(const gvfg_preview_desc_t &desc)
@@ -186,7 +321,30 @@ struct gvfg_handle_t
         out.height = static_cast<int>(height);
         out.fps = (fpsNum > 0 && fpsDen > 0) ? (double(fpsNum) / double(fpsDen)) : 0.0;
         out.bit_depth = static_cast<int>(bitDepth ? bitDepth : 8);
-        copy_cstr(out.pixel_format, sizeof(out.pixel_format), "YUY2");
+        copy_cstr(out.pixel_format, sizeof(out.pixel_format), gdriver_pixel_format_name(pixelFormat));
+        out.fpga.valid_mask = fpgaValidMask;
+        out.fpga.width_valid = fpgaWidthValid ? 1 : 0;
+        out.fpga.height_valid = fpgaHeightValid ? 1 : 0;
+        out.fpga.width_raw = fpgaWidthRaw;
+        out.fpga.height_raw = fpgaHeightRaw;
+        out.fpga.video_format_raw = fpgaVideoFormatRaw;
+        out.fpga.video_format_valid = fpga_field_valid(fpgaValidMask, 0) ? 1 : 0;
+        out.fpga.video_format_code = static_cast<int>(fpgaVideoFormatRaw & 0x3u);
+        copy_cstr(out.fpga.video_format, sizeof(out.fpga.video_format), fpga_video_format_name(fpgaVideoFormatRaw));
+        out.fpga.frame_rate_raw = fpgaFrameRateRaw;
+        out.fpga.frame_rate_valid = fpga_field_valid(fpgaValidMask, 1) ? 1 : 0;
+        out.fpga.frame_rate_code = static_cast<int>(fpgaFrameRateRaw & 0x0fu);
+        copy_binary4(out.fpga.frame_rate_bits, sizeof(out.fpga.frame_rate_bits), fpgaFrameRateRaw);
+        copy_cstr(out.fpga.frame_rate_name, sizeof(out.fpga.frame_rate_name), fpga_frame_rate_name(fpgaFrameRateRaw));
+        out.fpga.bit_depth_raw = fpgaBitDepthRaw;
+        out.fpga.bit_depth_valid = fpga_field_valid(fpgaValidMask, 2) ? 1 : 0;
+        out.fpga.bit_depth = static_cast<int>(fpgaBitDepthRaw);
+        out.fpga.status_raw = fpgaStatusRaw;
+        out.fpga.status_valid = fpga_field_valid(fpgaValidMask, 3) ? 1 : 0;
+        out.fpga.sdi_locked = (fpgaStatusRaw & (1u << 0)) ? 1 : 0;
+        out.fpga.sdi_ddr_ok = (fpgaStatusRaw & (1u << 1)) ? 1 : 0;
+        out.fpga.hdmi_locked = (fpgaStatusRaw & (1u << 2)) ? 1 : 0;
+        out.fpga.hdmi_ddr_ok = (fpgaStatusRaw & (1u << 3)) ? 1 : 0;
         return (out.width > 0 && out.height > 0) ? GVFG_OK : GVFG_ENODEV;
     }
 
@@ -220,6 +378,38 @@ struct gvfg_handle_t
         return GVFG_OK;
     }
 
+    void syncVendorEventCallback()
+    {
+        if (!handle)
+            return;
+        gv_set_event_callback(handle,
+                              onEvent ? &gvfg_handle_t::onVendorEvent : nullptr,
+                              this,
+                              map_event_mask_to_vendor(eventMask));
+    }
+
+    static void onVendorEvent(const gv_event_t *event, void *user)
+    {
+        auto *self = static_cast<gvfg_handle_t *>(user);
+        if (!self || !event)
+            return;
+        self->emitEvent(*event);
+    }
+
+    void emitEvent(const gv_event_t &event)
+    {
+        if (!onEvent)
+            return;
+
+        gvfg_event_t out{};
+        out.type = map_event_type(event.type);
+        out.channel = event.channel;
+        out.irq_bit = event.irq_bit;
+        out.irq_mask = event.irq_mask;
+        out.timestamp_ns = event.timestamp_ns;
+        onEvent(&out, eventCallbackUser);
+    }
+
     void querySignal()
     {
         if (!handle)
@@ -233,12 +423,23 @@ struct gvfg_handle_t
             width = sig.width;
         if (sig.height > 0)
             height = sig.height;
-        if (sig.fps_num > 0)
+        if (sig.fps_num > 0 && sig.fps_den > 0)
+        {
             fpsNum = sig.fps_num;
-        if (sig.fps_den > 0)
             fpsDen = sig.fps_den;
+        }
         if (sig.bit_depth > 0)
             bitDepth = sig.bit_depth;
+        pixelFormat = sig.pixel_format != GDRIVER_PIXFMT_UNKNOWN ? sig.pixel_format : GDRIVER_PIXFMT_YUY2;
+        fpgaValidMask = sig.fpga_valid_mask;
+        fpgaWidthValid = sig.fpga_width_valid != 0;
+        fpgaHeightValid = sig.fpga_height_valid != 0;
+        fpgaWidthRaw = sig.fpga_width_raw;
+        fpgaHeightRaw = sig.fpga_height_raw;
+        fpgaVideoFormatRaw = sig.fpga_video_format_raw;
+        fpgaFrameRateRaw = sig.fpga_frame_rate_raw;
+        fpgaBitDepthRaw = sig.fpga_bit_depth_raw;
+        fpgaStatusRaw = sig.fpga_status_raw;
     }
 
     gvfg_status_t configureStream()
@@ -259,7 +460,7 @@ struct gvfg_handle_t
         desc.height = height;
         desc.fps_num = fpsNum ? fpsNum : 30000;
         desc.fps_den = fpsDen ? fpsDen : 1001;
-        desc.pixel_format = GDRIVER_PIXFMT_YUY2;
+        desc.pixel_format = pixelFormat;
         desc.buffer_count = 1;
         desc.memory_kind = GDRIVER_MEMORY_DRIVER_COPY;
 
@@ -389,7 +590,7 @@ struct gvfg_handle_t
 
             updateRuntimeFps(frame.timestamp_ns ? frame.timestamp_ns : now_ns());
             ++deliveredFrames;
-            const bool rendered = renderYuy2Frame(frame);
+            const bool rendered = renderGpuFrame(frame);
             if (rendered)
                 emitReadbackFrame(frame);
             else
@@ -398,21 +599,72 @@ struct gvfg_handle_t
         }
     }
 
-    bool renderYuy2Frame(const gv_frame_t &frame)
+    bool renderGpuFrame(const gv_frame_t &frame)
     {
-        if (!pipeline || !previewHwnd || frame.pixel_format != GDRIVER_PIXFMT_YUY2 || !frame.data)
+        if (!pipeline || !previewHwnd || !frame.data)
             return false;
 
         const int w = static_cast<int>(frame.width);
         const int h = static_cast<int>(frame.height);
-        const int stride = frame.plane_stride_bytes[0] ? static_cast<int>(frame.plane_stride_bytes[0]) : w * 2;
-        if (w <= 0 || h <= 0 || stride < w * 2)
+        if (w <= 0 || h <= 0)
             return false;
 
-        if (!pipeline->ensure_rt_and_pipeline(w, h) ||
-            !pipeline->ensure_preview_swapchain(w, h) ||
-            !pipeline->upload_yuy2_frame(static_cast<const uint8_t *>(frame.data), stride, w, h) ||
-            !pipeline->render_uploaded_yuv_to_fp16(GCAP_FMT_YUY2, w, h) ||
+        if (!pipeline->ensure_rt_and_pipeline(w, h) || !pipeline->ensure_preview_swapchain(w, h))
+            return false;
+        pipeline->set_source_bit_depth(static_cast<int>(frame.bit_depth ? frame.bit_depth : bitDepth));
+
+        const auto *base = static_cast<const uint8_t *>(frame.data);
+        gcap_pixfmt_t renderFmt = GCAP_FMT_YUY2;
+        bool uploaded = false;
+
+        switch (frame.pixel_format)
+        {
+        case GDRIVER_PIXFMT_YUY2:
+        {
+            const int stride = frame.plane_stride_bytes[0] ? static_cast<int>(frame.plane_stride_bytes[0]) : w * 2;
+            if (stride < w * 2)
+                return false;
+            renderFmt = GCAP_FMT_YUY2;
+            uploaded = pipeline->upload_yuy2_frame(base + frame.plane_offset_bytes[0], stride, w, h);
+            break;
+        }
+        case GDRIVER_PIXFMT_Y210:
+        {
+            const int stride = frame.plane_stride_bytes[0] ? static_cast<int>(frame.plane_stride_bytes[0]) : w * 4;
+            if (stride < w * 4)
+                return false;
+            renderFmt = GCAP_FMT_Y210;
+            uploaded = pipeline->upload_y210_frame(base + frame.plane_offset_bytes[0], stride, w, h);
+            break;
+        }
+        case GDRIVER_PIXFMT_NV12:
+        {
+            if (frame.plane_count < 2)
+                return false;
+            const int strideY = frame.plane_stride_bytes[0] ? static_cast<int>(frame.plane_stride_bytes[0]) : w;
+            const int strideUV = frame.plane_stride_bytes[1] ? static_cast<int>(frame.plane_stride_bytes[1]) : strideY;
+            renderFmt = GCAP_FMT_NV12;
+            uploaded = pipeline->upload_nv12_frame(base + frame.plane_offset_bytes[0], strideY,
+                                                   base + frame.plane_offset_bytes[1], strideUV, w, h);
+            break;
+        }
+        case GDRIVER_PIXFMT_P010:
+        {
+            if (frame.plane_count < 2)
+                return false;
+            const int strideY = frame.plane_stride_bytes[0] ? static_cast<int>(frame.plane_stride_bytes[0]) : w * 2;
+            const int strideUV = frame.plane_stride_bytes[1] ? static_cast<int>(frame.plane_stride_bytes[1]) : strideY;
+            renderFmt = GCAP_FMT_P010;
+            uploaded = pipeline->upload_p010_frame(base + frame.plane_offset_bytes[0], strideY,
+                                                   base + frame.plane_offset_bytes[1], strideUV, w, h);
+            break;
+        }
+        default:
+            return false;
+        }
+
+        if (!uploaded ||
+            !pipeline->render_uploaded_yuv_to_fp16(renderFmt, w, h) ||
             !pipeline->copy_fp16_to_scene())
             return false;
 
@@ -428,7 +680,7 @@ struct gvfg_handle_t
     {
         if (!onFrame || !pipeline || !ctx)
             return;
-        if ((frame.frame_id % 6) != 1)
+        if (!shouldEmitFrameCallback(frame.frame_id))
             return;
 
         const int w = static_cast<int>(frame.width);
@@ -453,9 +705,18 @@ struct gvfg_handle_t
 
     void emitCpuFallbackFrame(const gv_frame_t &frame)
     {
-        if (!onFrame || frame.pixel_format != GDRIVER_PIXFMT_YUY2 || !frame.data)
+        if (frame.pixel_format != GDRIVER_PIXFMT_YUY2)
+        {
+            if (!fallbackLogged)
+            {
+                emitError(GVFG_ENOTSUP, "GVFG preview currently supports YUV422/YUV420 GPU paths only; RGB/YUV444 input is not rendered");
+                fallbackLogged = true;
+            }
             return;
-        if ((frame.frame_id % 6) != 1)
+        }
+        if (!onFrame || !frame.data)
+            return;
+        if (!shouldEmitFrameCallback(frame.frame_id))
             return;
 
         const int w = static_cast<int>(frame.width);
@@ -509,6 +770,14 @@ struct gvfg_handle_t
         onFrame(&out, callbackUser);
     }
 
+    bool shouldEmitFrameCallback(uint64_t frameId) const
+    {
+        const uint32_t interval = callbackFrameInterval.load(std::memory_order_relaxed);
+        if (interval <= 1)
+            return true;
+        return (frameId % interval) == 1;
+    }
+
     void emitError(gvfg_status_t code, const char *msg)
     {
         if (onError)
@@ -536,6 +805,16 @@ struct gvfg_handle_t
     uint32_t fpsNum = 30000;
     uint32_t fpsDen = 1001;
     uint32_t bitDepth = 8;
+    gdriver_pixel_format_t pixelFormat = GDRIVER_PIXFMT_YUY2;
+    uint32_t fpgaValidMask = 0;
+    bool fpgaWidthValid = false;
+    bool fpgaHeightValid = false;
+    uint32_t fpgaWidthRaw = 0;
+    uint32_t fpgaHeightRaw = 0;
+    uint32_t fpgaVideoFormatRaw = 0;
+    uint32_t fpgaFrameRateRaw = 0;
+    uint32_t fpgaBitDepthRaw = 0;
+    uint32_t fpgaStatusRaw = 0;
     uint64_t lastPtsNs = 0;
     uint64_t deliveredFrames = 0;
     double runtimeFps = 0.0;
@@ -543,6 +822,10 @@ struct gvfg_handle_t
     gvfg_on_frame_cb onFrame = nullptr;
     gvfg_on_error_cb onError = nullptr;
     void *callbackUser = nullptr;
+    std::atomic<uint32_t> callbackFrameInterval{1};
+    gvfg_on_event_cb onEvent = nullptr;
+    void *eventCallbackUser = nullptr;
+    uint32_t eventMask = GVFG_EVENT_MASK_DEFAULT;
     bool fallbackLogged = false;
     std::vector<uint8_t> fallbackBgra;
 
@@ -611,6 +894,25 @@ extern "C"
         handle->onError = on_error;
         handle->callbackUser = user;
         return GVFG_OK;
+    }
+
+    gvfg_status_t gvfg_set_frame_callback_interval(gvfg_handle handle, uint32_t frame_interval)
+    {
+        if (!handle)
+            return GVFG_EINVAL;
+        handle->callbackFrameInterval.store(frame_interval <= 1 ? 1u : frame_interval,
+                                            std::memory_order_relaxed);
+        return GVFG_OK;
+    }
+
+    gvfg_status_t gvfg_set_event_callback(gvfg_handle handle,
+                                           gvfg_on_event_cb on_event,
+                                           void *user,
+                                           uint32_t event_mask)
+    {
+        if (!handle)
+            return GVFG_EINVAL;
+        return handle->setEventCallback(on_event, user, event_mask);
     }
 
     gvfg_status_t gvfg_set_preview(gvfg_handle handle, const gvfg_preview_desc_t *desc)

@@ -116,6 +116,8 @@ XDMA C2H 讀到 YUY2 frame
 gvfg_enumerate_devices
 -> gvfg_create
 -> gvfg_set_callbacks
+-> gvfg_set_frame_callback_interval (optional)
+-> gvfg_set_event_callback (optional)
 -> gvfg_open
 -> gvfg_start
 -> capture running
@@ -129,9 +131,11 @@ gvfg_enumerate_devices
 1. 先列出 XDMA 裝置。
 2. 建立一個 `gvfg_handle`。
 3. 設 callback。
-4. open device。
-5. start stream。
-6. stop / destroy。
+4. 視需求設定 callback 速率。
+5. 視需求設定 event callback。
+6. open device。
+7. start stream。
+8. stop / destroy。
 
 如果客戶想使用 SDK 內建 D3D preview helper，才需要多呼叫：
 
@@ -281,6 +285,79 @@ typedef struct
 | `bit_depth` | input bit depth |
 | `pixel_format` | pixel format 字串，目前預期是 `YUY2` |
 
+
+### Customer buffer vs FPGA signal
+
+The customer API separates the delivered buffer format from the FPGA signal
+register values.
+
+```c
+typedef struct
+{
+    uint32_t valid_mask;            /* FPGA register read-valid mask: bit0=0x0c, bit1=0x18, bit2=0x1c, bit3=0x180. */
+    int width_valid;                /* Non-zero when FPGA 0x10 read succeeded. */
+    int height_valid;               /* Non-zero when FPGA 0x14 read succeeded. */
+    uint32_t width_raw;             /* Raw FPGA 0x10 width register. */
+    uint32_t height_raw;            /* Raw FPGA 0x14 height register. */
+    uint32_t video_format_raw;      /* Raw FPGA 0x0c value. */
+    int video_format_valid;
+    int video_format_code;       /* 0=yuv422, 1=rgb, 2=yuv444, 3=yuv420 */
+    char video_format[16];
+
+    uint32_t frame_rate_raw;        /* Raw FPGA 0x18 value. */
+    int frame_rate_valid;
+    int frame_rate_code;         /* FPGA 0x18 low nibble. */
+    char frame_rate_bits[5];     /* 4-bit binary text, for example "0110". */
+    char frame_rate_name[16];    /* None, Reserved, 23.98, 24, ... */
+
+    uint32_t bit_depth_raw;         /* Raw FPGA 0x1c value. */
+    int bit_depth_valid;
+    int bit_depth;               /* FPGA signal bit depth: 8 or 10 when valid. */
+
+    uint32_t status_raw;            /* Raw FPGA 0x180 value. */
+    int status_valid;
+    int sdi_locked;              /* FPGA 0x180 bit0 */
+    int sdi_ddr_ok;              /* FPGA 0x180 bit1 */
+    int hdmi_locked;             /* FPGA 0x180 bit2 */
+    int hdmi_ddr_ok;             /* FPGA 0x180 bit3 */
+} gvfg_fpga_signal_status_t;
+
+typedef struct
+{
+    int width;
+    int height;
+    double fps;
+    int bit_depth;
+    char pixel_format[32];
+    gvfg_fpga_signal_status_t fpga;
+} gvfg_signal_status_t;
+```
+
+`gvfg_signal_status_t::pixel_format` and `gvfg_signal_status_t::bit_depth`
+describe the actual buffer delivered by the customer API. `fpga.*` describes
+the decoded FPGA signal registers.
+
+For example, if FPGA reports `video_format=YUV422` and `bit_depth=10`, but
+`pixel_format=YUY2` and `bit_depth=8`, the input signal is reported as YUV422
+10-bit by FPGA, but the customer buffer is still YUY2 8-bit packing. Treat the
+buffer as true YUV422 10-bit only when `pixel_format` is `Y210`.
+
+FPGA frame-rate code table:
+
+| Bits | Name |
+| --- | --- |
+| `0000` | None |
+| `0001` | Reserved |
+| `0010` | 23.98 |
+| `0011` | 24 |
+| `0100` | 47.95 |
+| `0101` | 25 |
+| `0110` | 29.97 |
+| `0111` | 30 |
+| `1000` | 48 |
+| `1001` | 50 |
+| `1010` | 59.94 |
+| `1011` | 60 |
 
 ## gvfg_runtime_info_t
 
@@ -545,6 +622,104 @@ callback 是從 SDK worker thread 呼叫。
 
 如果是 GUI app，不要在 callback 裡直接更新 UI，請 marshal 到 UI thread。
 
+## gvfg_set_frame_callback_interval
+
+```c
+gvfg_status_t gvfg_set_frame_callback_interval(gvfg_handle handle,
+                                                uint32_t frame_interval);
+```
+
+設定 frame callback 的輸出頻率。
+
+### 參數
+
+| 參數 | 說明 |
+| --- | --- |
+| `handle` | session handle |
+| `frame_interval` | `0` 或 `1` 代表每張 frame 都 callback；`N > 1` 代表每 N 張 backend frame callback 一張 |
+
+### 行為
+
+- 只影響 `on_frame` callback。
+- 不影響 SDK 內建 preview render。
+- 不影響實際採集速率。
+- 不影響 `gvfg_get_runtime_info()` 的 delivered frame 統計。
+
+如果客戶要自己靠 callback 畫 preview，建議設 `1`。如果 callback 只拿來做 snapshot、log、或低頻 UI 狀態，可設 `6`、`30` 等較大的值。
+
+## gvfg_set_event_callback
+
+```c
+typedef enum
+{
+    GVFG_EVENT_VIDEO_IRQ = 1,
+    GVFG_EVENT_PLUG_IN = 2,
+    GVFG_EVENT_PLUG_OUT = 3,
+    GVFG_EVENT_CAPTURE_PAUSED = 4,
+    GVFG_EVENT_CAPTURE_RESUMED = 5
+} gvfg_event_type_t;
+
+typedef struct
+{
+    gvfg_event_type_t type;
+    uint32_t channel;
+    uint32_t irq_bit;
+    uint32_t irq_mask;
+    uint64_t timestamp_ns;
+} gvfg_event_t;
+
+typedef void (*gvfg_on_event_cb)(const gvfg_event_t *event, void *user);
+
+gvfg_status_t gvfg_set_event_callback(gvfg_handle handle,
+                                      gvfg_on_event_cb on_event,
+                                      void *user,
+                                      uint32_t event_mask);
+```
+
+註冊 capture event callback，用來通知上層 plug in/out 或 SDK 自動 pause/resume 狀態。
+
+### event mask
+
+| mask | 說明 |
+| --- | --- |
+| `GVFG_EVENT_MASK_PLUG_IN` | 收到 FPGA PLUG_IN IRQ |
+| `GVFG_EVENT_MASK_PLUG_OUT` | 收到 FPGA PLUG_OUT IRQ |
+| `GVFG_EVENT_MASK_CAPTURE_PAUSED` | SDK 已因 plug out 完成自動 pause |
+| `GVFG_EVENT_MASK_CAPTURE_RESUMED` | SDK 已因 plug in 完成自動 resume |
+| `GVFG_EVENT_MASK_VIDEO_IRQ` | 收到 video IRQ，通常每張 frame 一次 |
+| `GVFG_EVENT_MASK_DEFAULT` | 預設 hotplug/capture state，不包含 video IRQ |
+| `GVFG_EVENT_MASK_ALL` | 全部事件，包含 video IRQ |
+
+`event_mask` 傳 `0` 時使用 `GVFG_EVENT_MASK_DEFAULT`。一般客戶建議用 default；`VIDEO_IRQ` 頻率高，建議只在 debug 或明確需要時打開。
+
+### 範例
+
+```c
+static void on_event(const gvfg_event_t *event, void *user)
+{
+    switch (event->type) {
+    case GVFG_EVENT_PLUG_OUT:
+        /* UI 顯示 signal disconnected */
+        break;
+    case GVFG_EVENT_PLUG_IN:
+        /* UI 顯示 signal connected */
+        break;
+    case GVFG_EVENT_CAPTURE_PAUSED:
+        /* SDK 已自動 pause capture */
+        break;
+    case GVFG_EVENT_CAPTURE_RESUMED:
+        /* SDK 已自動 resume capture */
+        break;
+    default:
+        break;
+    }
+}
+
+gvfg_set_event_callback(handle, on_event, user, GVFG_EVENT_MASK_DEFAULT);
+```
+
+注意：event callback 是通知用途。熱插拔時的 stop/start/pause/resume 邏輯仍由 SDK 自己處理，客戶不需要在 event callback 裡重啟 capture。
+
 ## gvfg_set_preview
 
 ```c
@@ -711,11 +886,43 @@ gvfg_signal_status_t sig = {0};
 gvfg_status_t st = gvfg_get_signal_status(handle, &sig);
 
 if (st == GVFG_OK) {
-    printf("%dx%d %.2f fps %s\n",
+    printf("%dx%d stream %.2f fps buffer=%s bitdepth=%d\n",
            sig.width,
            sig.height,
            sig.fps,
-           sig.pixel_format);
+           sig.pixel_format,
+           sig.bit_depth);
+
+    printf("FPGA raw\n"
+           "  valid_mask=0x%08x\n"
+           "  width_valid=%d width_raw=%u\n"
+           "  height_valid=%d height_raw=%u\n"
+           "  video_format_raw=0x%08x\n"
+           "  frame_rate_raw=0x%08x\n"
+           "  bit_depth_raw=0x%08x\n"
+           "  status_raw=0x%08x\n",
+           sig.fpga.valid_mask,
+           sig.fpga.width_valid,
+           sig.fpga.width_raw,
+           sig.fpga.height_valid,
+           sig.fpga.height_raw,
+           sig.fpga.video_format_raw,
+           sig.fpga.frame_rate_raw,
+           sig.fpga.bit_depth_raw,
+           sig.fpga.status_raw);
+
+    if (sig.fpga.video_format_valid) {
+        printf("FPGA format=%d (%s) bitdepth=%d\n",
+               sig.fpga.video_format_code,
+               sig.fpga.video_format,
+               sig.fpga.bit_depth);
+    }
+
+    if (sig.fpga.frame_rate_valid) {
+        printf("FPGA fps code=%s (%s)\n",
+               sig.fpga.frame_rate_bits,
+               sig.fpga.frame_rate_name);
+    }
 }
 ```
 
@@ -752,7 +959,7 @@ gvfg_status_t gvfg_get_runtime_info(gvfg_handle handle,
 例如 viewer status bar 可以顯示：
 
 ```text
-Backend: GVFG | Source: XDMA C2H | Input 1280x720 29.97fps YUY2 | Runtime 29.97fps | Frames 120
+Backend: GVFG | Source: XDMA C2H | Stream 1280x720 29.97fps buffer=YUY2 bitdepth=8 | FPGA fps=0110(29.97) format=0(YUV422) bitdepth=10 | Runtime 29.97fps | Frames 120
 ```
 
 ## gvfg_get_preview_info
@@ -1043,3 +1250,11 @@ wait_frame: deliver
 - 設定 debug log callback
 - expose GPU adapter selection
 - expose zero-copy / GPU texture callback
+
+## Current XDMA Notes
+
+- The current XDMA path exposes decoded FPGA signal metadata through `sig.fpga`.
+- The delivered customer buffer format is reported by `sig.pixel_format` and `sig.bit_depth`.
+- `sig.fpga.bit_depth=10` does not by itself mean the delivered buffer is `Y210`.
+- Treat the delivered frame as true YUV422 10-bit only when `sig.pixel_format` is `Y210`.
+- `sig.fpga.frame_rate_bits=0001` is reserved by the current documented table, so the UI/API reports it as `Reserved`.

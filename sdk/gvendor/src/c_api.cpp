@@ -129,6 +129,13 @@ extern "C"
         return h->session.set_input(input, channel_index);
     }
 
+    GVENDOR_API gv_status_t gv_set_event_callback(gv_handle h, gv_event_callback_t callback, void *user, uint32_t event_mask)
+    {
+        if (!h)
+            return GV_EINVAL;
+        return h->session.set_event_callback(callback, user, event_mask);
+    }
+
     GVENDOR_API gv_status_t gv_configure_stream(gv_handle h, const gv_stream_desc_t *desc)
     {
         if (!h || !desc)

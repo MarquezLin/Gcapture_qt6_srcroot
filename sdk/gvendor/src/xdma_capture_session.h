@@ -40,6 +40,7 @@ namespace gvendor
         gv_status_t get_signal_status(gv_signal_status_t &out) const;
         gv_status_t get_stream_stats(gv_stream_stats_t &out) const;
 
+        gv_status_t set_event_callback(gv_event_callback_t callback, void *user, uint32_t eventMask);
         gv_status_t configure_stream(const gv_stream_desc_t &desc);
         gv_status_t start_stream();
         gv_status_t stop_stream();
@@ -60,16 +61,27 @@ namespace gvendor
         bool enable_user_event(uint32_t mask);
         bool disable_user_event(uint32_t mask);
 
-        void event_thread_proc();
+        void event_thread_proc(uint32_t role, uint32_t irqBit);
         void data_thread_proc();
+        bool start_data_worker();
+        void stop_data_worker();
         void publish_frame(const uint8_t *data, size_t bytes);
+        void pause_capture_for_plug_out();
+        void resume_capture_after_plug_in();
+        void handle_plug_in_frame_fix(const uint8_t *data, size_t bytes);
+        void pulse_plug_in_frame_fix();
+        void emit_event(gv_event_type_t type, uint32_t irqBit, uint32_t irqMask) const;
 
         gv_status_t fail(gv_status_t status, const char *where, DWORD winerr = GetLastError()) const;
         void set_last_error(const std::string &message) const;
         void clear_last_error() const;
 
         uint32_t active_channel() const;
-        uint32_t event_mask() const;
+        uint32_t event_mask(uint32_t role) const;
+        uint32_t video_event_mask() const;
+        uint32_t plug_in_event_mask() const;
+        uint32_t plug_out_event_mask() const;
+        uint32_t active_event_mask() const;
         long capture_enable_reg() const;
         size_t frame_size_bytes() const;
 
@@ -78,20 +90,30 @@ namespace gvendor
 
         HANDLE user_device_ = INVALID_HANDLE_VALUE;
         HANDLE c2h_device_[2] = {INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE};
-        HANDLE event_device_ = INVALID_HANDLE_VALUE;
+        HANDLE event_device_[4] = {INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE};
 
         gv_stream_desc_t stream_desc_{};
+        uint32_t stream_bit_depth_ = 8;
         gdriver_input_t input_ = GDRIVER_INPUT_SDI;
         bool opened_ = false;
         bool configured_ = false;
 
         std::atomic<bool> running_{false};
-        std::thread event_thread_;
+        std::atomic<bool> capture_active_{false};
+        std::atomic<bool> data_worker_stop_{false};
+        std::atomic<int> save_frames_after_plug_in_{0};
+        std::atomic<bool> fix_pulsed_after_plug_in_{false};
+        std::thread event_thread_[4];
         std::thread data_thread_;
 
         mutable std::mutex mutex_;
+        std::mutex worker_mutex_;
+        mutable std::mutex event_callback_mutex_;
         std::condition_variable frame_cv_;
         std::condition_variable data_cv_;
+        gv_event_callback_t event_callback_ = nullptr;
+        void *event_callback_user_ = nullptr;
+        uint32_t event_mask_filter_ = GV_EVENT_MASK_DEFAULT;
         uint32_t pending_events_ = 0;
         std::vector<uint8_t> dma_buffer_;
         std::vector<uint8_t> latest_frame_;

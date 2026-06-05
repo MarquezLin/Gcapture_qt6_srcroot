@@ -131,6 +131,7 @@ private:
     uint64_t framePacketSessionId_ = 0;
     QTimer *runtimeStatusTimer_ = nullptr;
     QString lastRuntimeStatusText_;
+    QString lastGvfgRawStateKey_;
     bool suppressAuxDialogRefresh_ = false;
     bool openingTiffDialog_ = false;
     QString lastPixelFormatWarningKey_;

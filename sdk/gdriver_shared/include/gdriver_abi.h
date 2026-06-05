@@ -51,7 +51,8 @@ typedef enum gdriver_pixel_format_t
     GDRIVER_PIXFMT_BGRX32 = 4,
     GDRIVER_PIXFMT_NV12 = 5,
     GDRIVER_PIXFMT_P010 = 6,
-    GDRIVER_PIXFMT_Y210 = 7
+    GDRIVER_PIXFMT_Y210 = 7,
+    GDRIVER_PIXFMT_YUV444 = 8
 } gdriver_pixel_format_t;
 
 typedef enum gdriver_memory_kind_t

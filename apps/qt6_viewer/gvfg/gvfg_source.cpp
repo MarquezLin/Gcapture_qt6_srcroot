@@ -53,6 +53,10 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         return false;
     }
 
+    gvfg_runtime_info_t preStartInfo{};
+    if (gvfg_get_runtime_info(handle_, &preStartInfo) == GVFG_OK)
+        emit preStartRuntimeInfoReady(preStartInfo);
+
     st = gvfg_start(handle_);
     if (st != GVFG_OK)
     {

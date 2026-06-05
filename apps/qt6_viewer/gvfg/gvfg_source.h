@@ -29,6 +29,7 @@ public:
 signals:
     void frameReady(const QImage &image);
     void errorOccurred(const QString &message);
+    void preStartRuntimeInfoReady(const gvfg_runtime_info_t &info);
 
 private:
     static void onFrame(const gvfg_frame_t *frame, void *user);

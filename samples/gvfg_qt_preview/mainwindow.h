@@ -2,6 +2,7 @@
 
 #include <gvfg_capture.h>
 
+#include <QString>
 #include <QWidget>
 
 #include <array>
@@ -10,6 +11,7 @@
 
 class QCloseEvent;
 class PreviewWindow;
+class QTimer;
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -35,12 +37,13 @@ private:
     void startCapture();
     void stopCapture();
     bool applyPreview();
-    void updateSignalStatus();
+    void updateSignalStatus(bool writeLog);
     void setRunningUi(bool running);
     void showError(const QString &apiName, gvfg_status_t status);
     void appendLog(const QString &message);
 
     static void onFrame(const gvfg_frame_t *frame, void *user);
+    static void onEvent(const gvfg_event_t *event, void *user);
     static void onError(gvfg_status_t status, const char *message, void *user);
 
     Ui::MainWindow *ui_ = nullptr;
@@ -49,4 +52,7 @@ private:
     int deviceCount_ = 0;
     gvfg_handle handle_ = nullptr;
     std::atomic<uint64_t> frameCount_{0};
+    QTimer *signalStatusTimer_ = nullptr;
+    QString lastSignalStatusText_;
+    QString lastFpgaRawStateKey_;
 };

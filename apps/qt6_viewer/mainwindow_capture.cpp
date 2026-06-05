@@ -65,6 +65,7 @@ void MainWindow::resetRuntimeTracking()
     lastVideoCallbackPtsNs_ = 0;
     lastPacketCallbackPtsNs_ = 0;
     framePacketLogCount_ = 0;
+    lastGvfgRawStateKey_.clear();
     ++framePacketSessionId_;
     initialPreviewSizeApplied_ = false;
     lastFrameImage_ = QImage();

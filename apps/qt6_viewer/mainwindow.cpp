@@ -27,7 +27,12 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFile>
+#include <QTimer>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #include <dxgi1_2.h>
 #include <wrl.h>
 using Microsoft::WRL::ComPtr;
@@ -103,6 +108,77 @@ namespace
             return QStringLiteral("Format: YUY2/HDYC/UYVY");
         return QStringLiteral("Format: %1").arg(QString::fromUtf8(gcap_pixfmt_name(fmt)));
     }
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    static QString hex32(uint32_t value)
+    {
+        return QStringLiteral("0x") + QString::number(value, 16).rightJustified(8, QLatin1Char('0')).toUpper();
+    }
+
+    static QString formatGvfgFpgaRawLogLine(const gvfg_runtime_info_t &rt)
+    {
+        const auto &fpga = rt.input_signal.fpga;
+        return QStringLiteral("[GVFG][fpga_raw]\n"
+                              "  valid_mask=%1\n"
+                              "  resolution:   width_valid=%2 width_raw=%3 height_valid=%4 height_raw=%5\n"
+                              "  video_format: valid=%6 raw=%7 code=%8 name=%9\n"
+                              "  frame_rate:   valid=%10 raw=%11 code=%12 bits=%13 name=%14\n"
+                              "  bit_depth:    valid=%15 raw=%16 value=%17\n"
+                              "  status:       valid=%18 raw=%19 sdi_lock=%20 sdi_ddr=%21 hdmi_lock=%22 hdmi_ddr=%23")
+            .arg(hex32(fpga.valid_mask))
+            .arg(fpga.width_valid)
+            .arg(fpga.width_raw)
+            .arg(fpga.height_valid)
+            .arg(fpga.height_raw)
+            .arg(fpga.video_format_valid)
+            .arg(hex32(fpga.video_format_raw))
+            .arg(fpga.video_format_code)
+            .arg(QString::fromLatin1(fpga.video_format))
+            .arg(fpga.frame_rate_valid)
+            .arg(hex32(fpga.frame_rate_raw))
+            .arg(fpga.frame_rate_code)
+            .arg(QString::fromLatin1(fpga.frame_rate_bits))
+            .arg(QString::fromLatin1(fpga.frame_rate_name))
+            .arg(fpga.bit_depth_valid)
+            .arg(hex32(fpga.bit_depth_raw))
+            .arg(fpga.bit_depth)
+            .arg(fpga.status_valid)
+            .arg(hex32(fpga.status_raw))
+            .arg(fpga.sdi_locked)
+            .arg(fpga.sdi_ddr_ok)
+            .arg(fpga.hdmi_locked)
+            .arg(fpga.hdmi_ddr_ok);
+    }
+
+    static QString formatGvfgFpgaRawStateKey(const gvfg_runtime_info_t &rt)
+    {
+        const auto &fpga = rt.input_signal.fpga;
+        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15|%16|%17|%18|%19|%20|%21|%22|%23")
+            .arg(fpga.valid_mask)
+            .arg(fpga.width_valid)
+            .arg(fpga.width_raw)
+            .arg(fpga.height_valid)
+            .arg(fpga.height_raw)
+            .arg(fpga.video_format_valid)
+            .arg(fpga.video_format_raw)
+            .arg(fpga.video_format_code)
+            .arg(QString::fromLatin1(fpga.video_format))
+            .arg(fpga.frame_rate_valid)
+            .arg(fpga.frame_rate_raw)
+            .arg(fpga.frame_rate_code)
+            .arg(QString::fromLatin1(fpga.frame_rate_bits))
+            .arg(QString::fromLatin1(fpga.frame_rate_name))
+            .arg(fpga.bit_depth_valid)
+            .arg(fpga.bit_depth_raw)
+            .arg(fpga.bit_depth)
+            .arg(fpga.status_valid)
+            .arg(fpga.status_raw)
+            .arg(fpga.sdi_locked)
+            .arg(fpga.sdi_ddr_ok)
+            .arg(fpga.hdmi_locked)
+            .arg(fpga.hdmi_ddr_ok);
+    }
+#endif
 
     static std::vector<gcap_pixfmt_t> enumerateSupportedPixelFormats(int backend, int deviceIndex)
     {
@@ -356,6 +432,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(gvfg_, &GvfgSource::errorOccurred, this, [this](const QString &message)
             { MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message), true); },
             Qt::QueuedConnection);
+    connect(gvfg_, &GvfgSource::preStartRuntimeInfoReady, this, [this](const gvfg_runtime_info_t &info)
+            {
+                const QString rawStateKey = formatGvfgFpgaRawStateKey(info);
+                MainWindow::postLog(QStringLiteral("[GVFG] FPGA signal before stream start"));
+                MainWindow::postLog(formatGvfgFpgaRawLogLine(info));
+                lastGvfgRawStateKey_ = rawStateKey;
+            });
 #endif
 
     setupRuntimeStatusTimer();
@@ -493,6 +576,12 @@ void MainWindow::updateRuntimeStatusUi()
         {
             const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
             const gvfg_preview_info_t pv = gvfg_->previewInfo();
+            const QString rawStateKey = formatGvfgFpgaRawStateKey(rt);
+            if (lastGvfgRawStateKey_ != rawStateKey)
+            {
+                MainWindow::postLog(formatGvfgFpgaRawLogLine(rt));
+                lastGvfgRawStateKey_ = rawStateKey;
+            }
             const double signalFps = rt.input_signal.fps;
             const double runtimeFps = (rt.capture_fps > 0.0) ? rt.capture_fps : avgFps_;
             const QString renderPath = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
