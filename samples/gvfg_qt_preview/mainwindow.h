@@ -34,11 +34,13 @@ protected:
 private:
     void refreshDevices();
     void showPreviewWindow();
+    bool openDevice();
+    void closeDevice();
     void startCapture();
     void stopCapture();
     bool applyPreview();
     void updateSignalStatus(bool writeLog);
-    void setRunningUi(bool running);
+    void updateUiState();
     void showError(const QString &apiName, gvfg_status_t status);
     void appendLog(const QString &message);
 
@@ -51,6 +53,7 @@ private:
     std::array<gvfg_device_info_t, GVFG_MAX_DEVICES> devices_{};
     int deviceCount_ = 0;
     gvfg_handle handle_ = nullptr;
+    bool captureRunning_ = false;
     std::atomic<uint64_t> frameCount_{0};
     QTimer *signalStatusTimer_ = nullptr;
     QString lastSignalStatusText_;

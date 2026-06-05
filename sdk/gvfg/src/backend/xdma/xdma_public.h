@@ -2,7 +2,7 @@
  * XDMA Driver public API
  *
  * This header mirrors the public IOCTL values exposed by the Xilinx XDMA
- * Windows driver. The values are consumed by the gvendor XDMA backend.
+ * Windows driver. The values are consumed by the GVFG internal XDMA backend.
  */
 
 #pragma once

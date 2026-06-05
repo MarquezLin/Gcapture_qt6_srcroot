@@ -1,8 +1,8 @@
 #include "gvfg_capture.h"
 
 #include "gcapture.h"
-#include "gvendor.h"
 #include "pipeline/shared_scene_pipeline.h"
+#include "xdma_capture_session.h"
 
 #include <algorithm>
 #include <atomic>
@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -37,63 +38,99 @@ namespace
         return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
     }
 
-    gvfg_status_t map_status(gv_status_t st)
+    gvfg_status_t map_status(xdma_status_t st)
     {
         switch (st)
         {
-        case GV_OK: return GVFG_OK;
-        case GV_EINVAL: return GVFG_EINVAL;
-        case GV_ENODEV: return GVFG_ENODEV;
-        case GV_ESTATE: return GVFG_ESTATE;
-        case GV_ETIMEOUT: return GVFG_ETIMEOUT;
-        case GV_ENOTSUP: return GVFG_ENOTSUP;
-        case GV_EIO:
+        case XDMA_OK: return GVFG_OK;
+        case XDMA_EINVAL: return GVFG_EINVAL;
+        case XDMA_ENODEV: return GVFG_ENODEV;
+        case XDMA_ESTATE: return GVFG_ESTATE;
+        case XDMA_ETIMEOUT: return GVFG_ETIMEOUT;
+        case XDMA_ENOTSUP: return GVFG_ENOTSUP;
+        case XDMA_EIO:
         default: return GVFG_EIO;
         }
     }
 
-    const char *gv_error_text(gv_status_t st, gv_handle h)
+    const char *xdma_status_text(xdma_status_t st)
     {
-        const char *detail = h ? gv_last_error(h) : nullptr;
-        if (detail && detail[0])
-            return detail;
-        return gv_strerror(st);
+        switch (st)
+        {
+        case XDMA_OK:
+            return "ok";
+        case XDMA_EINVAL:
+            return "invalid argument";
+        case XDMA_ENODEV:
+            return "device not found";
+        case XDMA_ESTATE:
+            return "invalid state";
+        case XDMA_ENOTSUP:
+            return "not supported";
+        case XDMA_ETIMEOUT:
+            return "timeout";
+        case XDMA_EIO:
+            return "i/o error";
+        case XDMA_EABI:
+            return "abi mismatch";
+        default:
+            return "unknown";
+        }
     }
 
-    gvfg_event_type_t map_event_type(gv_event_type_t type)
+    const char *xdma_error_text(xdma_status_t st, const gvfg::internal::XdmaCaptureSession *session)
+    {
+        const char *detail = session ? session->last_error() : nullptr;
+        if (detail && detail[0])
+            return detail;
+        return xdma_status_text(st);
+    }
+
+    void copy_wide_to_utf8(const std::wstring &src, char *dst, size_t dstSize)
+    {
+        if (!dst || dstSize == 0)
+            return;
+        dst[0] = '\0';
+        if (src.empty())
+            return;
+        WideCharToMultiByte(CP_UTF8, 0, src.c_str(), -1, dst, static_cast<int>(dstSize), nullptr, nullptr);
+        dst[dstSize - 1] = '\0';
+    }
+
+    gvfg_event_type_t map_event_type(xdma_event_type_t type)
     {
         switch (type)
         {
-        case GV_EVENT_VIDEO_IRQ:
+        case XDMA_EVENT_VIDEO_IRQ:
             return GVFG_EVENT_VIDEO_IRQ;
-        case GV_EVENT_PLUG_IN:
+        case XDMA_EVENT_PLUG_IN:
             return GVFG_EVENT_PLUG_IN;
-        case GV_EVENT_PLUG_OUT:
+        case XDMA_EVENT_PLUG_OUT:
             return GVFG_EVENT_PLUG_OUT;
-        case GV_EVENT_CAPTURE_PAUSED:
+        case XDMA_EVENT_CAPTURE_PAUSED:
             return GVFG_EVENT_CAPTURE_PAUSED;
-        case GV_EVENT_CAPTURE_RESUMED:
+        case XDMA_EVENT_CAPTURE_RESUMED:
             return GVFG_EVENT_CAPTURE_RESUMED;
         default:
             return GVFG_EVENT_VIDEO_IRQ;
         }
     }
 
-    uint32_t map_event_mask_to_vendor(uint32_t mask)
+    uint32_t map_event_mask_to_xdma(uint32_t mask)
     {
         const uint32_t effective = mask ? mask : GVFG_EVENT_MASK_DEFAULT;
         uint32_t out = 0;
         if (effective & GVFG_EVENT_MASK_VIDEO_IRQ)
-            out |= GV_EVENT_MASK_VIDEO_IRQ;
+            out |= XDMA_EVENT_MASK_VIDEO_IRQ;
         if (effective & GVFG_EVENT_MASK_PLUG_IN)
-            out |= GV_EVENT_MASK_PLUG_IN;
+            out |= XDMA_EVENT_MASK_PLUG_IN;
         if (effective & GVFG_EVENT_MASK_PLUG_OUT)
-            out |= GV_EVENT_MASK_PLUG_OUT;
+            out |= XDMA_EVENT_MASK_PLUG_OUT;
         if (effective & GVFG_EVENT_MASK_CAPTURE_PAUSED)
-            out |= GV_EVENT_MASK_CAPTURE_PAUSED;
+            out |= XDMA_EVENT_MASK_CAPTURE_PAUSED;
         if (effective & GVFG_EVENT_MASK_CAPTURE_RESUMED)
-            out |= GV_EVENT_MASK_CAPTURE_RESUMED;
-        return out ? out : GV_EVENT_MASK_DEFAULT;
+            out |= XDMA_EVENT_MASK_CAPTURE_RESUMED;
+        return out ? out : XDMA_EVENT_MASK_DEFAULT;
     }
 
     const char *dxgi_format_name(DXGI_FORMAT fmt)
@@ -157,8 +194,6 @@ namespace
         {
         case 0x0:
             return "None";
-        case 0x1:
-            return "Reserved";
         case 0x2:
             return "23.98";
         case 0x3:
@@ -180,7 +215,7 @@ namespace
         case 0xb:
             return "60";
         default:
-            return "UNKNOWN";
+            return "--";
         }
     }
 
@@ -221,21 +256,27 @@ struct gvfg_handle_t
 
     gvfg_status_t open(int index)
     {
+        if (index < 0)
+            return GVFG_EINVAL;
+
         close();
 
-        const gv_status_t stOpen = gv_open_device_index(index, &handle);
-        if (stOpen != GV_OK || !handle)
+        backend = std::make_unique<gvfg::internal::XdmaCaptureSession>();
+        const xdma_status_t stOpen = backend->open_device_index(static_cast<size_t>(index));
+        if (stOpen != XDMA_OK)
         {
-            emitError(map_status(stOpen), gv_error_text(stOpen, handle));
+            emitError(map_status(stOpen), xdma_error_text(stOpen, backend.get()));
+            backend.reset();
             return map_status(stOpen);
         }
 
         currentIndex = index;
-        syncVendorEventCallback();
-        const gv_status_t stInput = gv_set_input(handle, GDRIVER_INPUT_SDI, 0);
-        if (stInput != GV_OK)
+        syncBackendEventCallback();
+        selectedInput = GDRIVER_INPUT_SDI;
+        const xdma_status_t stInput = backend->set_input(selectedInput, 0);
+        if (stInput != XDMA_OK)
         {
-            emitError(map_status(stInput), gv_error_text(stInput, handle));
+            emitError(map_status(stInput), xdma_error_text(stInput, backend.get()));
             close();
             return map_status(stInput);
         }
@@ -246,7 +287,7 @@ struct gvfg_handle_t
 
     gvfg_status_t start()
     {
-        if (!handle)
+        if (!backend)
             return GVFG_ESTATE;
         if (running)
             return GVFG_OK;
@@ -258,10 +299,10 @@ struct gvfg_handle_t
         if (previewHwnd && !createRenderPipeline())
             emitError(GVFG_ENOTSUP, "GVFG preview pipeline unavailable");
 
-        const gv_status_t st = gv_start_stream(handle);
-        if (st != GV_OK)
+        const xdma_status_t st = backend->start_stream();
+        if (st != XDMA_OK)
         {
-            emitError(map_status(st), gv_error_text(st, handle));
+            emitError(map_status(st), xdma_error_text(st, backend.get()));
             return map_status(st);
         }
 
@@ -275,8 +316,8 @@ struct gvfg_handle_t
         running = false;
         if (captureThread.joinable())
             captureThread.join();
-        if (handle)
-            gv_stop_stream(handle);
+        if (backend)
+            backend->stop_stream();
         return GVFG_OK;
     }
 
@@ -284,11 +325,11 @@ struct gvfg_handle_t
     {
         stop();
         releaseRenderPipeline();
-        if (handle)
+        if (backend)
         {
-            gv_set_event_callback(handle, nullptr, nullptr, 0);
-            gv_close(handle);
-            handle = nullptr;
+            backend->set_event_callback(nullptr, nullptr, 0);
+            backend->close();
+            backend.reset();
         }
         currentIndex = -1;
     }
@@ -298,7 +339,7 @@ struct gvfg_handle_t
         onEvent = callback;
         eventCallbackUser = user;
         eventMask = mask ? mask : GVFG_EVENT_MASK_DEFAULT;
-        syncVendorEventCallback();
+        syncBackendEventCallback();
         return GVFG_OK;
     }
 
@@ -319,7 +360,7 @@ struct gvfg_handle_t
         querySignal();
         out.width = static_cast<int>(width);
         out.height = static_cast<int>(height);
-        out.fps = (fpsNum > 0 && fpsDen > 0) ? (double(fpsNum) / double(fpsDen)) : 0.0;
+        out.fps = 0.0;
         out.bit_depth = static_cast<int>(bitDepth ? bitDepth : 8);
         copy_cstr(out.pixel_format, sizeof(out.pixel_format), gdriver_pixel_format_name(pixelFormat));
         out.fpga.valid_mask = fpgaValidMask;
@@ -352,6 +393,11 @@ struct gvfg_handle_t
     {
         std::memset(&out, 0, sizeof(out));
         getSignalStatus(out.input_signal);
+        out.delivered_frame.width = static_cast<int>(width);
+        out.delivered_frame.height = static_cast<int>(height);
+        out.delivered_frame.bit_depth = static_cast<int>(bitDepth ? bitDepth : 8);
+        copy_cstr(out.delivered_frame.pixel_format, sizeof(out.delivered_frame.pixel_format), gdriver_pixel_format_name(pixelFormat));
+        out.delivered_frame.valid = deliveredFrames > 0 ? 1 : 0;
         out.capture_fps = runtimeFps;
         out.delivered_frames = deliveredFrames;
         return GVFG_OK;
@@ -378,17 +424,16 @@ struct gvfg_handle_t
         return GVFG_OK;
     }
 
-    void syncVendorEventCallback()
+    void syncBackendEventCallback()
     {
-        if (!handle)
+        if (!backend)
             return;
-        gv_set_event_callback(handle,
-                              onEvent ? &gvfg_handle_t::onVendorEvent : nullptr,
-                              this,
-                              map_event_mask_to_vendor(eventMask));
+        backend->set_event_callback(onEvent ? &gvfg_handle_t::onBackendEvent : nullptr,
+                                    this,
+                                    map_event_mask_to_xdma(eventMask));
     }
 
-    static void onVendorEvent(const gv_event_t *event, void *user)
+    static void onBackendEvent(const xdma_event_t *event, void *user)
     {
         auto *self = static_cast<gvfg_handle_t *>(user);
         if (!self || !event)
@@ -396,7 +441,7 @@ struct gvfg_handle_t
         self->emitEvent(*event);
     }
 
-    void emitEvent(const gv_event_t &event)
+    void emitEvent(const xdma_event_t &event)
     {
         if (!onEvent)
             return;
@@ -412,22 +457,17 @@ struct gvfg_handle_t
 
     void querySignal()
     {
-        if (!handle)
+        if (!backend)
             return;
 
-        gv_signal_status_t sig{};
-        if (gv_get_signal_status(handle, &sig) != GV_OK)
+        xdma_signal_status_t sig{};
+        if (backend->get_signal_status(sig) != XDMA_OK)
             return;
 
         if (sig.width > 0)
             width = sig.width;
         if (sig.height > 0)
             height = sig.height;
-        if (sig.fps_num > 0 && sig.fps_den > 0)
-        {
-            fpsNum = sig.fps_num;
-            fpsDen = sig.fps_den;
-        }
         if (sig.bit_depth > 0)
             bitDepth = sig.bit_depth;
         pixelFormat = sig.pixel_format != GDRIVER_PIXFMT_UNKNOWN ? sig.pixel_format : GDRIVER_PIXFMT_YUY2;
@@ -442,32 +482,92 @@ struct gvfg_handle_t
         fpgaStatusRaw = sig.fpga_status_raw;
     }
 
+    static const char *inputName(gdriver_input_t input)
+    {
+        switch (input)
+        {
+        case GDRIVER_INPUT_HDMI:
+            return "HDMI";
+        case GDRIVER_INPUT_SDI:
+            return "SDI";
+        default:
+            return "unknown";
+        }
+    }
+
+    gvfg_status_t validateSelectedInputReady()
+    {
+        const bool statusValid = fpga_field_valid(fpgaValidMask, 3);
+        const bool sdiLocked = (fpgaStatusRaw & (1u << 0)) != 0;
+        const bool sdiDdrOk = (fpgaStatusRaw & (1u << 1)) != 0;
+        const bool hdmiLocked = (fpgaStatusRaw & (1u << 2)) != 0;
+        const bool hdmiDdrOk = (fpgaStatusRaw & (1u << 3)) != 0;
+        const bool selectedReady = (selectedInput == GDRIVER_INPUT_HDMI) ? (hdmiLocked && hdmiDdrOk)
+                                                                         : (sdiLocked && sdiDdrOk);
+
+        if (!statusValid || !selectedReady)
+        {
+            char msg[256] = {};
+            std::snprintf(msg,
+                          sizeof(msg),
+                          "%s input not ready; FPGA status valid=%d raw=0x%08x sdi_lock=%d sdi_ddr=%d hdmi_lock=%d hdmi_ddr=%d",
+                          inputName(selectedInput),
+                          statusValid ? 1 : 0,
+                          fpgaStatusRaw,
+                          sdiLocked ? 1 : 0,
+                          sdiDdrOk ? 1 : 0,
+                          hdmiLocked ? 1 : 0,
+                          hdmiDdrOk ? 1 : 0);
+            emitError(GVFG_ENODEV, msg);
+            return GVFG_ENODEV;
+        }
+
+        if (!fpgaWidthValid || !fpgaHeightValid || fpgaWidthRaw == 0 || fpgaHeightRaw == 0)
+        {
+            char msg[192] = {};
+            std::snprintf(msg,
+                          sizeof(msg),
+                          "%s input has no valid FPGA resolution; width_valid=%d width=%u height_valid=%d height=%u",
+                          inputName(selectedInput),
+                          fpgaWidthValid ? 1 : 0,
+                          fpgaWidthRaw,
+                          fpgaHeightValid ? 1 : 0,
+                          fpgaHeightRaw);
+            emitError(GVFG_ENODEV, msg);
+            return GVFG_ENODEV;
+        }
+
+        return GVFG_OK;
+    }
+
     gvfg_status_t configureStream()
     {
-        if (!handle)
+        if (!backend)
             return GVFG_ESTATE;
 
         querySignal();
+        const gvfg_status_t inputReady = validateSelectedInputReady();
+        if (inputReady != GVFG_OK)
+            return inputReady;
+
         if (width == 0)
             width = 1920;
         if (height == 0)
             height = 1080;
 
-        gv_stream_desc_t desc{};
+        xdma_stream_desc_t desc{};
         desc.channel_index = 0;
-        desc.input = GDRIVER_INPUT_SDI;
+        desc.input = selectedInput;
         desc.width = width;
         desc.height = height;
-        desc.fps_num = fpsNum ? fpsNum : 30000;
-        desc.fps_den = fpsDen ? fpsDen : 1001;
         desc.pixel_format = pixelFormat;
         desc.buffer_count = 1;
         desc.memory_kind = GDRIVER_MEMORY_DRIVER_COPY;
 
-        const gv_status_t st = gv_configure_stream(handle, &desc);
-        if (st != GV_OK)
+        const xdma_status_t st = backend->configure_stream(desc);
+        if (st != XDMA_OK)
         {
-            emitError(map_status(st), gv_error_text(st, handle));
+            emitError(map_status(st), xdma_error_text(st, backend.get()));
             return map_status(st);
         }
         return GVFG_OK;
@@ -576,15 +676,15 @@ struct gvfg_handle_t
     {
         while (running)
         {
-            gv_frame_t frame{};
-            const gv_status_t st = gv_wait_frame(handle, 1000, &frame);
+            xdma_frame_t frame{};
+            const xdma_status_t st = backend->wait_frame(1000, frame);
             if (!running)
                 break;
-            if (st == GV_ETIMEOUT)
+            if (st == XDMA_ETIMEOUT)
                 continue;
-            if (st != GV_OK)
+            if (st != XDMA_OK)
             {
-                emitError(map_status(st), gv_error_text(st, handle));
+                emitError(map_status(st), xdma_error_text(st, backend.get()));
                 break;
             }
 
@@ -595,11 +695,11 @@ struct gvfg_handle_t
                 emitReadbackFrame(frame);
             else
                 emitCpuFallbackFrame(frame);
-            gv_release_frame(handle, &frame);
+            backend->release_frame(frame);
         }
     }
 
-    bool renderGpuFrame(const gv_frame_t &frame)
+    bool renderGpuFrame(const xdma_frame_t &frame)
     {
         if (!pipeline || !previewHwnd || !frame.data)
             return false;
@@ -676,7 +776,7 @@ struct gvfg_handle_t
         return ok;
     }
 
-    void emitReadbackFrame(const gv_frame_t &frame)
+    void emitReadbackFrame(const xdma_frame_t &frame)
     {
         if (!onFrame || !pipeline || !ctx)
             return;
@@ -703,7 +803,7 @@ struct gvfg_handle_t
         }
     }
 
-    void emitCpuFallbackFrame(const gv_frame_t &frame)
+    void emitCpuFallbackFrame(const xdma_frame_t &frame)
     {
         if (frame.pixel_format != GDRIVER_PIXFMT_YUY2)
         {
@@ -795,15 +895,14 @@ struct gvfg_handle_t
         lastPtsNs = ptsNs;
     }
 
-    gv_handle handle = nullptr;
+    std::unique_ptr<gvfg::internal::XdmaCaptureSession> backend;
     int currentIndex = -1;
+    gdriver_input_t selectedInput = GDRIVER_INPUT_SDI;
     gvfg_preview_desc_t previewDesc{};
     void *previewHwnd = nullptr;
 
     uint32_t width = 0;
     uint32_t height = 0;
-    uint32_t fpsNum = 30000;
-    uint32_t fpsDen = 1001;
     uint32_t bitDepth = 8;
     gdriver_pixel_format_t pixelFormat = GDRIVER_PIXFMT_YUY2;
     uint32_t fpgaValidMask = 0;
@@ -847,10 +946,9 @@ extern "C"
 {
     int gvfg_enumerate_devices(gvfg_device_info_t *out_devices, int max_devices)
     {
-        gv_device_entry_t entries[GVFG_MAX_DEVICES] = {};
         const int maxCount = static_cast<int>(GVFG_MAX_DEVICES);
-        const int cap = (std::min)(max_devices > 0 ? max_devices : maxCount, maxCount);
-        const int n = gv_enumerate_devices(entries, cap);
+        const std::vector<gvfg::internal::XdmaDevice> devices = gvfg::internal::enumerate_xdma_devices();
+        const int n = static_cast<int>(devices.size());
         if (n <= 0)
             return n;
 
@@ -863,7 +961,12 @@ extern "C"
             out_devices[i] = {};
             out_devices[i].index = i;
             copy_cstr(out_devices[i].name, sizeof(out_devices[i].name),
-                      entries[i].friendly_name[0] ? entries[i].friendly_name : "GVFG Capture");
+                      "GVFG Capture");
+            copy_wide_to_utf8(devices[static_cast<size_t>(i)].friendly_name,
+                              out_devices[i].name,
+                              sizeof(out_devices[i].name));
+            if (!out_devices[i].name[0])
+                copy_cstr(out_devices[i].name, sizeof(out_devices[i].name), "GVFG Capture");
         }
         return written;
     }

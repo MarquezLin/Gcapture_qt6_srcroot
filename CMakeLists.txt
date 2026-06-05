@@ -36,7 +36,6 @@ add_subdirectory(sdk/gcapture)
 add_subdirectory(sdk/gdisplay)
 
 if (WIN32 AND BUILD_GVFG_SDK)
-  add_subdirectory(sdk/gvendor)
   add_subdirectory(sdk/gvfg)
 endif()
 

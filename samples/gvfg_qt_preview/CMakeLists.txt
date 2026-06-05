@@ -49,12 +49,6 @@ add_custom_command(TARGET gvfg_qt_preview POST_BUILD
     $<TARGET_FILE_DIR:gvfg_qt_preview>
 )
 
-add_custom_command(TARGET gvfg_qt_preview POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    $<TARGET_FILE:gvendor>
-    $<TARGET_FILE_DIR:gvfg_qt_preview>
-)
-
 set_target_properties(gvfg_qt_preview PROPERTIES
   WIN32_EXECUTABLE TRUE
 )

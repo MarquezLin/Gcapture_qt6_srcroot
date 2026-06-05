@@ -582,16 +582,24 @@ void MainWindow::updateRuntimeStatusUi()
                 MainWindow::postLog(formatGvfgFpgaRawLogLine(rt));
                 lastGvfgRawStateKey_ = rawStateKey;
             }
-            const double signalFps = rt.input_signal.fps;
+            const auto &fpga = rt.input_signal.fpga;
+            const auto &delivered = rt.delivered_frame;
             const double runtimeFps = (rt.capture_fps > 0.0) ? rt.capture_fps : avgFps_;
             const QString renderPath = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
-            const QString sb = QStringLiteral("Backend: %1 | Source: %2 | Input %3x%4 %5fps %6 | %7 | Runtime %8fps | Frames %9")
+            const QString fpgaResolution = (fpga.width_valid && fpga.height_valid)
+                                               ? QStringLiteral("%1x%2").arg(fpga.width_raw).arg(fpga.height_raw)
+                                               : QStringLiteral("--");
+            const QString fpgaFps = fpga.frame_rate_valid
+                                        ? QStringLiteral("%1fps").arg(QString::fromLatin1(fpga.frame_rate_name))
+                                        : QStringLiteral("--fps");
+            const QString sb = QStringLiteral("Backend: %1 | FPGA reported %2 %3 | Delivered frame %4x%5 %6 %7bit | %8 | App runtime %9fps frames=%10")
                                    .arg(QStringLiteral("GVFG"))
-                                   .arg(QStringLiteral("XDMA C2H"))
-                                   .arg(rt.input_signal.width)
-                                   .arg(rt.input_signal.height)
-                                   .arg(signalFps > 0.0 ? QString::number(signalFps, 'f', 2) : QStringLiteral("--"))
-                                   .arg(QString::fromUtf8(rt.input_signal.pixel_format))
+                                   .arg(fpgaResolution)
+                                   .arg(fpgaFps)
+                                   .arg(delivered.width)
+                                   .arg(delivered.height)
+                                   .arg(QString::fromUtf8(delivered.pixel_format))
+                                   .arg(delivered.bit_depth)
                                    .arg(renderPath)
                                    .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
                                    .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
@@ -880,7 +888,7 @@ void MainWindow::setupBackendControls()
     ui->comboBackend->addItem("WinMF CPU", 0);
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    ui->comboBackend->addItem("GVendor Direct", kQtViewerGvfgBackend);
+    ui->comboBackend->addItem("GVFG Direct", kQtViewerGvfgBackend);
 #endif
 
     const int dsIndex = ui->comboBackend->findData(2);
@@ -1188,7 +1196,7 @@ void MainWindow::setupConnections()
                 this, [this](int)
                 {
                     const int backend = ui->comboBackend->currentData().toInt();
-                    const bool isGVendor =
+                    const bool isGvfgBackend =
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
                         (backend == kQtViewerGvfgBackend);
 #else
@@ -1199,7 +1207,7 @@ void MainWindow::setupConnections()
 
                     // Re-enumerate devices when backend changes. Device index is only
                     // meaningful within the backend that produced the list.
-                    if (!isGVendor)
+                    if (!isGvfgBackend)
                     {
                         initializeDeviceList();
                         refreshCaptureInfoFromSdkAndRuntime(false);

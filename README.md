@@ -4,9 +4,8 @@
 
 - `sdk/gcapture`: 既有 capture SDK，提供 DirectShow / WinMF 路線。
 - `sdk/gdisplay`: display / EDID 相關 SDK。
-- `sdk/gvendor`: 低階 XDMA driver access layer，屬於內部實作。
-- `sdk/gvfg`: 對外的 GVFG capture SDK facade，給 VFG100 / GVFG 客戶使用。
-- `apps/qt6_viewer`: Qt viewer demo，可以透過 `GVendor Direct` 使用 GVFG backend。
+- `sdk/gvfg`: 對外的 GVFG capture SDK facade，內含低階 XDMA driver access backend，給 VFG100 / GVFG 客戶使用。
+- `apps/qt6_viewer`: Qt viewer demo，可以透過 `GVFG Direct` 使用 GVFG backend。
 - `samples/gvfg_qt_preview`: 最小客戶範例，示範如何直接使用 GVFG API。
 
 ## Build
@@ -41,10 +40,9 @@ gvfg.lib
 
 ```text
 gvfg.dll
-gvendor.dll
 ```
 
-`gvendor` 和 XDMA driver access 是內部實作細節，不建議客戶直接使用。
+XDMA driver access 是 `gvfg.dll` 內部實作細節，客戶不需要也不應直接使用。
 
 ## Build Options
 
@@ -56,7 +54,7 @@ BUILD_GVFG_SAMPLES=ON
 如果要看底層 XDMA flow debug log：
 
 ```text
-GVENDOR_XDMA_DEBUG_LOG=ON
+GVFG_XDMA_DEBUG_LOG=ON
 ```
 
 ## Customer Sample

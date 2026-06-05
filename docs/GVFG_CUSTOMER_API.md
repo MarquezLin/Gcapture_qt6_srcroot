@@ -18,7 +18,6 @@ Windows app 使用 GVFG capture 時，執行檔旁邊需要放：
 
 ```text
 gvfg.dll
-gvendor.dll
 ```
 
 開發時需要 include：
@@ -36,8 +35,7 @@ sdk/gvfg/include
 下面這些是 SDK 內部檔案，不是客戶 API：
 
 ```text
-sdk/gvendor/include/gvendor.h
-sdk/gdriver_shared/include
+None. Internal XDMA backend/gdriver headers are not distributed.
 ```
 
 link：
@@ -63,7 +61,7 @@ BUILD_GVFG_SDK=ON
 如果要開 XDMA flow debug log：
 
 ```text
-GVENDOR_XDMA_DEBUG_LOG=ON
+GVFG_XDMA_DEBUG_LOG=ON
 ```
 
 debug log 目前會走 `OutputDebugStringA`，viewer 也會把部分 log 顯示到 debug panel / log file。
@@ -83,7 +81,7 @@ gvfg.dll
   | 對外提供簡單 XDMA capture API
   | 管理 preview、callback、runtime info
   v
-gvendor.dll
+gvfg.dll
   |
   | 低階 XDMA driver access
   | enumerate / open / c2h read / event / signal
@@ -95,7 +93,7 @@ XDMA Windows driver
 
 ```text
 XDMA C2H 讀到 YUY2 frame
--> gvendor 收 driver buffer
+-> GVFG internal XDMA backend 收 driver buffer
 -> gvfg 拿 frame
 -> D3D SharedScenePipeline
 -> GPU shader 做 YUY2 -> RGB
@@ -308,7 +306,7 @@ typedef struct
     int frame_rate_valid;
     int frame_rate_code;         /* FPGA 0x18 low nibble. */
     char frame_rate_bits[5];     /* 4-bit binary text, for example "0110". */
-    char frame_rate_name[16];    /* None, Reserved, 23.98, 24, ... */
+    char frame_rate_name[16];    /* None, 23.98, 24, 47.95, ..., or "--" for unsupported codes. */
 
     uint32_t bit_depth_raw;         /* Raw FPGA 0x1c value. */
     int bit_depth_valid;
@@ -324,18 +322,17 @@ typedef struct
 
 typedef struct
 {
-    int width;
-    int height;
-    double fps;
-    int bit_depth;
-    char pixel_format[32];
-    gvfg_fpga_signal_status_t fpga;
+    int width;                       /* Signal width in pixels, from FPGA when available. */
+    int height;                      /* Signal height in pixels, from FPGA when available. */
+    double fps;                      /* Legacy field; GVFG leaves this 0. Use fpga.frame_rate_* instead. */
+    int bit_depth;                   /* Legacy delivered-buffer field. Prefer runtime delivered_frame. */
+    char pixel_format[32];           /* Legacy delivered-buffer field. Prefer runtime delivered_frame. */
+    gvfg_fpga_signal_status_t fpga;  /* Raw/decoded FPGA signal metadata. */
 } gvfg_signal_status_t;
 ```
 
-`gvfg_signal_status_t::pixel_format` and `gvfg_signal_status_t::bit_depth`
-describe the actual buffer delivered by the customer API. `fpga.*` describes
-the decoded FPGA signal registers.
+Use `gvfg_signal_status_t::fpga` for FPGA-reported raw/decoded signal data.
+For delivered frame format, prefer `gvfg_runtime_info_t::delivered_frame`.
 
 For example, if FPGA reports `video_format=YUV422` and `bit_depth=10`, but
 `pixel_format=YUY2` and `bit_depth=8`, the input signal is reported as YUV422
@@ -347,7 +344,6 @@ FPGA frame-rate code table:
 | Bits | Name |
 | --- | --- |
 | `0000` | None |
-| `0001` | Reserved |
 | `0010` | 23.98 |
 | `0011` | 24 |
 | `0100` | 47.95 |
@@ -359,6 +355,8 @@ FPGA frame-rate code table:
 | `1010` | 59.94 |
 | `1011` | 60 |
 
+All other codes, including `0001`, are reported as `--`.
+
 ## gvfg_runtime_info_t
 
 runtime debug/status 資訊。
@@ -366,7 +364,16 @@ runtime debug/status 資訊。
 ```c
 typedef struct
 {
+    int width;
+    int height;
+    int bit_depth;
+    char pixel_format[32];
+} gvfg_delivered_frame_info_t;
+
+typedef struct
+{
     gvfg_signal_status_t input_signal;
+    gvfg_delivered_frame_info_t delivered_frame;
     double capture_fps;
     uint64_t delivered_frames;
 } gvfg_runtime_info_t;
@@ -375,8 +382,15 @@ typedef struct
 | 欄位 | 意義 |
 | --- | --- |
 | `input_signal` | 目前 input signal 狀態 |
+| `delivered_frame` | Frame buffer delivered by gvfg.dll to the app callback: width, height, pixel format, bit depth |
 | `capture_fps` | SDK capture runtime 測到的 FPS |
 | `delivered_frames` | SDK 已交付/處理的 frame 數 |
+
+Source ownership:
+
+- FPGA reported signal: use `input_signal.fpga.*`.
+- Delivered frame buffer: use `delivered_frame.*`.
+- App/SDK runtime counters: use `capture_fps` and `delivered_frames`.
 
 這個 struct 適合顯示在：
 
@@ -829,9 +843,9 @@ gvfg_status_t gvfg_start(gvfg_handle handle);
 正常 log 會看到：
 
 ```text
-[GVendor][XDMA] start: threads launched
-[GVendor][XDMA] publish_frame: id=1 ...
-[GVendor][XDMA] wait_frame: deliver id=1 ...
+[GVFG][XDMA] start: threads launched
+[GVFG][XDMA] publish_frame: id=1 ...
+[GVFG][XDMA] wait_frame: deliver id=1 ...
 [SharedScene] preview render path ...
 ```
 
@@ -886,12 +900,9 @@ gvfg_signal_status_t sig = {0};
 gvfg_status_t st = gvfg_get_signal_status(handle, &sig);
 
 if (st == GVFG_OK) {
-    printf("%dx%d stream %.2f fps buffer=%s bitdepth=%d\n",
+    printf("Signal legacy: %dx%d\n",
            sig.width,
-           sig.height,
-           sig.fps,
-           sig.pixel_format,
-           sig.bit_depth);
+           sig.height);
 
     printf("FPGA raw\n"
            "  valid_mask=0x%08x\n"
@@ -959,7 +970,7 @@ gvfg_status_t gvfg_get_runtime_info(gvfg_handle handle,
 例如 viewer status bar 可以顯示：
 
 ```text
-Backend: GVFG | Source: XDMA C2H | Stream 1280x720 29.97fps buffer=YUY2 bitdepth=8 | FPGA fps=0110(29.97) format=0(YUV422) bitdepth=10 | Runtime 29.97fps | Frames 120
+Backend: GVFG | FPGA reported 1280x720 29.97fps | Delivered frame 1280x720 YUY2 8bit | App runtime 29.97fps frames=120
 ```
 
 ## gvfg_get_preview_info
@@ -1159,14 +1170,14 @@ frame callback 可以保留給 snapshot、初始解析度調整、debug。
 啟動成功時，大致會看到：
 
 ```text
-[GVendor][XDMA] enumerate: done count=1
-[GVendor][XDMA] open_device: done
-[GVendor][XDMA] signal: width=1280 height=720
-[GVendor][XDMA] configure: effective ... 1280x720 ... frame_bytes=1843200
+[GVFG][XDMA] enumerate: done count=1
+[GVFG][XDMA] open_device: done
+[GVFG][XDMA] signal: width=1280 height=720
+[GVFG][XDMA] configure: effective ... 1280x720 ... frame_bytes=1843200
 [SharedScene] preview swapchain created ...
-[GVendor][XDMA] start: threads launched
-[GVendor][XDMA] publish_frame: id=1 ...
-[GVendor][XDMA] wait_frame: deliver id=1 ...
+[GVFG][XDMA] start: threads launched
+[GVFG][XDMA] publish_frame: id=1 ...
+[GVFG][XDMA] wait_frame: deliver id=1 ...
 [SharedScene] preview render path ...
 ```
 
@@ -1257,4 +1268,4 @@ wait_frame: deliver
 - The delivered customer buffer format is reported by `sig.pixel_format` and `sig.bit_depth`.
 - `sig.fpga.bit_depth=10` does not by itself mean the delivered buffer is `Y210`.
 - Treat the delivered frame as true YUV422 10-bit only when `sig.pixel_format` is `Y210`.
-- `sig.fpga.frame_rate_bits=0001` is reserved by the current documented table, so the UI/API reports it as `Reserved`.
+- `sig.fpga.frame_rate_bits=0001` is not in the supported table, so the UI/API reports it as `--`.

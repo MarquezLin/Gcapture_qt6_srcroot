@@ -65,13 +65,6 @@ for %%F in (gcapture.dll gdisplay.dll) do (
     )
 )
 
-if "%INCLUDE_GVENDOR%"=="1" (
-    if exist "%BIN_DIR%\gvendor.dll" (
-        echo Copy gvendor.dll
-        copy /y "%BIN_DIR%\gvendor.dll" "%OUT_DIR%\" >nul
-    )
-)
-
 rem === Copy FFmpeg runtime DLLs ===
 set "SRC_ROOT=%BUILD_ROOT%\..\.."
 set "FFMPEG_BIN=%SRC_ROOT%\third_party\ffmpeg\bin"

@@ -1,4 +1,4 @@
-#include "xdma_capture_session.h"
+﻿#include "xdma_capture_session.h"
 
 #include "xdma_public.h"
 
@@ -61,20 +61,20 @@ namespace
         return role == kVideoIrqRole || role == kPlugInIrqRole || role == kPlugOutIrqRole;
     }
 
-    static uint32_t event_mask_for_type(gv_event_type_t type)
+    static uint32_t event_mask_for_type(xdma_event_type_t type)
     {
         switch (type)
         {
-        case GV_EVENT_VIDEO_IRQ:
-            return GV_EVENT_MASK_VIDEO_IRQ;
-        case GV_EVENT_PLUG_IN:
-            return GV_EVENT_MASK_PLUG_IN;
-        case GV_EVENT_PLUG_OUT:
-            return GV_EVENT_MASK_PLUG_OUT;
-        case GV_EVENT_CAPTURE_PAUSED:
-            return GV_EVENT_MASK_CAPTURE_PAUSED;
-        case GV_EVENT_CAPTURE_RESUMED:
-            return GV_EVENT_MASK_CAPTURE_RESUMED;
+        case XDMA_EVENT_VIDEO_IRQ:
+            return XDMA_EVENT_MASK_VIDEO_IRQ;
+        case XDMA_EVENT_PLUG_IN:
+            return XDMA_EVENT_MASK_PLUG_IN;
+        case XDMA_EVENT_PLUG_OUT:
+            return XDMA_EVENT_MASK_PLUG_OUT;
+        case XDMA_EVENT_CAPTURE_PAUSED:
+            return XDMA_EVENT_MASK_CAPTURE_PAUSED;
+        case XDMA_EVENT_CAPTURE_RESUMED:
+            return XDMA_EVENT_MASK_CAPTURE_RESUMED;
         default:
             return 0;
         }
@@ -96,57 +96,6 @@ namespace
                 return i;
         }
         return bytes;
-    }
-
-    static bool decode_frame_rate(uint32_t code, uint32_t &num, uint32_t &den)
-    {
-        switch (code & 0x0fu)
-        {
-        case 0x2:
-            num = 24000;
-            den = 1001;
-            return true;
-        case 0x3:
-            num = 24;
-            den = 1;
-            return true;
-        case 0x4:
-            num = 48000;
-            den = 1001;
-            return true;
-        case 0x5:
-            num = 25;
-            den = 1;
-            return true;
-        case 0x6:
-            num = 30000;
-            den = 1001;
-            return true;
-        case 0x7:
-            num = 30;
-            den = 1;
-            return true;
-        case 0x8:
-            num = 48;
-            den = 1;
-            return true;
-        case 0x9:
-            num = 50;
-            den = 1;
-            return true;
-        case 0xa:
-            num = 60000;
-            den = 1001;
-            return true;
-        case 0xb:
-            num = 60;
-            den = 1;
-            return true;
-        default:
-            num = 0;
-            den = 1;
-            return false;
-        }
     }
 
     static uint32_t decode_bit_depth(uint32_t raw, uint32_t fallback)
@@ -231,7 +180,7 @@ namespace
         }
     }
 
-#if defined(GVENDOR_XDMA_DEBUG_LOG)
+#if defined(GVFG_XDMA_DEBUG_LOG)
     static void xdma_debug_log(const char *fmt, ...)
     {
         char msg[1024] = {};
@@ -241,7 +190,7 @@ namespace
         va_end(args);
 
         char line[1152] = {};
-        snprintf(line, sizeof(line), "[GVendor][XDMA] %s\n", msg);
+        snprintf(line, sizeof(line), "[GVFG][XDMA] %s\n", msg);
         OutputDebugStringA(line);
     }
 #define XDMA_LOG(...) xdma_debug_log(__VA_ARGS__)
@@ -258,7 +207,7 @@ namespace
         va_end(args);
 
         char line[1152] = {};
-        snprintf(line, sizeof(line), "[GVendor][XDMA][hotplug] %s\n", msg);
+        snprintf(line, sizeof(line), "[GVFG][XDMA][hotplug] %s\n", msg);
         OutputDebugStringA(line);
     }
 #define XDMA_HOTPLUG_LOG(...) xdma_hotplug_log(__VA_ARGS__)
@@ -319,7 +268,7 @@ namespace
         dst[n] = '\0';
     }
 
-    static void reset_stats(gv_stream_stats_t &stats, gdriver_stream_state_t state)
+    static void reset_stats(xdma_stream_stats_t &stats, gdriver_stream_state_t state)
     {
         std::memset(&stats, 0, sizeof(stats));
         stats.state = state;
@@ -356,9 +305,9 @@ namespace
     }
 }
 
-namespace gvendor
+namespace gvfg::internal
 {
-    // 用 Windows SetupAPI 找到所有 XDMA 裝置的 device path，包成 XdmaDevice vector 回傳。
+    // Enumerate XDMA device interface paths with Windows SetupAPI.
     std::vector<XdmaDevice> enumerate_xdma_devices()
     {
         std::vector<XdmaDevice> devices;
@@ -366,7 +315,7 @@ namespace gvendor
 
         // Find installed XDMA device interfaces.  This is the SDK version of
         // CaptureDemo::getDevices(): keep the Windows SetupAPI detail hidden
-        // inside gvendor so customer code only calls gvfg_enumerate_devices().
+        // inside the XDMA backend so customer code only calls gvfg_enumerate_devices().
         HDEVINFO info = SetupDiGetClassDevsW(&GUID_DEVINTERFACE_XDMA, nullptr, nullptr,
                                              DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
         if (info == INVALID_HANDLE_VALUE)
@@ -410,8 +359,6 @@ namespace gvendor
         stream_desc_.input = GDRIVER_INPUT_SDI;
         stream_desc_.width = kDefaultWidth;
         stream_desc_.height = kDefaultHeight;
-        stream_desc_.fps_num = 30000;
-        stream_desc_.fps_den = 1001;
         stream_desc_.pixel_format = GDRIVER_PIXFMT_YUY2;
         stream_bit_depth_ = 8;
         stream_desc_.buffer_count = 1;
@@ -424,25 +371,25 @@ namespace gvendor
         close();
     }
 
-    gv_status_t XdmaCaptureSession::open_default()
+    xdma_status_t XdmaCaptureSession::open_default()
     {
         const auto devices = enumerate_xdma_devices();
         XDMA_LOG("open_default: device_count=%zu", devices.size());
         if (devices.empty())
-            return fail(GV_ENODEV, "enumerate_xdma_devices", ERROR_NOT_FOUND);
+            return fail(XDMA_ENODEV, "enumerate_xdma_devices", ERROR_NOT_FOUND);
         return open_device(devices.front());
     }
 
-    gv_status_t XdmaCaptureSession::open_device_index(size_t deviceIndex)
+    xdma_status_t XdmaCaptureSession::open_device_index(size_t deviceIndex)
     {
         const auto devices = enumerate_xdma_devices();
         XDMA_LOG("open_device_index: requested=%zu device_count=%zu", deviceIndex, devices.size());
         if (deviceIndex >= devices.size())
-            return fail(GV_ENODEV, "enumerate_xdma_devices", ERROR_NOT_FOUND);
+            return fail(XDMA_ENODEV, "enumerate_xdma_devices", ERROR_NOT_FOUND);
         return open_device(devices[deviceIndex]);
     }
 
-    gv_status_t XdmaCaptureSession::open_device(const XdmaDevice &device)
+    xdma_status_t XdmaCaptureSession::open_device(const XdmaDevice &device)
     {
         XDMA_LOG("open_device: begin friendly=%s %s",
                  wide_to_utf8(device.friendly_name).c_str(),
@@ -459,7 +406,7 @@ namespace gvendor
         if (user_device_ == INVALID_HANDLE_VALUE)
         {
             close_handles();
-            return fail(GV_EIO, "CreateFile(user)");
+            return fail(XDMA_EIO, "CreateFile(user)");
         }
 
         for (uint32_t ch = 0; ch < kMaxChannels; ++ch)
@@ -469,7 +416,7 @@ namespace gvendor
             if (c2h_device_[ch] == INVALID_HANDLE_VALUE)
             {
                 close_handles();
-                return fail(GV_EIO, "CreateFile(c2h)");
+                return fail(XDMA_EIO, "CreateFile(c2h)");
             }
             XDMA_LOG("open_device: c2h_%u ready", ch);
         }
@@ -478,10 +425,10 @@ namespace gvendor
         configured_ = false;
         clear_last_error();
         XDMA_LOG("open_device: done");
-        return GV_OK;
+        return XDMA_OK;
     }
 
-    gv_status_t XdmaCaptureSession::close()
+    xdma_status_t XdmaCaptureSession::close()
     {
         XDMA_LOG("close: begin opened=%d configured=%d running=%d",
                  opened_ ? 1 : 0,
@@ -494,7 +441,7 @@ namespace gvendor
         base_path_.clear();
         friendly_name_.clear();
         XDMA_LOG("close: done");
-        return GV_OK;
+        return XDMA_OK;
     }
 
     void XdmaCaptureSession::close_handles()
@@ -551,21 +498,21 @@ namespace gvendor
         return h;
     }
 
-    gv_status_t XdmaCaptureSession::set_input(gdriver_input_t input, uint32_t channelIndex)
+    xdma_status_t XdmaCaptureSession::set_input(gdriver_input_t input, uint32_t channelIndex)
     {
         if (!opened_ || channelIndex >= kMaxChannels)
-            return GV_EINVAL;
+            return XDMA_EINVAL;
         input_ = input == GDRIVER_INPUT_UNKNOWN ? GDRIVER_INPUT_SDI : input;
         stream_desc_.input = input_;
         stream_desc_.channel_index = channelIndex;
         XDMA_LOG("set_input: input=%u channel=%u", static_cast<unsigned>(input_), channelIndex);
-        return GV_OK;
+        return XDMA_OK;
     }
 
-    gv_status_t XdmaCaptureSession::get_device_info(gv_device_info_t &out) const
+    xdma_status_t XdmaCaptureSession::get_device_info(xdma_device_info_t &out) const
     {
         if (!opened_)
-            return GV_ESTATE;
+            return XDMA_ESTATE;
         std::memset(&out, 0, sizeof(out));
         copy_string(wide_to_utf8(friendly_name_), out.friendly_name, sizeof(out.friendly_name));
         copy_string("XDMA", out.driver_version, sizeof(out.driver_version));
@@ -578,13 +525,13 @@ namespace gvendor
                                            (1u << GDRIVER_PIXFMT_YUV444);
         out.max_video_channels = kMaxChannels;
         out.max_audio_channels = 0;
-        return GV_OK;
+        return XDMA_OK;
     }
 
-    gv_status_t XdmaCaptureSession::get_signal_status(gv_signal_status_t &out) const
+    xdma_status_t XdmaCaptureSession::get_signal_status(xdma_signal_status_t &out) const
     {
         if (!opened_)
-            return GV_ESTATE;
+            return XDMA_ESTATE;
         std::memset(&out, 0, sizeof(out));
         uint32_t width = 0;
         uint32_t height = 0;
@@ -606,15 +553,6 @@ namespace gvendor
         const uint32_t signalBitDepth = bitDepthOk ? decode_bit_depth(rawBitDepth, 8) : 0;
         const gdriver_pixel_format_t pixelFormat = formatOk ? decode_pixel_format(rawFormat, signalBitDepth) : stream_desc_.pixel_format;
         const uint32_t bufferBitDepth = bit_depth_for_pixfmt(pixelFormat);
-
-        uint32_t fpsNum = 0;
-        uint32_t fpsDen = 1;
-        const bool decodedFps = frameRateOk && decode_frame_rate(rawFrameRate, fpsNum, fpsDen);
-        if (!frameRateOk)
-        {
-            fpsNum = stream_desc_.fps_num;
-            fpsDen = stream_desc_.fps_den ? stream_desc_.fps_den : 1;
-        }
 
         XDMA_LOG("signal: fmt_ok=%d fmt_raw=0x%x fps_ok=%d fps_raw=0x%x bit_ok=%d bit_raw=%u status_ok=%d status=0x%08x width_ok=%d width=%u height_ok=%d height=%u configured=%ux%u fmt=%u",
                  formatOk ? 1 : 0,
@@ -640,8 +578,6 @@ namespace gvendor
         out.input = input_;
         out.width = haveSignalSize ? width : stream_desc_.width;
         out.height = haveSignalSize ? height : stream_desc_.height;
-        out.fps_num = decodedFps || !frameRateOk ? fpsNum : 0;
-        out.fps_den = out.fps_num > 0 ? fpsDen : 0;
         out.pixel_format = pixelFormat;
         out.bit_depth = bufferBitDepth;
         out.fpga_valid_mask = (formatOk ? bit_n(0) : 0u) |
@@ -656,34 +592,34 @@ namespace gvendor
         out.fpga_frame_rate_raw = rawFrameRate;
         out.fpga_bit_depth_raw = rawBitDepth;
         out.fpga_status_raw = rawStatus;
-        return GV_OK;
+        return XDMA_OK;
     }
 
-    gv_status_t XdmaCaptureSession::get_stream_stats(gv_stream_stats_t &out) const
+    xdma_status_t XdmaCaptureSession::get_stream_stats(xdma_stream_stats_t &out) const
     {
         std::lock_guard<std::mutex> lock(mutex_);
         out = stats_;
         out.state = running_ ? GDRIVER_STREAM_RUNNING : (configured_ ? GDRIVER_STREAM_CONFIGURED : GDRIVER_STREAM_STOPPED);
-        return GV_OK;
+        return XDMA_OK;
     }
 
-    gv_status_t XdmaCaptureSession::set_event_callback(gv_event_callback_t callback, void *user, uint32_t eventMask)
+    xdma_status_t XdmaCaptureSession::set_event_callback(xdma_event_callback_t callback, void *user, uint32_t eventMask)
     {
         std::lock_guard<std::mutex> lock(event_callback_mutex_);
         event_callback_ = callback;
         event_callback_user_ = user;
-        event_mask_filter_ = eventMask ? eventMask : GV_EVENT_MASK_DEFAULT;
-        return GV_OK;
+        event_mask_filter_ = eventMask ? eventMask : XDMA_EVENT_MASK_DEFAULT;
+        return XDMA_OK;
     }
 
-    gv_status_t XdmaCaptureSession::configure_stream(const gv_stream_desc_t &desc)
+    xdma_status_t XdmaCaptureSession::configure_stream(const xdma_stream_desc_t &desc)
     {
         if (!opened_)
-            return GV_ESTATE;
+            return XDMA_ESTATE;
         if (running_)
-            return GV_ESTATE;
+            return XDMA_ESTATE;
         if (desc.channel_index >= kMaxChannels)
-            return fail(GV_EINVAL, "configure_stream(channel)", ERROR_INVALID_PARAMETER);
+            return fail(XDMA_EINVAL, "configure_stream(channel)", ERROR_INVALID_PARAMETER);
         if (desc.pixel_format != GDRIVER_PIXFMT_YUY2 &&
             desc.pixel_format != GDRIVER_PIXFMT_Y210 &&
             desc.pixel_format != GDRIVER_PIXFMT_RGB24 &&
@@ -691,15 +627,13 @@ namespace gvendor
             desc.pixel_format != GDRIVER_PIXFMT_P010 &&
             desc.pixel_format != GDRIVER_PIXFMT_YUV444 &&
             desc.pixel_format != GDRIVER_PIXFMT_UNKNOWN)
-            return fail(GV_ENOTSUP, "configure_stream(pixel_format)", ERROR_NOT_SUPPORTED);
+            return fail(XDMA_ENOTSUP, "configure_stream(pixel_format)", ERROR_NOT_SUPPORTED);
 
-        XDMA_LOG("configure: request ch=%u input=%u %ux%u fps=%u/%u fmt=%u buffers=%u mem=%u flags=0x%x",
+        XDMA_LOG("configure: request ch=%u input=%u %ux%u fmt=%u buffers=%u mem=%u flags=0x%x",
                  desc.channel_index,
                  static_cast<unsigned>(desc.input),
                  desc.width,
                  desc.height,
-                 desc.fps_num,
-                 desc.fps_den,
                  static_cast<unsigned>(desc.pixel_format),
                  desc.buffer_count,
                  static_cast<unsigned>(desc.memory_kind),
@@ -711,8 +645,6 @@ namespace gvendor
         stream_desc_.input = desc.input == GDRIVER_INPUT_UNKNOWN ? input_ : desc.input;
         stream_desc_.width = desc.width ? desc.width : kDefaultWidth;
         stream_desc_.height = desc.height ? desc.height : kDefaultHeight;
-        stream_desc_.fps_num = desc.fps_num ? desc.fps_num : 30000;
-        stream_desc_.fps_den = desc.fps_den ? desc.fps_den : 1001;
         stream_desc_.pixel_format = desc.pixel_format == GDRIVER_PIXFMT_UNKNOWN ? GDRIVER_PIXFMT_YUY2 : desc.pixel_format;
         uint32_t rawBitDepth = 0;
         stream_bit_depth_ = bit_depth_for_pixfmt(stream_desc_.pixel_format);
@@ -730,32 +662,30 @@ namespace gvendor
             wait_timeout_count_ = 0;
         }
 
-        XDMA_LOG("configure: effective ch=%u input=%u %ux%u fps=%u/%u fmt=%u frame_bytes=%zu",
+        XDMA_LOG("configure: effective ch=%u input=%u %ux%u fmt=%u frame_bytes=%zu",
                  stream_desc_.channel_index,
                  static_cast<unsigned>(stream_desc_.input),
                  stream_desc_.width,
                  stream_desc_.height,
-                 stream_desc_.fps_num,
-                 stream_desc_.fps_den,
                  static_cast<unsigned>(stream_desc_.pixel_format),
                  frame_size_bytes());
-        return GV_OK;
+        return XDMA_OK;
     }
 
-    gv_status_t XdmaCaptureSession::start_stream()
+    xdma_status_t XdmaCaptureSession::start_stream()
     {
         XDMA_LOG("start: begin opened=%d configured=%d running=%d",
                  opened_ ? 1 : 0,
                  configured_ ? 1 : 0,
                  running_ ? 1 : 0);
         if (!opened_ || !configured_)
-            return GV_ESTATE;
+            return XDMA_ESTATE;
         if (running_)
-            return GV_OK;
+            return XDMA_OK;
 
         const uint32_t ch = active_channel();
         if (c2h_device_[ch] == INVALID_HANDLE_VALUE)
-            return fail(GV_EIO, "c2h handle", ERROR_INVALID_HANDLE);
+            return fail(XDMA_EIO, "c2h handle", ERROR_INVALID_HANDLE);
 
         for (uint32_t role = 0; role < kIrqRolesPerChannel; ++role)
         {
@@ -785,13 +715,13 @@ namespace gvendor
                         event_device_[openedRole] = INVALID_HANDLE_VALUE;
                     }
                 }
-                return fail(GV_EIO, "CreateFile(event)");
+                return fail(XDMA_EIO, "CreateFile(event)");
             }
         }
 
         const size_t bytes = frame_size_bytes();
         if (bytes == 0)
-            return fail(GV_EINVAL, "frame_size_bytes", ERROR_INVALID_PARAMETER);
+            return fail(XDMA_EINVAL, "frame_size_bytes", ERROR_INVALID_PARAMETER);
         XDMA_LOG("start: ch=%u event_mask=0x%08x capture_reg=0x%lx frame_bytes=%zu",
                  ch,
                  active_event_mask(),
@@ -877,13 +807,13 @@ namespace gvendor
                     thread.join();
             }
             stop_data_worker();
-            return fail(GV_EIO, "start worker thread", ERROR_NOT_ENOUGH_MEMORY);
+            return fail(XDMA_EIO, "start worker thread", ERROR_NOT_ENOUGH_MEMORY);
         }
         XDMA_LOG("start: threads launched");
-        return GV_OK;
+        return XDMA_OK;
     }
 
-    gv_status_t XdmaCaptureSession::stop_stream()
+    xdma_status_t XdmaCaptureSession::stop_stream()
     {
         const bool wasRunning = running_.exchange(false);
         capture_active_ = false;
@@ -893,7 +823,7 @@ namespace gvendor
             std::lock_guard<std::mutex> lock(mutex_);
             stats_.state = configured_ ? GDRIVER_STREAM_CONFIGURED : GDRIVER_STREAM_STOPPED;
             XDMA_LOG("stop: no active stream state=%u", static_cast<unsigned>(stats_.state));
-            return GV_OK;
+            return XDMA_OK;
         }
 
         // Stop in the reverse direction: disable IRQ/capture first, then cancel
@@ -932,15 +862,15 @@ namespace gvendor
                  static_cast<unsigned long long>(stats_.frames_delivered),
                  static_cast<unsigned long long>(stats_.interrupt_count),
                  static_cast<unsigned long long>(stats_.dma_errors));
-        return GV_OK;
+        return XDMA_OK;
     }
 
-    gv_status_t XdmaCaptureSession::wait_frame(uint32_t timeoutMs, gv_frame_t &out)
+    xdma_status_t XdmaCaptureSession::wait_frame(uint32_t timeoutMs, xdma_frame_t &out)
     {
         std::unique_lock<std::mutex> lock(mutex_);
         std::memset(&out, 0, sizeof(out));
         if (!running_)
-            return GV_ESTATE;
+            return XDMA_ESTATE;
 
         const auto hasFrame = [this]()
         {
@@ -962,26 +892,26 @@ namespace gvendor
                          static_cast<unsigned long long>(delivered_sequence_),
                          running_ ? 1 : 0,
                          stream_error_ ? 1 : 0);
-            return GV_ETIMEOUT;
+            return XDMA_ETIMEOUT;
         }
 
         if (!running_ && latest_sequence_ <= delivered_sequence_)
         {
             XDMA_LOG("wait_frame: stopped without pending frame");
-            return GV_ESTATE;
+            return XDMA_ESTATE;
         }
         if (stream_error_ && latest_sequence_ <= delivered_sequence_)
         {
             XDMA_LOG("wait_frame: stream error latest=%llu delivered=%llu",
                      static_cast<unsigned long long>(latest_sequence_),
                      static_cast<unsigned long long>(delivered_sequence_));
-            return GV_EIO;
+            return XDMA_EIO;
         }
         if (latest_sequence_ <= delivered_sequence_)
-            return GV_ETIMEOUT;
+            return XDMA_ETIMEOUT;
 
-        // Return a stable pointer to delivery_frame_.  The pointer is valid
-        // until the next gv_wait_frame() on this same handle or gv_close().
+        // Return a stable pointer to delivery_frame_. The pointer is valid
+        // until the next wait_frame() on this same session or close().
         delivery_frame_ = latest_frame_;
         delivered_sequence_ = latest_sequence_;
         ++stats_.frames_delivered;
@@ -1016,17 +946,17 @@ namespace gvendor
                      out.plane_stride_bytes[0],
                      static_cast<unsigned long long>(stats_.frames_captured),
                      static_cast<unsigned long long>(stats_.frames_delivered));
-        return GV_OK;
+        return XDMA_OK;
     }
 
-    gv_status_t XdmaCaptureSession::release_frame(const gv_frame_t &)
+    xdma_status_t XdmaCaptureSession::release_frame(const xdma_frame_t &)
     {
-        return GV_OK;
+        return XDMA_OK;
     }
 
-    void XdmaCaptureSession::emit_event(gv_event_type_t type, uint32_t irqBit, uint32_t irqMask) const
+    void XdmaCaptureSession::emit_event(xdma_event_type_t type, uint32_t irqBit, uint32_t irqMask) const
     {
-        gv_event_callback_t callback = nullptr;
+        xdma_event_callback_t callback = nullptr;
         void *user = nullptr;
         {
             std::lock_guard<std::mutex> lock(event_callback_mutex_);
@@ -1037,7 +967,7 @@ namespace gvendor
             user = event_callback_user_;
         }
 
-        gv_event_t event{};
+        xdma_event_t event{};
         event.type = type;
         event.channel = active_channel();
         event.irq_bit = irqBit;
@@ -1061,7 +991,7 @@ namespace gvendor
                 break;
             if (ret < 0)
             {
-                fail(GV_EIO, "ReadFile(event)");
+                fail(XDMA_EIO, "ReadFile(event)");
                 std::lock_guard<std::mutex> lock(mutex_);
                 stream_error_ = true;
                 ++stats_.dma_errors;
@@ -1087,7 +1017,7 @@ namespace gvendor
                                   capture_active_.load() ? 1 : 0,
                                   running_.load() ? 1 : 0);
                 XDMA_LOG("event_thread: PLUG_OUT irq=%u value=%u", irqBit, static_cast<unsigned>(value));
-                emit_event(GV_EVENT_PLUG_OUT, irqBit, mask);
+                emit_event(XDMA_EVENT_PLUG_OUT, irqBit, mask);
                 pause_capture_for_plug_out();
                 continue;
             }
@@ -1103,7 +1033,7 @@ namespace gvendor
                                   capture_active_.load() ? 1 : 0,
                                   running_.load() ? 1 : 0);
                 XDMA_LOG("event_thread: PLUG_IN irq=%u value=%u", irqBit, static_cast<unsigned>(value));
-                emit_event(GV_EVENT_PLUG_IN, irqBit, mask);
+                emit_event(XDMA_EVENT_PLUG_IN, irqBit, mask);
                 resume_capture_after_plug_in();
                 continue;
             }
@@ -1140,7 +1070,7 @@ namespace gvendor
                          role,
                          static_cast<unsigned>(value),
                          pending);
-            emit_event(GV_EVENT_VIDEO_IRQ, irqBit, mask);
+            emit_event(XDMA_EVENT_VIDEO_IRQ, irqBit, mask);
             data_cv_.notify_one();
         }
         XDMA_LOG("event_thread: exit role=%u running=%d", role, running_ ? 1 : 0);
@@ -1197,7 +1127,7 @@ namespace gvendor
                 continue;
             if (ret < 0 || static_cast<DWORD>(ret) != bytes)
             {
-                fail(GV_EIO, "ReadFile(c2h)");
+                fail(XDMA_EIO, "ReadFile(c2h)");
                 std::lock_guard<std::mutex> lock(mutex_);
                 stream_error_ = true;
                 ++stats_.dma_errors;
@@ -1325,7 +1255,7 @@ namespace gvendor
             deliveredAfterPause = delivered_sequence_;
         }
         frame_cv_.notify_all();
-        emit_event(GV_EVENT_CAPTURE_PAUSED,
+        emit_event(XDMA_EVENT_CAPTURE_PAUSED,
                    active_channel() * kIrqRolesPerChannel + kPlugOutIrqRole,
                    plug_out_event_mask());
         XDMA_HOTPLUG_LOG("PLUG_OUT pause done ch=%u active=%d data_worker_stop=%d latest_sequence=%llu delivered_sequence=%llu",
@@ -1410,7 +1340,7 @@ namespace gvendor
         const bool enableActiveOk = enable_user_event(active_event_mask());
         data_cv_.notify_all();
         frame_cv_.notify_all();
-        emit_event(GV_EVENT_CAPTURE_RESUMED,
+        emit_event(XDMA_EVENT_CAPTURE_RESUMED,
                    active_channel() * kIrqRolesPerChannel + kPlugInIrqRole,
                    plug_in_event_mask());
         XDMA_HOTPLUG_LOG("PLUG_IN resume done ch=%u capture_off=%d clear_active=%d/%d capture_on=%d enable_active=%d active=%d active_mask=0x%08x",
@@ -1682,7 +1612,7 @@ namespace gvendor
         return ok;
     }
 
-    gv_status_t XdmaCaptureSession::fail(gv_status_t status, const char *where, DWORD winerr) const
+    xdma_status_t XdmaCaptureSession::fail(xdma_status_t status, const char *where, DWORD winerr) const
     {
         std::ostringstream oss;
         oss << (where ? where : "XDMA") << " failed";

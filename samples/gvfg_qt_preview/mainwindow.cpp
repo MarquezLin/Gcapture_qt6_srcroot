@@ -115,25 +115,32 @@ MainWindow::MainWindow(QWidget *parent)
     signalStatusTimer_->setInterval(1000);
 
     connect(ui_->refreshButton, &QPushButton::clicked, this, [this]() { refreshDevices(); });
+    connect(ui_->openButton, &QPushButton::clicked, this, [this]()
+            {
+                if (handle_)
+                    closeDevice();
+                else
+                    openDevice();
+            });
     connect(ui_->showPreviewButton, &QPushButton::clicked, this, [this]() { showPreviewWindow(); });
     connect(ui_->startButton, &QPushButton::clicked, this, [this]() { startCapture(); });
     connect(ui_->stopButton, &QPushButton::clicked, this, [this]() { stopCapture(); });
     connect(signalStatusTimer_, &QTimer::timeout, this, [this]() { updateSignalStatus(true); });
 
-    setRunningUi(false);
+    updateUiState();
     refreshDevices();
 }
 
 MainWindow::~MainWindow()
 {
-    stopCapture();
+    closeDevice();
     delete previewWindow_;
     delete ui_;
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    stopCapture();
+    closeDevice();
     if (previewWindow_)
         previewWindow_->closePreview();
 
@@ -142,6 +149,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 void MainWindow::refreshDevices()
 {
+    if (handle_)
+        closeDevice();
+
     ui_->deviceCombo->clear();
     devices_ = {};
 
@@ -173,15 +183,15 @@ void MainWindow::showPreviewWindow()
         appendLog(QStringLiteral("Show Preview failed: unable to update preview window"));
 }
 
-void MainWindow::startCapture()
+bool MainWindow::openDevice()
 {
     if (handle_)
-        stopCapture();
+        return true;
 
     if (ui_->deviceCombo->currentData().toInt() < 0)
     {
-        appendLog(QStringLiteral("Start skipped: no device selected"));
-        return;
+        appendLog(QStringLiteral("Open skipped: no device selected"));
+        return false;
     }
 
     gvfg_status_t st = gvfg_create(&handle_);
@@ -189,65 +199,94 @@ void MainWindow::startCapture()
     {
         showError(QStringLiteral("gvfg_create"), st);
         handle_ = nullptr;
-        return;
+        updateUiState();
+        return false;
     }
 
     gvfg_set_callbacks(handle_, &MainWindow::onFrame, &MainWindow::onError, this);
     gvfg_set_event_callback(handle_, &MainWindow::onEvent, this, GVFG_EVENT_MASK_DEFAULT);
-
-    previewWindow_->showPreview();
-    if (!applyPreview())
-    {
-        stopCapture();
-        return;
-    }
 
     const int deviceIndex = ui_->deviceCombo->currentData().toInt();
     st = gvfg_open(handle_, deviceIndex);
     if (st != GVFG_OK)
     {
         showError(QStringLiteral("gvfg_open"), st);
-        stopCapture();
-        return;
+        closeDevice();
+        return false;
     }
 
     lastSignalStatusText_.clear();
     lastFpgaRawStateKey_.clear();
-    appendLog(QStringLiteral("FPGA signal before stream start"));
-    updateSignalStatus(true);
-
-    st = gvfg_start(handle_);
-    if (st != GVFG_OK)
-    {
-        showError(QStringLiteral("gvfg_start"), st);
-        stopCapture();
-        return;
-    }
-
-    frameCount_ = 0;
-    setRunningUi(true);
-    appendLog(QStringLiteral("Started device index %1").arg(deviceIndex));
+    appendLog(QStringLiteral("Opened device index %1").arg(deviceIndex));
+    appendLog(QStringLiteral("FPGA signal monitor active"));
     updateSignalStatus(true);
     signalStatusTimer_->start();
+    updateUiState();
+    return true;
 }
 
-void MainWindow::stopCapture()
+void MainWindow::closeDevice()
 {
+    stopCapture();
+
     if (signalStatusTimer_)
         signalStatusTimer_->stop();
 
     if (handle_)
     {
-        gvfg_stop(handle_);
         gvfg_destroy(handle_);
         handle_ = nullptr;
-        appendLog(QStringLiteral("Stopped"));
+        appendLog(QStringLiteral("Closed device"));
     }
 
-    setRunningUi(false);
     ui_->statusLabel->setText(QStringLiteral("Idle"));
     lastSignalStatusText_.clear();
     lastFpgaRawStateKey_.clear();
+    updateUiState();
+}
+
+void MainWindow::startCapture()
+{
+    if (captureRunning_)
+        return;
+
+    if (!handle_ && !openDevice())
+        return;
+
+    previewWindow_->showPreview();
+    if (!applyPreview())
+        return;
+
+    appendLog(QStringLiteral("FPGA signal before stream start"));
+    updateSignalStatus(true);
+
+    const gvfg_status_t st = gvfg_start(handle_);
+    if (st != GVFG_OK)
+    {
+        showError(QStringLiteral("gvfg_start"), st);
+        updateSignalStatus(true);
+        updateUiState();
+        return;
+    }
+
+    frameCount_ = 0;
+    captureRunning_ = true;
+    updateUiState();
+    appendLog(QStringLiteral("Started capture"));
+    updateSignalStatus(true);
+}
+
+void MainWindow::stopCapture()
+{
+    if (handle_ && captureRunning_)
+    {
+        gvfg_stop(handle_);
+        captureRunning_ = false;
+        appendLog(QStringLiteral("Stopped capture"));
+        updateSignalStatus(true);
+    }
+
+    updateUiState();
 }
 
 bool MainWindow::applyPreview()
@@ -278,28 +317,22 @@ void MainWindow::updateSignalStatus(bool writeLog)
     if (gvfg_get_runtime_info(handle_, &info) != GVFG_OK)
         return;
 
-    const auto &sig = info.input_signal;
-    const auto &fpga = sig.fpga;
+    const auto &fpga = info.input_signal.fpga;
+    const auto &delivered = info.delivered_frame;
 
-    const QString line0 = QStringLiteral("%1x%2 stream fps=%3 buffer=%4 bitdepth=%5 | capture %6 fps | delivered %7")
-                              .arg(sig.width)
-                              .arg(sig.height)
-                              .arg(sig.fps > 0.0 ? QString::number(sig.fps, 'f', 2)
-                                                 : QStringLiteral("--"))
-                              .arg(QString::fromUtf8(sig.pixel_format))
-                              .arg(sig.bit_depth)
-                              .arg(info.capture_fps > 0.0 ? QString::number(info.capture_fps, 'f', 2)
-                                                          : QStringLiteral("--"))
-                              .arg(static_cast<qulonglong>(info.delivered_frames));
-    const QString line1 = QStringLiteral("FPGA format=%1 | fps code=%2 | bitdepth=%3")
-                              .arg(fpgaFieldText(fpga.video_format_valid != 0,
-                                                 QStringLiteral("%1 (%2)")
-                                                     .arg(fpga.video_format_code)
-                                                     .arg(QString::fromLatin1(fpga.video_format))))
+    const QString fpgaResolution = (fpga.width_valid && fpga.height_valid)
+                                       ? QStringLiteral("%1x%2").arg(fpga.width_raw).arg(fpga.height_raw)
+                                       : QStringLiteral("--");
+    const QString line0 = QStringLiteral("FPGA reported | signal=%1 fps=%2 format=%3 bitdepth=%4")
+                              .arg(fpgaResolution)
                               .arg(fpgaFieldText(fpga.frame_rate_valid != 0,
                                                  QStringLiteral("%1 (%2)")
                                                      .arg(QString::fromLatin1(fpga.frame_rate_bits))
                                                      .arg(QString::fromLatin1(fpga.frame_rate_name))))
+                              .arg(fpgaFieldText(fpga.video_format_valid != 0,
+                                                 QStringLiteral("%1 (%2)")
+                                                     .arg(fpga.video_format_code)
+                                                     .arg(QString::fromLatin1(fpga.video_format))))
                               .arg(fpgaFieldText(fpga.bit_depth_valid != 0,
                                                  QStringLiteral("%1").arg(fpga.bit_depth)));
     const QString line2 = QStringLiteral("FPGA status | SDI lock=%1 SDI DDR=%2 HDMI lock=%3 HDMI DDR=%4")
@@ -307,8 +340,19 @@ void MainWindow::updateSignalStatus(bool writeLog)
                               .arg(fpgaFieldText(fpga.status_valid != 0, QString::number(fpga.sdi_ddr_ok)))
                               .arg(fpgaFieldText(fpga.status_valid != 0, QString::number(fpga.hdmi_locked)))
                               .arg(fpgaFieldText(fpga.status_valid != 0, QString::number(fpga.hdmi_ddr_ok)));
+    const QString line3 = delivered.valid
+                              ? QStringLiteral("Delivered frame | frame=%1x%2 format=%3 bitdepth=%4")
+                                    .arg(delivered.width)
+                                    .arg(delivered.height)
+                                    .arg(QString::fromUtf8(delivered.pixel_format))
+                                    .arg(delivered.bit_depth)
+                              : QStringLiteral("Delivered frame | --");
+    const QString line4 = QStringLiteral("App runtime | capture=%1 fps delivered=%2")
+                              .arg(info.capture_fps > 0.0 ? QString::number(info.capture_fps, 'f', 2)
+                                                          : QStringLiteral("--"))
+                              .arg(static_cast<qulonglong>(info.delivered_frames));
 
-    const QString statusText = line0 + QLatin1Char('\n') + line1 + QLatin1Char('\n') + line2;
+    const QString statusText = line0 + QLatin1Char('\n') + line2 + QLatin1Char('\n') + line3 + QLatin1Char('\n') + line4;
     if (lastSignalStatusText_ != statusText)
     {
         ui_->statusLabel->setText(statusText);
@@ -323,12 +367,15 @@ void MainWindow::updateSignalStatus(bool writeLog)
     }
 }
 
-void MainWindow::setRunningUi(bool running)
+void MainWindow::updateUiState()
 {
-    ui_->startButton->setEnabled(!running);
-    ui_->stopButton->setEnabled(running);
-    ui_->refreshButton->setEnabled(!running);
-    ui_->deviceCombo->setEnabled(!running);
+    const bool deviceOpen = handle_ != nullptr;
+    ui_->openButton->setText(deviceOpen ? QStringLiteral("Close Device") : QStringLiteral("Open Device"));
+    ui_->openButton->setEnabled(!captureRunning_);
+    ui_->startButton->setEnabled(deviceOpen && !captureRunning_);
+    ui_->stopButton->setEnabled(captureRunning_);
+    ui_->refreshButton->setEnabled(!deviceOpen && !captureRunning_);
+    ui_->deviceCombo->setEnabled(!deviceOpen && !captureRunning_);
 }
 
 void MainWindow::showError(const QString &apiName, gvfg_status_t status)

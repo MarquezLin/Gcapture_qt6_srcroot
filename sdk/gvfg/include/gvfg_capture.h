@@ -4,7 +4,7 @@
  * Customer-facing GVFG capture API.
  *
  * Include only this header in customer applications. Do not include internal
- * gvendor/gdriver headers; those layers are implementation details behind
+ * backend/gdriver headers; those layers are implementation details behind
  * gvfg.dll.
  *
  * Minimal capture flow:
@@ -109,7 +109,7 @@ typedef struct
     int frame_rate_valid;
     int frame_rate_code;         /* FPGA frame-rate code from 0x18 low nibble. */
     char frame_rate_bits[5];     /* 4-bit binary text, for example "0110". */
-    char frame_rate_name[16];    /* None, 23.98, 24, 47.95, ... */
+    char frame_rate_name[16];    /* None, 23.98, 24, 47.95, ..., or "--" for unsupported codes. */
 
     uint32_t bit_depth_raw;         /* Raw FPGA 0x1c value. */
     int bit_depth_valid;
@@ -125,19 +125,29 @@ typedef struct
 
 typedef struct
 {
-    int width;                       /* Delivered capture width in pixels. */
-    int height;                      /* Delivered capture height in pixels. */
-    double fps;                      /* Delivered capture frame rate when known. */
-    int bit_depth;                   /* Delivered buffer bit depth. */
-    char pixel_format[32];           /* Delivered buffer format, for example YUY2 or Y210. */
+    int width;                       /* Signal width in pixels, from FPGA when available. */
+    int height;                      /* Signal height in pixels, from FPGA when available. */
+    double fps;                      /* Legacy field; GVFG leaves this 0. Use fpga.frame_rate_* instead. */
+    int bit_depth;                   /* Delivered buffer bit depth. Kept for compatibility; prefer gvfg_runtime_info_t::delivered_frame. */
+    char pixel_format[32];           /* Delivered buffer format. Kept for compatibility; prefer gvfg_runtime_info_t::delivered_frame. */
     gvfg_fpga_signal_status_t fpga;  /* Raw/decoded FPGA signal metadata. */
 } gvfg_signal_status_t;
 
 typedef struct
 {
-    gvfg_signal_status_t input_signal; /* Current signal and delivered buffer format. */
-    double capture_fps;                /* Runtime FPS measured by the SDK. */
-    uint64_t delivered_frames;         /* Number of frames delivered by the SDK. */
+    int width;              /* Width of frames delivered to the customer callback. */
+    int height;             /* Height of frames delivered to the customer callback. */
+    int bit_depth;          /* Bit depth of the delivered frame buffer. */
+    char pixel_format[32];  /* Delivered frame format, for example YUY2 or Y210. */
+    int valid;              /* Non-zero after at least one frame has been delivered. */
+} gvfg_delivered_frame_info_t;
+
+typedef struct
+{
+    gvfg_signal_status_t input_signal; /* FPGA-reported signal metadata plus legacy buffer fields. */
+    gvfg_delivered_frame_info_t delivered_frame; /* Frame buffer delivered by gvfg.dll to the app. */
+    double capture_fps;                /* Runtime FPS measured by the SDK/app worker. */
+    uint64_t delivered_frames;         /* Number of frames delivered by the SDK/app worker. */
 } gvfg_runtime_info_t;
 
 typedef struct

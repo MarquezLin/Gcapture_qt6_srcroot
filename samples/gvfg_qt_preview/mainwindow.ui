@@ -34,6 +34,13 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="openButton">
+       <property name="text">
+        <string>Open Device</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="QPushButton" name="showPreviewButton">
        <property name="text">
         <string>Show Preview</string>

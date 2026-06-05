@@ -57,7 +57,6 @@ else()
   add_executable(qt6_viewer ${VIEWER_SOURCES})
 endif()
 
-# XDMA is intentionally kept as a standalone SDK while the driver path is under development.
 if (WIN32 AND BUILD_GVFG_SDK)
   target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_GVFG_BACKEND)
 endif()
@@ -119,16 +118,11 @@ add_custom_command(TARGET qt6_viewer POST_BUILD
     $<TARGET_FILE_DIR:qt6_viewer>
 )
 
-# Copy standalone XDMA DLLs next to qt6_viewer.exe
+# Copy GVFG SDK DLL next to qt6_viewer.exe
 if (WIN32 AND BUILD_GVFG_SDK)
   add_custom_command(TARGET qt6_viewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       $<TARGET_FILE:gvfg>
-      $<TARGET_FILE_DIR:qt6_viewer>
-  )
-  add_custom_command(TARGET qt6_viewer POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      $<TARGET_FILE:gvendor>
       $<TARGET_FILE_DIR:qt6_viewer>
   )
 endif()

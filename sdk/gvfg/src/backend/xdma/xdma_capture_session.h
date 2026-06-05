@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gvendor.h"
+#include "xdma_backend_types.h"
 
 #include <windows.h>
 
@@ -13,7 +13,7 @@
 #include <thread>
 #include <vector>
 
-namespace gvendor
+namespace gvfg::internal
 {
     struct XdmaDevice
     {
@@ -31,26 +31,26 @@ namespace gvendor
         XdmaCaptureSession &operator=(const XdmaCaptureSession &) = delete;
         ~XdmaCaptureSession();
 
-        gv_status_t open_default();
-        gv_status_t open_device_index(size_t deviceIndex);
-        gv_status_t close();
+        xdma_status_t open_default();
+        xdma_status_t open_device_index(size_t deviceIndex);
+        xdma_status_t close();
 
-        gv_status_t set_input(gdriver_input_t input, uint32_t channelIndex);
-        gv_status_t get_device_info(gv_device_info_t &out) const;
-        gv_status_t get_signal_status(gv_signal_status_t &out) const;
-        gv_status_t get_stream_stats(gv_stream_stats_t &out) const;
+        xdma_status_t set_input(gdriver_input_t input, uint32_t channelIndex);
+        xdma_status_t get_device_info(xdma_device_info_t &out) const;
+        xdma_status_t get_signal_status(xdma_signal_status_t &out) const;
+        xdma_status_t get_stream_stats(xdma_stream_stats_t &out) const;
 
-        gv_status_t set_event_callback(gv_event_callback_t callback, void *user, uint32_t eventMask);
-        gv_status_t configure_stream(const gv_stream_desc_t &desc);
-        gv_status_t start_stream();
-        gv_status_t stop_stream();
-        gv_status_t wait_frame(uint32_t timeoutMs, gv_frame_t &out);
-        gv_status_t release_frame(const gv_frame_t &frame);
+        xdma_status_t set_event_callback(xdma_event_callback_t callback, void *user, uint32_t eventMask);
+        xdma_status_t configure_stream(const xdma_stream_desc_t &desc);
+        xdma_status_t start_stream();
+        xdma_status_t stop_stream();
+        xdma_status_t wait_frame(uint32_t timeoutMs, xdma_frame_t &out);
+        xdma_status_t release_frame(const xdma_frame_t &frame);
 
         const char *last_error() const;
 
     private:
-        gv_status_t open_device(const XdmaDevice &device);
+        xdma_status_t open_device(const XdmaDevice &device);
         void close_handles();
 
         HANDLE open_subdevice(const wchar_t *name) const;
@@ -70,9 +70,9 @@ namespace gvendor
         void resume_capture_after_plug_in();
         void handle_plug_in_frame_fix(const uint8_t *data, size_t bytes);
         void pulse_plug_in_frame_fix();
-        void emit_event(gv_event_type_t type, uint32_t irqBit, uint32_t irqMask) const;
+        void emit_event(xdma_event_type_t type, uint32_t irqBit, uint32_t irqMask) const;
 
-        gv_status_t fail(gv_status_t status, const char *where, DWORD winerr = GetLastError()) const;
+        xdma_status_t fail(xdma_status_t status, const char *where, DWORD winerr = GetLastError()) const;
         void set_last_error(const std::string &message) const;
         void clear_last_error() const;
 
@@ -92,7 +92,7 @@ namespace gvendor
         HANDLE c2h_device_[2] = {INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE};
         HANDLE event_device_[4] = {INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE};
 
-        gv_stream_desc_t stream_desc_{};
+        xdma_stream_desc_t stream_desc_{};
         uint32_t stream_bit_depth_ = 8;
         gdriver_input_t input_ = GDRIVER_INPUT_SDI;
         bool opened_ = false;
@@ -111,9 +111,9 @@ namespace gvendor
         mutable std::mutex event_callback_mutex_;
         std::condition_variable frame_cv_;
         std::condition_variable data_cv_;
-        gv_event_callback_t event_callback_ = nullptr;
+        xdma_event_callback_t event_callback_ = nullptr;
         void *event_callback_user_ = nullptr;
-        uint32_t event_mask_filter_ = GV_EVENT_MASK_DEFAULT;
+        uint32_t event_mask_filter_ = XDMA_EVENT_MASK_DEFAULT;
         uint32_t pending_events_ = 0;
         std::vector<uint8_t> dma_buffer_;
         std::vector<uint8_t> latest_frame_;
@@ -122,7 +122,7 @@ namespace gvendor
         uint64_t delivered_sequence_ = 0;
         uint64_t wait_timeout_count_ = 0;
         bool stream_error_ = false;
-        gv_stream_stats_t stats_{};
+        xdma_stream_stats_t stats_{};
         mutable std::string last_error_;
     };
 }
