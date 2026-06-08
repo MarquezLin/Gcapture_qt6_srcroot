@@ -24,13 +24,10 @@ typedef struct xdma_device_info_t
     char driver_version[GDRIVER_MAX_DRIVER_VERSION];
     uint32_t supported_inputs_mask;
     uint32_t supported_pixel_formats_mask;
-    uint32_t max_video_channels;
-    uint32_t max_audio_channels;
 } xdma_device_info_t;
 
 typedef struct xdma_stream_desc_t
 {
-    uint32_t channel_index;
     gdriver_input_t input;
     uint32_t width;
     uint32_t height;
@@ -113,7 +110,6 @@ enum
 typedef struct xdma_event_t
 {
     xdma_event_type_t type;
-    uint32_t channel;
     uint32_t irq_bit;
     uint32_t irq_mask;
     uint64_t timestamp_ns;

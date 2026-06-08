@@ -423,16 +423,14 @@ void MainWindow::onEvent(const gvfg_event_t *event, void *user)
         return;
 
     const QString type = eventTypeText(event->type);
-    const uint32_t channel = event->channel;
     const uint32_t irqBit = event->irq_bit;
     const uint32_t irqMask = event->irq_mask;
     const uint64_t timestampNs = event->timestamp_ns;
     QMetaObject::invokeMethod(self,
-                              [self, type, channel, irqBit, irqMask, timestampNs]()
+                              [self, type, irqBit, irqMask, timestampNs]()
                               {
-                                  self->appendLog(QStringLiteral("event %1 ch=%2 irq=%3 mask=%4 ts=%5")
+                                  self->appendLog(QStringLiteral("event %1 irq=%2 mask=%3 ts=%4")
                                                       .arg(type)
-                                                      .arg(channel)
                                                       .arg(irqBit)
                                                       .arg(hex32(irqMask))
                                                       .arg(static_cast<qulonglong>(timestampNs)));

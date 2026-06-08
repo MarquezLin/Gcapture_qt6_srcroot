@@ -43,14 +43,21 @@ namespace
     {
         switch (st)
         {
-        case XDMA_OK: return GVFG_OK;
-        case XDMA_EINVAL: return GVFG_EINVAL;
-        case XDMA_ENODEV: return GVFG_ENODEV;
-        case XDMA_ESTATE: return GVFG_ESTATE;
-        case XDMA_ETIMEOUT: return GVFG_ETIMEOUT;
-        case XDMA_ENOTSUP: return GVFG_ENOTSUP;
+        case XDMA_OK:
+            return GVFG_OK;
+        case XDMA_EINVAL:
+            return GVFG_EINVAL;
+        case XDMA_ENODEV:
+            return GVFG_ENODEV;
+        case XDMA_ESTATE:
+            return GVFG_ESTATE;
+        case XDMA_ETIMEOUT:
+            return GVFG_ETIMEOUT;
+        case XDMA_ENOTSUP:
+            return GVFG_ENOTSUP;
         case XDMA_EIO:
-        default: return GVFG_EIO;
+        default:
+            return GVFG_EIO;
         }
     }
 
@@ -138,11 +145,16 @@ namespace
     {
         switch (fmt)
         {
-        case DXGI_FORMAT_UNKNOWN: return "UNKNOWN";
-        case DXGI_FORMAT_B8G8R8A8_UNORM: return "B8G8R8A8_UNORM";
-        case DXGI_FORMAT_R10G10B10A2_UNORM: return "R10G10B10A2_UNORM";
-        case DXGI_FORMAT_R16G16B16A16_FLOAT: return "R16G16B16A16_FLOAT";
-        default: return "DXGI_FORMAT_OTHER";
+        case DXGI_FORMAT_UNKNOWN:
+            return "UNKNOWN";
+        case DXGI_FORMAT_B8G8R8A8_UNORM:
+            return "B8G8R8A8_UNORM";
+        case DXGI_FORMAT_R10G10B10A2_UNORM:
+            return "R10G10B10A2_UNORM";
+        case DXGI_FORMAT_R16G16B16A16_FLOAT:
+            return "R16G16B16A16_FLOAT";
+        default:
+            return "DXGI_FORMAT_OTHER";
         }
     }
 
@@ -275,7 +287,7 @@ struct gvfg_handle_t
         syncBackendEventCallback();
         selectedInput = GDRIVER_INPUT_SDI;
         resetRuntimeCounters();
-        const xdma_status_t stInput = backend->set_input(selectedInput, 0);
+        const xdma_status_t stInput = backend->set_input(selectedInput);
         if (stInput != XDMA_OK)
         {
             emitError(map_status(stInput), xdma_error_text(stInput, backend.get()));
@@ -310,7 +322,8 @@ struct gvfg_handle_t
         }
 
         running = true;
-        captureThread = std::thread([this]() { captureLoop(); });
+        captureThread = std::thread([this]()
+                                    { captureLoop(); });
         return GVFG_OK;
     }
 
@@ -461,7 +474,6 @@ struct gvfg_handle_t
 
         gvfg_event_t out{};
         out.type = map_event_type(event.type);
-        out.channel = event.channel;
         out.irq_bit = event.irq_bit;
         out.irq_mask = event.irq_mask;
         out.timestamp_ns = event.timestamp_ns;
@@ -570,7 +582,6 @@ struct gvfg_handle_t
             height = 1080;
 
         xdma_stream_desc_t desc{};
-        desc.channel_index = 0;
         desc.input = selectedInput;
         desc.width = width;
         desc.height = height;
@@ -989,7 +1000,6 @@ extern "C"
 {
     int gvfg_enumerate_devices(gvfg_device_info_t *out_devices, int max_devices)
     {
-        const int maxCount = static_cast<int>(GVFG_MAX_DEVICES);
         const std::vector<gvfg::internal::XdmaDevice> devices = gvfg::internal::enumerate_xdma_devices();
         const int n = static_cast<int>(devices.size());
         if (n <= 0)
@@ -1030,9 +1040,9 @@ extern "C"
     }
 
     gvfg_status_t gvfg_set_callbacks(gvfg_handle handle,
-                                       gvfg_on_frame_cb on_frame,
-                                       gvfg_on_error_cb on_error,
-                                       void *user)
+                                     gvfg_on_frame_cb on_frame,
+                                     gvfg_on_error_cb on_error,
+                                     void *user)
     {
         if (!handle)
             return GVFG_EINVAL;
@@ -1052,9 +1062,9 @@ extern "C"
     }
 
     gvfg_status_t gvfg_set_event_callback(gvfg_handle handle,
-                                           gvfg_on_event_cb on_event,
-                                           void *user,
-                                           uint32_t event_mask)
+                                          gvfg_on_event_cb on_event,
+                                          void *user,
+                                          uint32_t event_mask)
     {
         if (!handle)
             return GVFG_EINVAL;
@@ -1114,14 +1124,22 @@ extern "C"
     {
         switch (status)
         {
-        case GVFG_OK: return "OK";
-        case GVFG_EINVAL: return "Invalid argument";
-        case GVFG_ENODEV: return "No GVFG device";
-        case GVFG_ESTATE: return "Invalid state";
-        case GVFG_EIO: return "I/O error";
-        case GVFG_ENOTSUP: return "Not supported";
-        case GVFG_ETIMEOUT: return "Timeout";
-        default: return "Unknown";
+        case GVFG_OK:
+            return "OK";
+        case GVFG_EINVAL:
+            return "Invalid argument";
+        case GVFG_ENODEV:
+            return "No GVFG device";
+        case GVFG_ESTATE:
+            return "Invalid state";
+        case GVFG_EIO:
+            return "I/O error";
+        case GVFG_ENOTSUP:
+            return "Not supported";
+        case GVFG_ETIMEOUT:
+            return "Timeout";
+        default:
+            return "Unknown";
         }
     }
 }

@@ -22,8 +22,8 @@ DEFINE_GUID(GUID_DEVINTERFACE_XDMA,
 
 namespace
 {
-    constexpr uint32_t kMaxChannels = 2;
-    constexpr uint32_t kIrqRolesPerChannel = 4;
+    constexpr uint32_t kInputPathCount = 2;
+    constexpr uint32_t kIrqRolesPerInput = 4;
     constexpr uint32_t kVideoIrqRole = 0;
     constexpr uint32_t kPlugInIrqRole = 2;
     constexpr uint32_t kPlugOutIrqRole = 3;
@@ -355,7 +355,6 @@ namespace gvfg::internal
 
     XdmaCaptureSession::XdmaCaptureSession()
     {
-        stream_desc_.channel_index = 0;
         stream_desc_.input = GDRIVER_INPUT_SDI;
         stream_desc_.width = kDefaultWidth;
         stream_desc_.height = kDefaultHeight;
@@ -400,7 +399,7 @@ namespace gvfg::internal
 
         // XDMA exposes several subdevices under the same base path:
         //   user  : FPGA register access through ReadFile/WriteFile
-        //   c2h_N : card-to-host DMA data path for video channel N
+        //   c2h_0 / c2h_1 : card-to-host DMA data paths for SDI / HDMI
         //   event_N is opened later in start_stream(), only for the active IRQ.
         user_device_ = open_subdevice(L"user");
         if (user_device_ == INVALID_HANDLE_VALUE)
@@ -409,16 +408,16 @@ namespace gvfg::internal
             return fail(XDMA_EIO, "CreateFile(user)");
         }
 
-        for (uint32_t ch = 0; ch < kMaxChannels; ++ch)
+        for (uint32_t path = 0; path < kInputPathCount; ++path)
         {
-            const std::wstring name = L"c2h_" + std::to_wstring(ch);
-            c2h_device_[ch] = open_subdevice(name.c_str());
-            if (c2h_device_[ch] == INVALID_HANDLE_VALUE)
+            const std::wstring name = L"c2h_" + std::to_wstring(path);
+            c2h_device_[path] = open_subdevice(name.c_str());
+            if (c2h_device_[path] == INVALID_HANDLE_VALUE)
             {
                 close_handles();
                 return fail(XDMA_EIO, "CreateFile(c2h)");
             }
-            XDMA_LOG("open_device: c2h_%u ready", ch);
+            XDMA_LOG("open_device: c2h_%u ready", path);
         }
 
         opened_ = true;
@@ -446,7 +445,7 @@ namespace gvfg::internal
 
     void XdmaCaptureSession::close_handles()
     {
-        for (uint32_t role = 0; role < kIrqRolesPerChannel; ++role)
+        for (uint32_t role = 0; role < kIrqRolesPerInput; ++role)
         {
             if (event_device_[role] != INVALID_HANDLE_VALUE)
             {
@@ -498,14 +497,13 @@ namespace gvfg::internal
         return h;
     }
 
-    xdma_status_t XdmaCaptureSession::set_input(gdriver_input_t input, uint32_t channelIndex)
+    xdma_status_t XdmaCaptureSession::set_input(gdriver_input_t input)
     {
-        if (!opened_ || channelIndex >= kMaxChannels)
+        if (!opened_)
             return XDMA_EINVAL;
         input_ = input == GDRIVER_INPUT_UNKNOWN ? GDRIVER_INPUT_SDI : input;
         stream_desc_.input = input_;
-        stream_desc_.channel_index = channelIndex;
-        XDMA_LOG("set_input: input=%u channel=%u", static_cast<unsigned>(input_), channelIndex);
+        XDMA_LOG("set_input: input=%u", static_cast<unsigned>(input_));
         return XDMA_OK;
     }
 
@@ -523,8 +521,6 @@ namespace gvfg::internal
                                            (1u << GDRIVER_PIXFMT_NV12) |
                                            (1u << GDRIVER_PIXFMT_P010) |
                                            (1u << GDRIVER_PIXFMT_YUV444);
-        out.max_video_channels = kMaxChannels;
-        out.max_audio_channels = 0;
         return XDMA_OK;
     }
 
@@ -618,8 +614,6 @@ namespace gvfg::internal
             return XDMA_ESTATE;
         if (running_)
             return XDMA_ESTATE;
-        if (desc.channel_index >= kMaxChannels)
-            return fail(XDMA_EINVAL, "configure_stream(channel)", ERROR_INVALID_PARAMETER);
         if (desc.pixel_format != GDRIVER_PIXFMT_YUY2 &&
             desc.pixel_format != GDRIVER_PIXFMT_Y210 &&
             desc.pixel_format != GDRIVER_PIXFMT_RGB24 &&
@@ -629,8 +623,7 @@ namespace gvfg::internal
             desc.pixel_format != GDRIVER_PIXFMT_UNKNOWN)
             return fail(XDMA_ENOTSUP, "configure_stream(pixel_format)", ERROR_NOT_SUPPORTED);
 
-        XDMA_LOG("configure: request ch=%u input=%u %ux%u fmt=%u buffers=%u mem=%u flags=0x%x",
-                 desc.channel_index,
+        XDMA_LOG("configure: request input=%u %ux%u fmt=%u buffers=%u mem=%u flags=0x%x",
                  static_cast<unsigned>(desc.input),
                  desc.width,
                  desc.height,
@@ -662,9 +655,9 @@ namespace gvfg::internal
             wait_timeout_count_ = 0;
         }
 
-        XDMA_LOG("configure: effective ch=%u input=%u %ux%u fmt=%u frame_bytes=%zu",
-                 stream_desc_.channel_index,
+        XDMA_LOG("configure: effective input=%u path=%u %ux%u fmt=%u frame_bytes=%zu",
                  static_cast<unsigned>(stream_desc_.input),
+                 active_input_path(),
                  stream_desc_.width,
                  stream_desc_.height,
                  static_cast<unsigned>(stream_desc_.pixel_format),
@@ -683,11 +676,11 @@ namespace gvfg::internal
         if (running_)
             return XDMA_OK;
 
-        const uint32_t ch = active_channel();
-        if (c2h_device_[ch] == INVALID_HANDLE_VALUE)
+        const uint32_t path = active_input_path();
+        if (c2h_device_[path] == INVALID_HANDLE_VALUE)
             return fail(XDMA_EIO, "c2h handle", ERROR_INVALID_HANDLE);
 
-        for (uint32_t role = 0; role < kIrqRolesPerChannel; ++role)
+        for (uint32_t role = 0; role < kIrqRolesPerInput; ++role)
         {
             if (event_device_[role] != INVALID_HANDLE_VALUE)
             {
@@ -696,18 +689,18 @@ namespace gvfg::internal
             }
         }
 
-        // IRQ layout follows CaptureDemo: each video channel owns four event
+        // IRQ layout follows CaptureDemo: each input path owns four event
         // bits: VIDEO_INT, AUDIO_INT, PLUG_IN, PLUG_OUT.
-        for (uint32_t role = 0; role < kIrqRolesPerChannel; ++role)
+        for (uint32_t role = 0; role < kIrqRolesPerInput; ++role)
         {
             if (!is_stream_event_role(role))
                 continue;
 
-            const std::wstring eventName = L"event_" + std::to_wstring(ch * kIrqRolesPerChannel + role);
+            const std::wstring eventName = L"event_" + std::to_wstring(path * kIrqRolesPerInput + role);
             event_device_[role] = open_subdevice(eventName.c_str());
             if (event_device_[role] == INVALID_HANDLE_VALUE)
             {
-                for (uint32_t openedRole = 0; openedRole < kIrqRolesPerChannel; ++openedRole)
+                for (uint32_t openedRole = 0; openedRole < kIrqRolesPerInput; ++openedRole)
                 {
                     if (event_device_[openedRole] != INVALID_HANDLE_VALUE)
                     {
@@ -722,8 +715,9 @@ namespace gvfg::internal
         const size_t bytes = frame_size_bytes();
         if (bytes == 0)
             return fail(XDMA_EINVAL, "frame_size_bytes", ERROR_INVALID_PARAMETER);
-        XDMA_LOG("start: ch=%u event_mask=0x%08x capture_reg=0x%lx frame_bytes=%zu",
-                 ch,
+        XDMA_LOG("start: input=%u path=%u event_mask=0x%08x capture_reg=0x%lx frame_bytes=%zu",
+                 static_cast<unsigned>(stream_desc_.input),
+                 path,
                  active_event_mask(),
                  capture_enable_reg(),
                  bytes);
@@ -750,12 +744,12 @@ namespace gvfg::internal
         capture_active_ = true;
         try
         {
-            for (uint32_t role = 0; role < kIrqRolesPerChannel; ++role)
+            for (uint32_t role = 0; role < kIrqRolesPerInput; ++role)
             {
                 if (!is_stream_event_role(role))
                     continue;
 
-                const uint32_t irqBit = ch * kIrqRolesPerChannel + role;
+                const uint32_t irqBit = path * kIrqRolesPerInput + role;
                 event_thread_[role] = std::thread([this, role, irqBit]()
                                                   {
                                                       try
@@ -797,8 +791,8 @@ namespace gvfg::internal
                 if (h != INVALID_HANDLE_VALUE)
                     CancelIoEx(h, nullptr);
             }
-            if (ch < kMaxChannels && c2h_device_[ch] != INVALID_HANDLE_VALUE)
-                CancelIoEx(c2h_device_[ch], nullptr);
+            if (c2h_device_[path] != INVALID_HANDLE_VALUE)
+                CancelIoEx(c2h_device_[path], nullptr);
             data_cv_.notify_all();
             frame_cv_.notify_all();
             for (std::thread &thread : event_thread_)
@@ -837,9 +831,9 @@ namespace gvfg::internal
             if (h != INVALID_HANDLE_VALUE)
                 CancelIoEx(h, nullptr);
         }
-        const uint32_t ch = active_channel();
-        if (ch < kMaxChannels && c2h_device_[ch] != INVALID_HANDLE_VALUE)
-            CancelIoEx(c2h_device_[ch], nullptr);
+        const uint32_t path = active_input_path();
+        if (c2h_device_[path] != INVALID_HANDLE_VALUE)
+            CancelIoEx(c2h_device_[path], nullptr);
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -969,7 +963,6 @@ namespace gvfg::internal
 
         xdma_event_t event{};
         event.type = type;
-        event.channel = active_channel();
         event.irq_bit = irqBit;
         event.irq_mask = irqMask;
         event.timestamp_ns = steady_now_ns();
@@ -1008,8 +1001,9 @@ namespace gvfg::internal
 
             if (role == kPlugOutIrqRole)
             {
-                XDMA_HOTPLUG_LOG("PLUG_OUT IRQ ch=%u irq=%u mask=0x%08x value=%u interrupt_count=%llu active=%d running=%d",
-                                  active_channel(),
+                XDMA_HOTPLUG_LOG("PLUG_OUT IRQ input=%u path=%u irq=%u mask=0x%08x value=%u interrupt_count=%llu active=%d running=%d",
+                                  static_cast<unsigned>(stream_desc_.input),
+                                  active_input_path(),
                                   irqBit,
                                   mask,
                                   static_cast<unsigned>(value),
@@ -1024,8 +1018,9 @@ namespace gvfg::internal
 
             if (role == kPlugInIrqRole)
             {
-                XDMA_HOTPLUG_LOG("PLUG_IN IRQ ch=%u irq=%u mask=0x%08x value=%u interrupt_count=%llu active=%d running=%d",
-                                  active_channel(),
+                XDMA_HOTPLUG_LOG("PLUG_IN IRQ input=%u path=%u irq=%u mask=0x%08x value=%u interrupt_count=%llu active=%d running=%d",
+                                  static_cast<unsigned>(stream_desc_.input),
+                                  active_input_path(),
                                   irqBit,
                                   mask,
                                   static_cast<unsigned>(value),
@@ -1078,7 +1073,10 @@ namespace gvfg::internal
 
     void XdmaCaptureSession::data_thread_proc()
     {
-        XDMA_LOG("data_thread: start ch=%u frame_bytes=%zu", active_channel(), frame_size_bytes());
+        XDMA_LOG("data_thread: start input=%u path=%u frame_bytes=%zu",
+                 static_cast<unsigned>(stream_desc_.input),
+                 active_input_path(),
+                 frame_size_bytes());
         uint64_t readCount = 0;
         while (running_ && !data_worker_stop_)
         {
@@ -1119,7 +1117,7 @@ namespace gvfg::internal
                 if (dma_buffer_.size() < bytes)
                     dma_buffer_.resize(bytes);
             }
-            const int ret = read_device(c2h_device_[active_channel()], 0, bytes, dma_buffer_.data());
+            const int ret = read_device(c2h_device_[active_input_path()], 0, bytes, dma_buffer_.data());
 
             if (!running_)
                 break;
@@ -1176,9 +1174,9 @@ namespace gvfg::internal
     void XdmaCaptureSession::stop_data_worker()
     {
         data_worker_stop_ = true;
-        const uint32_t ch = active_channel();
-        if (ch < kMaxChannels && c2h_device_[ch] != INVALID_HANDLE_VALUE)
-            CancelIoEx(c2h_device_[ch], nullptr);
+        const uint32_t path = active_input_path();
+        if (c2h_device_[path] != INVALID_HANDLE_VALUE)
+            CancelIoEx(c2h_device_[path], nullptr);
         data_cv_.notify_all();
 
         std::thread thread;
@@ -1200,23 +1198,26 @@ namespace gvfg::internal
             const bool clearHighOk = write_user_reg(kInterruptClearReg, plug_out_event_mask());
             const bool clearLowOk = write_user_reg(kInterruptClearReg, 0);
             const bool enablePlugInOk = enable_user_event(plug_in_event_mask());
-            XDMA_HOTPLUG_LOG("PLUG_OUT pause skipped ch=%u already_inactive clear_out=%d/%d enable_plug_in=%d",
-                              active_channel(),
+            XDMA_HOTPLUG_LOG("PLUG_OUT pause skipped input=%u path=%u already_inactive clear_out=%d/%d enable_plug_in=%d",
+                              static_cast<unsigned>(stream_desc_.input),
+                              active_input_path(),
                               clearHighOk ? 1 : 0,
                               clearLowOk ? 1 : 0,
                               enablePlugInOk ? 1 : 0);
             return;
         }
 
-        XDMA_HOTPLUG_LOG("PLUG_OUT pause begin ch=%u active_mask=0x%08x video_mask=0x%08x plug_in_mask=0x%08x plug_out_mask=0x%08x capture_reg=0x%lx",
-                          active_channel(),
+        XDMA_HOTPLUG_LOG("PLUG_OUT pause begin input=%u path=%u active_mask=0x%08x video_mask=0x%08x plug_in_mask=0x%08x plug_out_mask=0x%08x capture_reg=0x%lx",
+                          static_cast<unsigned>(stream_desc_.input),
+                          active_input_path(),
                           active_event_mask(),
                           video_event_mask(),
                           plug_in_event_mask(),
                           plug_out_event_mask(),
                           capture_enable_reg());
-        XDMA_LOG("hotplug: plug-out pause ch=%u active_mask=0x%08x plug_in_mask=0x%08x",
-                 active_channel(),
+        XDMA_LOG("hotplug: plug-out pause input=%u path=%u active_mask=0x%08x plug_in_mask=0x%08x",
+                 static_cast<unsigned>(stream_desc_.input),
+                 active_input_path(),
                  active_event_mask(),
                  plug_in_event_mask());
 
@@ -1228,8 +1229,9 @@ namespace gvfg::internal
 
         // Firmware raises the next PLUG_IN IRQ only while capture-enable is high.
         const bool captureArmedOk = write_user_reg(capture_enable_reg(), running_ ? 1u : 0u);
-        XDMA_HOTPLUG_LOG("PLUG_OUT pause regs ch=%u capture_off=%d disable_active=%d clear_active=%d/%d enable_plug_in=%d capture_armed=%d armed_value=%u",
-                          active_channel(),
+        XDMA_HOTPLUG_LOG("PLUG_OUT pause regs input=%u path=%u capture_off=%d disable_active=%d clear_active=%d/%d enable_plug_in=%d capture_armed=%d armed_value=%u",
+                          static_cast<unsigned>(stream_desc_.input),
+                          active_input_path(),
                           captureOffOk ? 1 : 0,
                           disableActiveOk ? 1 : 0,
                           clearActiveHighOk ? 1 : 0,
@@ -1256,10 +1258,11 @@ namespace gvfg::internal
         }
         frame_cv_.notify_all();
         emit_event(XDMA_EVENT_CAPTURE_PAUSED,
-                   active_channel() * kIrqRolesPerChannel + kPlugOutIrqRole,
+                   active_input_path() * kIrqRolesPerInput + kPlugOutIrqRole,
                    plug_out_event_mask());
-        XDMA_HOTPLUG_LOG("PLUG_OUT pause done ch=%u active=%d data_worker_stop=%d latest_sequence=%llu delivered_sequence=%llu",
-                          active_channel(),
+        XDMA_HOTPLUG_LOG("PLUG_OUT pause done input=%u path=%u active=%d data_worker_stop=%d latest_sequence=%llu delivered_sequence=%llu",
+                          static_cast<unsigned>(stream_desc_.input),
+                          active_input_path(),
                           capture_active_.load() ? 1 : 0,
                           data_worker_stop_.load() ? 1 : 0,
                           static_cast<unsigned long long>(latestAfterPause),
@@ -1275,8 +1278,9 @@ namespace gvfg::internal
             bool enableActiveOk = true;
             if (running_)
                 enableActiveOk = enable_user_event(active_event_mask());
-            XDMA_HOTPLUG_LOG("PLUG_IN resume skipped ch=%u already_active clear_in=%d/%d enable_active=%d active_mask=0x%08x",
-                              active_channel(),
+            XDMA_HOTPLUG_LOG("PLUG_IN resume skipped input=%u path=%u already_active clear_in=%d/%d enable_active=%d active_mask=0x%08x",
+                              static_cast<unsigned>(stream_desc_.input),
+                              active_input_path(),
                               clearHighOk ? 1 : 0,
                               clearLowOk ? 1 : 0,
                               enableActiveOk ? 1 : 0,
@@ -1287,16 +1291,18 @@ namespace gvfg::internal
         save_frames_after_plug_in_.store(kPlugInScanFrames);
         fix_pulsed_after_plug_in_.store(false);
 
-        XDMA_HOTPLUG_LOG("PLUG_IN resume begin ch=%u active_mask=0x%08x video_mask=0x%08x plug_in_mask=0x%08x plug_out_mask=0x%08x capture_reg=0x%lx scan_frames=%d",
-                          active_channel(),
+        XDMA_HOTPLUG_LOG("PLUG_IN resume begin input=%u path=%u active_mask=0x%08x video_mask=0x%08x plug_in_mask=0x%08x plug_out_mask=0x%08x capture_reg=0x%lx scan_frames=%d",
+                          static_cast<unsigned>(stream_desc_.input),
+                          active_input_path(),
                           active_event_mask(),
                           video_event_mask(),
                           plug_in_event_mask(),
                           plug_out_event_mask(),
                           capture_enable_reg(),
                           kPlugInScanFrames);
-        XDMA_LOG("hotplug: plug-in resume ch=%u active_mask=0x%08x",
-                 active_channel(),
+        XDMA_LOG("hotplug: plug-in resume input=%u path=%u active_mask=0x%08x",
+                 static_cast<unsigned>(stream_desc_.input),
+                 active_input_path(),
                  active_event_mask());
 
         size_t allocatedBytes = 0;
@@ -1309,7 +1315,10 @@ namespace gvfg::internal
             stream_error_ = false;
             stats_.state = GDRIVER_STREAM_RUNNING;
         }
-        XDMA_HOTPLUG_LOG("PLUG_IN resume buffer ch=%u frame_bytes=%zu", active_channel(), allocatedBytes);
+        XDMA_HOTPLUG_LOG("PLUG_IN resume buffer input=%u path=%u frame_bytes=%zu",
+                          static_cast<unsigned>(stream_desc_.input),
+                          active_input_path(),
+                          allocatedBytes);
 
         capture_active_ = true;
         if (!start_data_worker())
@@ -1319,7 +1328,9 @@ namespace gvfg::internal
             stream_error_ = true;
             ++stats_.dma_errors;
             frame_cv_.notify_all();
-            XDMA_HOTPLUG_LOG("PLUG_IN resume failed ch=%u start_data_worker=0", active_channel());
+            XDMA_HOTPLUG_LOG("PLUG_IN resume failed input=%u path=%u start_data_worker=0",
+                              static_cast<unsigned>(stream_desc_.input),
+                              active_input_path());
             return;
         }
         Sleep(10);
@@ -1329,8 +1340,9 @@ namespace gvfg::internal
         const bool clearActiveLowOk = write_user_reg(kInterruptClearReg, 0);
         if (!running_)
         {
-            XDMA_HOTPLUG_LOG("PLUG_IN resume aborted ch=%u running=0 capture_off=%d clear_active=%d/%d",
-                              active_channel(),
+            XDMA_HOTPLUG_LOG("PLUG_IN resume aborted input=%u path=%u running=0 capture_off=%d clear_active=%d/%d",
+                              static_cast<unsigned>(stream_desc_.input),
+                              active_input_path(),
                               captureOffOk ? 1 : 0,
                               clearActiveHighOk ? 1 : 0,
                               clearActiveLowOk ? 1 : 0);
@@ -1341,10 +1353,11 @@ namespace gvfg::internal
         data_cv_.notify_all();
         frame_cv_.notify_all();
         emit_event(XDMA_EVENT_CAPTURE_RESUMED,
-                   active_channel() * kIrqRolesPerChannel + kPlugInIrqRole,
+                   active_input_path() * kIrqRolesPerInput + kPlugInIrqRole,
                    plug_in_event_mask());
-        XDMA_HOTPLUG_LOG("PLUG_IN resume done ch=%u capture_off=%d clear_active=%d/%d capture_on=%d enable_active=%d active=%d active_mask=0x%08x",
-                          active_channel(),
+        XDMA_HOTPLUG_LOG("PLUG_IN resume done input=%u path=%u capture_off=%d clear_active=%d/%d capture_on=%d enable_active=%d active=%d active_mask=0x%08x",
+                          static_cast<unsigned>(stream_desc_.input),
+                          active_input_path(),
                           captureOffOk ? 1 : 0,
                           clearActiveHighOk ? 1 : 0,
                           clearActiveLowOk ? 1 : 0,
@@ -1369,15 +1382,17 @@ namespace gvfg::internal
         const size_t markerOffset = find_frame_marker_offset(data, bytes);
         if (markerOffset >= bytes)
         {
-            XDMA_HOTPLUG_LOG("PLUG_IN frame scan ch=%u marker_not_found remaining_before=%d bytes=%zu",
-                              active_channel(),
+            XDMA_HOTPLUG_LOG("PLUG_IN frame scan input=%u path=%u marker_not_found remaining_before=%d bytes=%zu",
+                              static_cast<unsigned>(stream_desc_.input),
+                              active_input_path(),
                               remaining,
                               bytes);
             return;
         }
 
-        XDMA_HOTPLUG_LOG("PLUG_IN frame marker found ch=%u offset=%zu remaining_before=%d bytes=%zu",
-                          active_channel(),
+        XDMA_HOTPLUG_LOG("PLUG_IN frame marker found input=%u path=%u offset=%zu remaining_before=%d bytes=%zu",
+                          static_cast<unsigned>(stream_desc_.input),
+                          active_input_path(),
                           markerOffset,
                           remaining,
                           bytes);
@@ -1400,8 +1415,9 @@ namespace gvfg::internal
         const bool lowOk = write_user_reg(kPlugInFrameFixReg, 0);
         std::atomic_thread_fence(std::memory_order_seq_cst);
         const bool readLowOk = read_user_reg(kFpgaStatusReg, statusAfterLow);
-        XDMA_HOTPLUG_LOG("PLUG_IN_FRAME_FIX pulse ch=%u reg=0x%lx high=%d status_high=%d/0x%08x low=%d status_low=%d/0x%08x",
-                          active_channel(),
+        XDMA_HOTPLUG_LOG("PLUG_IN_FRAME_FIX pulse input=%u path=%u reg=0x%lx high=%d status_high=%d/0x%08x low=%d status_low=%d/0x%08x",
+                          static_cast<unsigned>(stream_desc_.input),
+                          active_input_path(),
                           kPlugInFrameFixReg,
                           highOk ? 1 : 0,
                           readHighOk ? 1 : 0,
@@ -1641,14 +1657,14 @@ namespace gvfg::internal
         return last_error_.c_str();
     }
 
-    uint32_t XdmaCaptureSession::active_channel() const
+    uint32_t XdmaCaptureSession::active_input_path() const
     {
-        return (std::min)(stream_desc_.channel_index, kMaxChannels - 1);
+        return stream_desc_.input == GDRIVER_INPUT_HDMI ? 1u : 0u;
     }
 
     uint32_t XdmaCaptureSession::event_mask(uint32_t role) const
     {
-        return bit_n(active_channel() * kIrqRolesPerChannel + role);
+        return bit_n(active_input_path() * kIrqRolesPerInput + role);
     }
 
     uint32_t XdmaCaptureSession::video_event_mask() const
@@ -1673,7 +1689,7 @@ namespace gvfg::internal
 
     long XdmaCaptureSession::capture_enable_reg() const
     {
-        return active_channel() == 0 ? kVideo0CaptureEnableReg : kVideo1CaptureEnableReg;
+        return active_input_path() == 0 ? kVideo0CaptureEnableReg : kVideo1CaptureEnableReg;
     }
 
     size_t XdmaCaptureSession::frame_size_bytes() const

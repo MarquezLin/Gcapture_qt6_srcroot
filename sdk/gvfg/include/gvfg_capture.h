@@ -199,7 +199,6 @@ enum
 typedef struct
 {
     gvfg_event_type_t type;
-    uint32_t channel;
     uint32_t irq_bit;
     uint32_t irq_mask;
     uint64_t timestamp_ns;

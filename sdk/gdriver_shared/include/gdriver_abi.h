@@ -87,8 +87,6 @@ typedef struct gdriver_device_info_t
     char driver_version[GDRIVER_MAX_DRIVER_VERSION];
     uint32_t supported_inputs_mask;
     uint32_t supported_pixel_formats_mask;
-    uint32_t max_video_channels;
-    uint32_t max_audio_channels;
 } gdriver_device_info_t;
 
 typedef struct gdriver_capability_t
@@ -115,14 +113,12 @@ typedef struct gdriver_set_input_t
     uint32_t struct_size;
     uint32_t abi_version;
     gdriver_input_t input;
-    uint32_t channel_index;
 } gdriver_set_input_t;
 
 typedef struct gdriver_stream_config_t
 {
     uint32_t struct_size;
     uint32_t abi_version;
-    uint32_t channel_index;
     gdriver_input_t input;
     uint32_t width;
     uint32_t height;

@@ -677,7 +677,6 @@ typedef enum
 typedef struct
 {
     gvfg_event_type_t type;
-    uint32_t channel;
     uint32_t irq_bit;
     uint32_t irq_mask;
     uint64_t timestamp_ns;
@@ -1202,7 +1201,7 @@ device 找到
 
 - device 被其他程式占用
 - driver subdevice open 失敗
-- event channel open 失敗
+- event subdevice open 失敗
 - stream configure 失敗
 
 ### 有 start，但沒有 frame

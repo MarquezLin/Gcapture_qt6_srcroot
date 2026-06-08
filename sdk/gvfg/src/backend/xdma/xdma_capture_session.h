@@ -35,7 +35,7 @@ namespace gvfg::internal
         xdma_status_t open_device_index(size_t deviceIndex);
         xdma_status_t close();
 
-        xdma_status_t set_input(gdriver_input_t input, uint32_t channelIndex);
+        xdma_status_t set_input(gdriver_input_t input);
         xdma_status_t get_device_info(xdma_device_info_t &out) const;
         xdma_status_t get_signal_status(xdma_signal_status_t &out) const;
         xdma_status_t get_stream_stats(xdma_stream_stats_t &out) const;
@@ -76,7 +76,7 @@ namespace gvfg::internal
         void set_last_error(const std::string &message) const;
         void clear_last_error() const;
 
-        uint32_t active_channel() const;
+        uint32_t active_input_path() const;
         uint32_t event_mask(uint32_t role) const;
         uint32_t video_event_mask() const;
         uint32_t plug_in_event_mask() const;
