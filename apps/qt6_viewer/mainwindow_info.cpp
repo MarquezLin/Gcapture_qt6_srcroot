@@ -45,7 +45,8 @@ static gcap_pixfmt_t pixFmtFromNameInfo(const char *name)
         return GCAP_FMT_Y210;
     if (fmt == QStringLiteral("V210"))
         return GCAP_FMT_V210;
-    if (fmt == QStringLiteral("ARGB") || fmt == QStringLiteral("ARGB32") || fmt == QStringLiteral("RGB32"))
+    if (fmt == QStringLiteral("ARGB") || fmt == QStringLiteral("ARGB32") || fmt == QStringLiteral("BGRA") ||
+        fmt == QStringLiteral("BGRA8") || fmt == QStringLiteral("RGB32"))
         return GCAP_FMT_ARGB;
     return GCAP_FMT_YUY2;
 }
@@ -284,22 +285,23 @@ void MainWindow::refreshCaptureRuntimeInfo()
         gcap_signal_status_t fpgaSignal{};
         fpgaSignal.width = fpga.width_valid ? static_cast<int>(fpga.width_raw) : rt.input_signal.width;
         fpgaSignal.height = fpga.height_valid ? static_cast<int>(fpga.height_raw) : rt.input_signal.height;
-        fpgaSignal.fps_num = rt.input_signal.fps > 0.0 ? static_cast<int>(rt.input_signal.fps * 1000.0 + 0.5) : 0;
-        fpgaSignal.fps_den = rt.input_signal.fps > 0.0 ? 1000 : 0;
+        fpgaSignal.fps_num = 0;
+        fpgaSignal.fps_den = 0;
         fpgaSignal.pixfmt = (fpga.bit_depth_valid && fpga.bit_depth >= 10) ? GCAP_FMT_Y210 : GCAP_FMT_YUY2;
         fpgaSignal.bit_depth = fpga.bit_depth_valid ? fpga.bit_depth : rt.input_signal.bit_depth;
         fpgaSignal.csp = GCAP_CSP_BT709;
         fpgaSignal.range = GCAP_RANGE_LIMITED;
 
         gcap_signal_status_t dmaBuffer{};
-        dmaBuffer.width = delivered.width;
-        dmaBuffer.height = delivered.height;
-        dmaBuffer.fps_num = fpgaSignal.fps_num;
-        dmaBuffer.fps_den = fpgaSignal.fps_den;
-        dmaBuffer.pixfmt = pixFmtFromNameInfo(delivered.pixel_format);
-        dmaBuffer.bit_depth = delivered.bit_depth;
-        dmaBuffer.csp = GCAP_CSP_BT709;
-        dmaBuffer.range = GCAP_RANGE_LIMITED;
+        if (delivered.valid)
+        {
+            dmaBuffer.width = delivered.width;
+            dmaBuffer.height = delivered.height;
+            dmaBuffer.pixfmt = pixFmtFromNameInfo(delivered.pixel_format);
+            dmaBuffer.bit_depth = delivered.bit_depth;
+            dmaBuffer.csp = GCAP_CSP_BT709;
+            dmaBuffer.range = GCAP_RANGE_LIMITED;
+        }
 
         captureInfo_.signal = fpgaSignal;
         captureInfo_.signalProbe = fpgaSignal;
@@ -307,7 +309,7 @@ void MainWindow::refreshCaptureRuntimeInfo()
         captureInfo_.backendName = QStringLiteral("GVFG");
         captureInfo_.frameSource = QStringLiteral("FPGA registers / XDMA C2H");
         captureInfo_.pathName = QStringLiteral("FPGA reported signal -> delivered frame callback");
-        captureInfo_.captureFormat = QString::fromUtf8(delivered.pixel_format);
+        captureInfo_.captureFormat = delivered.valid ? QString::fromUtf8(delivered.pixel_format) : QStringLiteral("--");
         captureInfo_.renderFormat = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
         return;
     }

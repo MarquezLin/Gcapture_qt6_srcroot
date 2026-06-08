@@ -541,8 +541,8 @@ namespace gvfg::internal
         uint32_t rawStatus = 0;
 
         // The current XDMA backend has no high-level signal IOCTL yet, so we
-        // read the FPGA signal registers directly.  If width/height are empty,
-        // fall back to the configured/default stream size.
+        // read the FPGA signal registers directly.  Empty width/height means
+        // the FPGA is not reporting a usable signal.
         const bool formatOk = read_user_reg(kVideoFormatReg, rawFormat);
         const bool widthOk = read_user_reg(kVideoWidthReg, width);
         const bool heightOk = read_user_reg(kVideoHeightReg, height);
@@ -576,8 +576,8 @@ namespace gvfg::internal
         const bool hdmiLocked = statusOk ? ((rawStatus & bit_n(2)) != 0) : haveSignalSize;
         out.signal_locked = (input_ == GDRIVER_INPUT_HDMI ? hdmiLocked : sdiLocked) ? 1 : 0;
         out.input = input_;
-        out.width = haveSignalSize ? width : stream_desc_.width;
-        out.height = haveSignalSize ? height : stream_desc_.height;
+        out.width = haveSignalSize ? width : 0;
+        out.height = haveSignalSize ? height : 0;
         out.pixel_format = pixelFormat;
         out.bit_depth = bufferBitDepth;
         out.fpga_valid_mask = (formatOk ? bit_n(0) : 0u) |

@@ -279,9 +279,9 @@ typedef struct
 | --- | --- |
 | `width` | input 寬度 |
 | `height` | input 高度 |
-| `fps` | input FPS，SDK 已經換算好，例如 `29.97` |
-| `bit_depth` | input bit depth |
-| `pixel_format` | pixel format 字串，目前預期是 `YUY2` |
+| `fps` | Legacy field；GVFG 固定回 `0`，請使用 `fpga.frame_rate_*` |
+| `bit_depth` | Legacy SDK source-buffer bit depth；FPGA bit depth 請使用 `fpga.bit_depth` |
+| `pixel_format` | Legacy SDK source-buffer format；callback buffer format 請使用 `gvfg_runtime_info_t::delivered_frame` |
 
 
 ### Customer buffer vs FPGA signal
@@ -325,8 +325,8 @@ typedef struct
     int width;                       /* Signal width in pixels, from FPGA when available. */
     int height;                      /* Signal height in pixels, from FPGA when available. */
     double fps;                      /* Legacy field; GVFG leaves this 0. Use fpga.frame_rate_* instead. */
-    int bit_depth;                   /* Legacy delivered-buffer field. Prefer runtime delivered_frame. */
-    char pixel_format[32];           /* Legacy delivered-buffer field. Prefer runtime delivered_frame. */
+    int bit_depth;                   /* Legacy SDK source-buffer field. Prefer fpga.* and runtime delivered_frame. */
+    char pixel_format[32];           /* Legacy SDK source-buffer field. Prefer fpga.* and runtime delivered_frame. */
     gvfg_fpga_signal_status_t fpga;  /* Raw/decoded FPGA signal metadata. */
 } gvfg_signal_status_t;
 ```
@@ -334,10 +334,10 @@ typedef struct
 Use `gvfg_signal_status_t::fpga` for FPGA-reported raw/decoded signal data.
 For delivered frame format, prefer `gvfg_runtime_info_t::delivered_frame`.
 
-For example, if FPGA reports `video_format=YUV422` and `bit_depth=10`, but
-`pixel_format=YUY2` and `bit_depth=8`, the input signal is reported as YUV422
-10-bit by FPGA, but the customer buffer is still YUY2 8-bit packing. Treat the
-buffer as true YUV422 10-bit only when `pixel_format` is `Y210`.
+For example, if FPGA reports `video_format=YUV422` and `bit_depth=10`, the
+hardware signal should be treated as YUV422 10-bit. The current GVFG callback
+buffer is a rendered BGRA8 frame, reported through
+`gvfg_runtime_info_t::delivered_frame`.
 
 FPGA frame-rate code table:
 
@@ -368,6 +368,7 @@ typedef struct
     int height;
     int bit_depth;
     char pixel_format[32];
+    int valid;
 } gvfg_delivered_frame_info_t;
 
 typedef struct
@@ -382,14 +383,14 @@ typedef struct
 | 欄位 | 意義 |
 | --- | --- |
 | `input_signal` | 目前 input signal 狀態 |
-| `delivered_frame` | Frame buffer delivered by gvfg.dll to the app callback: width, height, pixel format, bit depth |
-| `capture_fps` | SDK capture runtime 測到的 FPS |
-| `delivered_frames` | SDK 已交付/處理的 frame 數 |
+| `delivered_frame` | Frame buffer delivered by gvfg.dll to the app callback: valid, width, height, pixel format, bit depth |
+| `capture_fps` | SDK capture thread 從 backend frame 測到的 FPS |
+| `delivered_frames` | SDK 已送到 app callback 的 frame 數 |
 
 Source ownership:
 
 - FPGA reported signal: use `input_signal.fpga.*`.
-- Delivered frame buffer: use `delivered_frame.*`.
+- Delivered callback buffer: use `delivered_frame.*`. `valid=0` means no callback frame is currently available/reported.
 - App/SDK runtime counters: use `capture_fps` and `delivered_frames`.
 
 這個 struct 適合顯示在：
@@ -970,7 +971,7 @@ gvfg_status_t gvfg_get_runtime_info(gvfg_handle handle,
 例如 viewer status bar 可以顯示：
 
 ```text
-Backend: GVFG | FPGA reported 1280x720 29.97fps | Delivered frame 1280x720 YUY2 8bit | App runtime 29.97fps frames=120
+Backend: GVFG | FPGA reported 1280x720 29.97fps | Delivered frame 1280x720 BGRA8 8bit | App runtime 29.97fps frames=120
 ```
 
 ## gvfg_get_preview_info
@@ -1265,7 +1266,7 @@ wait_frame: deliver
 ## Current XDMA Notes
 
 - The current XDMA path exposes decoded FPGA signal metadata through `sig.fpga`.
-- The delivered customer buffer format is reported by `sig.pixel_format` and `sig.bit_depth`.
-- `sig.fpga.bit_depth=10` does not by itself mean the delivered buffer is `Y210`.
-- Treat the delivered frame as true YUV422 10-bit only when `sig.pixel_format` is `Y210`.
+- `sig.pixel_format` and `sig.bit_depth` are legacy SDK source-buffer fields.
+- The delivered customer callback buffer is reported by `gvfg_runtime_info_t::delivered_frame`.
+- `sig.fpga.bit_depth=10` does not by itself mean the delivered callback buffer is `Y210`; the current callback path reports BGRA8.
 - `sig.fpga.frame_rate_bits=0001` is not in the supported table, so the UI/API reports it as `--`.

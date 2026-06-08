@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -273,6 +274,7 @@ struct gvfg_handle_t
         currentIndex = index;
         syncBackendEventCallback();
         selectedInput = GDRIVER_INPUT_SDI;
+        resetRuntimeCounters();
         const xdma_status_t stInput = backend->set_input(selectedInput, 0);
         if (stInput != XDMA_OK)
         {
@@ -299,6 +301,7 @@ struct gvfg_handle_t
         if (previewHwnd && !createRenderPipeline())
             emitError(GVFG_ENOTSUP, "GVFG preview pipeline unavailable");
 
+        resetRuntimeCounters();
         const xdma_status_t st = backend->start_stream();
         if (st != XDMA_OK)
         {
@@ -358,48 +361,58 @@ struct gvfg_handle_t
     {
         std::memset(&out, 0, sizeof(out));
         querySignal();
-        out.width = static_cast<int>(width);
-        out.height = static_cast<int>(height);
-        out.fps = 0.0;
-        out.bit_depth = static_cast<int>(bitDepth ? bitDepth : 8);
-        copy_cstr(out.pixel_format, sizeof(out.pixel_format), gdriver_pixel_format_name(pixelFormat));
-        out.fpga.valid_mask = fpgaValidMask;
-        out.fpga.width_valid = fpgaWidthValid ? 1 : 0;
-        out.fpga.height_valid = fpgaHeightValid ? 1 : 0;
-        out.fpga.width_raw = fpgaWidthRaw;
-        out.fpga.height_raw = fpgaHeightRaw;
-        out.fpga.video_format_raw = fpgaVideoFormatRaw;
-        out.fpga.video_format_valid = fpga_field_valid(fpgaValidMask, 0) ? 1 : 0;
-        out.fpga.video_format_code = static_cast<int>(fpgaVideoFormatRaw & 0x3u);
-        copy_cstr(out.fpga.video_format, sizeof(out.fpga.video_format), fpga_video_format_name(fpgaVideoFormatRaw));
-        out.fpga.frame_rate_raw = fpgaFrameRateRaw;
-        out.fpga.frame_rate_valid = fpga_field_valid(fpgaValidMask, 1) ? 1 : 0;
-        out.fpga.frame_rate_code = static_cast<int>(fpgaFrameRateRaw & 0x0fu);
-        copy_binary4(out.fpga.frame_rate_bits, sizeof(out.fpga.frame_rate_bits), fpgaFrameRateRaw);
-        copy_cstr(out.fpga.frame_rate_name, sizeof(out.fpga.frame_rate_name), fpga_frame_rate_name(fpgaFrameRateRaw));
-        out.fpga.bit_depth_raw = fpgaBitDepthRaw;
-        out.fpga.bit_depth_valid = fpga_field_valid(fpgaValidMask, 2) ? 1 : 0;
-        out.fpga.bit_depth = static_cast<int>(fpgaBitDepthRaw);
-        out.fpga.status_raw = fpgaStatusRaw;
-        out.fpga.status_valid = fpga_field_valid(fpgaValidMask, 3) ? 1 : 0;
-        out.fpga.sdi_locked = (fpgaStatusRaw & (1u << 0)) ? 1 : 0;
-        out.fpga.sdi_ddr_ok = (fpgaStatusRaw & (1u << 1)) ? 1 : 0;
-        out.fpga.hdmi_locked = (fpgaStatusRaw & (1u << 2)) ? 1 : 0;
-        out.fpga.hdmi_ddr_ok = (fpgaStatusRaw & (1u << 3)) ? 1 : 0;
-        return (out.width > 0 && out.height > 0) ? GVFG_OK : GVFG_ENODEV;
+        bool haveSignalSize = false;
+        {
+            std::lock_guard<std::mutex> lock(stateMutex);
+            haveSignalSize = fpgaWidthValid && fpgaHeightValid && fpgaWidthRaw != 0 && fpgaHeightRaw != 0;
+            out.width = haveSignalSize ? static_cast<int>(fpgaWidthRaw) : 0;
+            out.height = haveSignalSize ? static_cast<int>(fpgaHeightRaw) : 0;
+            out.fps = 0.0;
+            out.bit_depth = static_cast<int>(bitDepth ? bitDepth : 8);
+            copy_cstr(out.pixel_format, sizeof(out.pixel_format), gdriver_pixel_format_name(pixelFormat));
+            out.fpga.valid_mask = fpgaValidMask;
+            out.fpga.width_valid = fpgaWidthValid ? 1 : 0;
+            out.fpga.height_valid = fpgaHeightValid ? 1 : 0;
+            out.fpga.width_raw = fpgaWidthRaw;
+            out.fpga.height_raw = fpgaHeightRaw;
+            out.fpga.video_format_raw = fpgaVideoFormatRaw;
+            out.fpga.video_format_valid = fpga_field_valid(fpgaValidMask, 0) ? 1 : 0;
+            out.fpga.video_format_code = static_cast<int>(fpgaVideoFormatRaw & 0x3u);
+            copy_cstr(out.fpga.video_format, sizeof(out.fpga.video_format), fpga_video_format_name(fpgaVideoFormatRaw));
+            out.fpga.frame_rate_raw = fpgaFrameRateRaw;
+            out.fpga.frame_rate_valid = fpga_field_valid(fpgaValidMask, 1) ? 1 : 0;
+            out.fpga.frame_rate_code = static_cast<int>(fpgaFrameRateRaw & 0x0fu);
+            copy_binary4(out.fpga.frame_rate_bits, sizeof(out.fpga.frame_rate_bits), fpgaFrameRateRaw);
+            copy_cstr(out.fpga.frame_rate_name, sizeof(out.fpga.frame_rate_name), fpga_frame_rate_name(fpgaFrameRateRaw));
+            out.fpga.bit_depth_raw = fpgaBitDepthRaw;
+            out.fpga.bit_depth_valid = fpga_field_valid(fpgaValidMask, 2) ? 1 : 0;
+            out.fpga.bit_depth = static_cast<int>(fpgaBitDepthRaw);
+            out.fpga.status_raw = fpgaStatusRaw;
+            out.fpga.status_valid = fpga_field_valid(fpgaValidMask, 3) ? 1 : 0;
+            out.fpga.sdi_locked = (fpgaStatusRaw & (1u << 0)) ? 1 : 0;
+            out.fpga.sdi_ddr_ok = (fpgaStatusRaw & (1u << 1)) ? 1 : 0;
+            out.fpga.hdmi_locked = (fpgaStatusRaw & (1u << 2)) ? 1 : 0;
+            out.fpga.hdmi_ddr_ok = (fpgaStatusRaw & (1u << 3)) ? 1 : 0;
+        }
+        return haveSignalSize ? GVFG_OK : GVFG_ENODEV;
     }
 
     gvfg_status_t getRuntimeInfo(gvfg_runtime_info_t &out)
     {
         std::memset(&out, 0, sizeof(out));
         getSignalStatus(out.input_signal);
-        out.delivered_frame.width = static_cast<int>(width);
-        out.delivered_frame.height = static_cast<int>(height);
-        out.delivered_frame.bit_depth = static_cast<int>(bitDepth ? bitDepth : 8);
-        copy_cstr(out.delivered_frame.pixel_format, sizeof(out.delivered_frame.pixel_format), gdriver_pixel_format_name(pixelFormat));
-        out.delivered_frame.valid = deliveredFrames > 0 ? 1 : 0;
-        out.capture_fps = runtimeFps;
-        out.delivered_frames = deliveredFrames;
+        const uint64_t frames = deliveredFrames.load(std::memory_order_relaxed);
+        const bool deliveredValid = running.load(std::memory_order_relaxed) && frames > 0;
+        out.delivered_frame.valid = deliveredValid ? 1 : 0;
+        if (deliveredValid)
+        {
+            out.delivered_frame.width = static_cast<int>(deliveredWidth.load(std::memory_order_relaxed));
+            out.delivered_frame.height = static_cast<int>(deliveredHeight.load(std::memory_order_relaxed));
+            out.delivered_frame.bit_depth = 8;
+            copy_cstr(out.delivered_frame.pixel_format, sizeof(out.delivered_frame.pixel_format), "BGRA8");
+        }
+        out.capture_fps = runtimeFps.load(std::memory_order_relaxed);
+        out.delivered_frames = frames;
         return GVFG_OK;
     }
 
@@ -464,6 +477,7 @@ struct gvfg_handle_t
         if (backend->get_signal_status(sig) != XDMA_OK)
             return;
 
+        std::lock_guard<std::mutex> lock(stateMutex);
         if (sig.width > 0)
             width = sig.width;
         if (sig.height > 0)
@@ -689,7 +703,6 @@ struct gvfg_handle_t
             }
 
             updateRuntimeFps(frame.timestamp_ns ? frame.timestamp_ns : now_ns());
-            ++deliveredFrames;
             const bool rendered = renderGpuFrame(frame);
             if (rendered)
                 emitReadbackFrame(frame);
@@ -711,7 +724,12 @@ struct gvfg_handle_t
 
         if (!pipeline->ensure_rt_and_pipeline(w, h) || !pipeline->ensure_preview_swapchain(w, h))
             return false;
-        pipeline->set_source_bit_depth(static_cast<int>(frame.bit_depth ? frame.bit_depth : bitDepth));
+        uint32_t fallbackBitDepth = 8;
+        {
+            std::lock_guard<std::mutex> lock(stateMutex);
+            fallbackBitDepth = bitDepth ? bitDepth : 8;
+        }
+        pipeline->set_source_bit_depth(static_cast<int>(frame.bit_depth ? frame.bit_depth : fallbackBitDepth));
 
         const auto *base = static_cast<const uint8_t *>(frame.data);
         gcap_pixfmt_t renderFmt = GCAP_FMT_YUY2;
@@ -799,6 +817,7 @@ struct gvfg_handle_t
             out.pts_ns = readback.pts_ns;
             out.frame_id = readback.frame_id;
             onFrame(&out, callbackUser);
+            noteDeliveredFrame(out.width, out.height);
             ctx->Unmap(pipeline->rt_stage_.Get(), 0);
         }
     }
@@ -868,6 +887,7 @@ struct gvfg_handle_t
         out.pts_ns = frame.timestamp_ns ? frame.timestamp_ns : now_ns();
         out.frame_id = frame.frame_id;
         onFrame(&out, callbackUser);
+        noteDeliveredFrame(out.width, out.height);
     }
 
     bool shouldEmitFrameCallback(uint64_t frameId) const
@@ -886,13 +906,33 @@ struct gvfg_handle_t
 
     void updateRuntimeFps(uint64_t ptsNs)
     {
-        if (lastPtsNs != 0 && ptsNs > lastPtsNs)
+        const uint64_t prevPtsNs = lastPtsNs.exchange(ptsNs, std::memory_order_relaxed);
+        if (prevPtsNs != 0 && ptsNs > prevPtsNs)
         {
-            const double fps = 1e9 / static_cast<double>(ptsNs - lastPtsNs);
+            const double fps = 1e9 / static_cast<double>(ptsNs - prevPtsNs);
             if (fps > 0.0 && fps < 1000.0)
-                runtimeFps = (runtimeFps <= 0.0) ? fps : runtimeFps * 0.9 + fps * 0.1;
+            {
+                const double current = runtimeFps.load(std::memory_order_relaxed);
+                runtimeFps.store((current <= 0.0) ? fps : current * 0.9 + fps * 0.1,
+                                 std::memory_order_relaxed);
+            }
         }
-        lastPtsNs = ptsNs;
+    }
+
+    void resetRuntimeCounters()
+    {
+        lastPtsNs.store(0, std::memory_order_relaxed);
+        deliveredFrames.store(0, std::memory_order_relaxed);
+        deliveredWidth.store(0, std::memory_order_relaxed);
+        deliveredHeight.store(0, std::memory_order_relaxed);
+        runtimeFps.store(0.0, std::memory_order_relaxed);
+    }
+
+    void noteDeliveredFrame(int frameWidth, int frameHeight)
+    {
+        deliveredWidth.store(frameWidth > 0 ? static_cast<uint32_t>(frameWidth) : 0, std::memory_order_relaxed);
+        deliveredHeight.store(frameHeight > 0 ? static_cast<uint32_t>(frameHeight) : 0, std::memory_order_relaxed);
+        deliveredFrames.fetch_add(1, std::memory_order_relaxed);
     }
 
     std::unique_ptr<gvfg::internal::XdmaCaptureSession> backend;
@@ -905,6 +945,7 @@ struct gvfg_handle_t
     uint32_t height = 0;
     uint32_t bitDepth = 8;
     gdriver_pixel_format_t pixelFormat = GDRIVER_PIXFMT_YUY2;
+    mutable std::mutex stateMutex;
     uint32_t fpgaValidMask = 0;
     bool fpgaWidthValid = false;
     bool fpgaHeightValid = false;
@@ -914,9 +955,11 @@ struct gvfg_handle_t
     uint32_t fpgaFrameRateRaw = 0;
     uint32_t fpgaBitDepthRaw = 0;
     uint32_t fpgaStatusRaw = 0;
-    uint64_t lastPtsNs = 0;
-    uint64_t deliveredFrames = 0;
-    double runtimeFps = 0.0;
+    std::atomic<uint64_t> lastPtsNs{0};
+    std::atomic<uint64_t> deliveredFrames{0};
+    std::atomic<uint32_t> deliveredWidth{0};
+    std::atomic<uint32_t> deliveredHeight{0};
+    std::atomic<double> runtimeFps{0.0};
 
     gvfg_on_frame_cb onFrame = nullptr;
     gvfg_on_error_cb onError = nullptr;

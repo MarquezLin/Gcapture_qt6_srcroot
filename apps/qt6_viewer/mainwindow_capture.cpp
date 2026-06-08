@@ -347,17 +347,19 @@ void MainWindow::onStart()
             currentProfile_.width = sig.width;
         if (sig.height > 0)
             currentProfile_.height = sig.height;
-        if (sig.fps > 0.0)
-        {
-            currentProfile_.fps_num = static_cast<int>(sig.fps * 1000.0 + 0.5);
-            currentProfile_.fps_den = 1000;
-        }
 
-        MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 %2x%3 %4fps")
+        const auto &fpga = sig.fpga;
+        const QString fpgaFps = fpga.frame_rate_valid
+                                    ? QStringLiteral("%1 (%2)")
+                                          .arg(QString::fromLatin1(fpga.frame_rate_name))
+                                          .arg(QString::fromLatin1(fpga.frame_rate_bits))
+                                    : QStringLiteral("--");
+
+        MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 %2x%3 fpga_fps=%4")
                                 .arg(deviceIndex_)
                                 .arg(currentProfile_.width)
                                 .arg(currentProfile_.height)
-                                .arg(sig.fps > 0.0 ? QString::number(sig.fps, 'f', 2) : QStringLiteral("--")));
+                                .arg(fpgaFps));
         updateRuntimeStatusUi();
         refreshCaptureInfoFromSdkAndRuntime(false);
         refreshDisplayInfoFromCurrentState();

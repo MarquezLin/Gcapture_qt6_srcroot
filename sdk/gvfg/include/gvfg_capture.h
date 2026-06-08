@@ -128,8 +128,8 @@ typedef struct
     int width;                       /* Signal width in pixels, from FPGA when available. */
     int height;                      /* Signal height in pixels, from FPGA when available. */
     double fps;                      /* Legacy field; GVFG leaves this 0. Use fpga.frame_rate_* instead. */
-    int bit_depth;                   /* Delivered buffer bit depth. Kept for compatibility; prefer gvfg_runtime_info_t::delivered_frame. */
-    char pixel_format[32];           /* Delivered buffer format. Kept for compatibility; prefer gvfg_runtime_info_t::delivered_frame. */
+    int bit_depth;                   /* Legacy SDK source-buffer bit depth. Prefer fpga.* and runtime delivered_frame. */
+    char pixel_format[32];           /* Legacy SDK source-buffer format. Prefer fpga.* and runtime delivered_frame. */
     gvfg_fpga_signal_status_t fpga;  /* Raw/decoded FPGA signal metadata. */
 } gvfg_signal_status_t;
 
@@ -137,17 +137,17 @@ typedef struct
 {
     int width;              /* Width of frames delivered to the customer callback. */
     int height;             /* Height of frames delivered to the customer callback. */
-    int bit_depth;          /* Bit depth of the delivered frame buffer. */
-    char pixel_format[32];  /* Delivered frame format, for example YUY2 or Y210. */
-    int valid;              /* Non-zero after at least one frame has been delivered. */
+    int bit_depth;          /* Bit depth of the delivered callback buffer. */
+    char pixel_format[32];  /* Delivered callback buffer format, for example BGRA8. */
+    int valid;              /* Non-zero while capture is running after at least one callback frame. */
 } gvfg_delivered_frame_info_t;
 
 typedef struct
 {
     gvfg_signal_status_t input_signal; /* FPGA-reported signal metadata plus legacy buffer fields. */
     gvfg_delivered_frame_info_t delivered_frame; /* Frame buffer delivered by gvfg.dll to the app. */
-    double capture_fps;                /* Runtime FPS measured by the SDK/app worker. */
-    uint64_t delivered_frames;         /* Number of frames delivered by the SDK/app worker. */
+    double capture_fps;                /* Runtime FPS measured from backend frames seen by the SDK worker. */
+    uint64_t delivered_frames;         /* Number of frames delivered to the app callback. */
 } gvfg_runtime_info_t;
 
 typedef struct

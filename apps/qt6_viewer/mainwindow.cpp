@@ -592,14 +592,18 @@ void MainWindow::updateRuntimeStatusUi()
             const QString fpgaFps = fpga.frame_rate_valid
                                         ? QStringLiteral("%1fps").arg(QString::fromLatin1(fpga.frame_rate_name))
                                         : QStringLiteral("--fps");
-            const QString sb = QStringLiteral("Backend: %1 | FPGA reported %2 %3 | Delivered frame %4x%5 %6 %7bit | %8 | App runtime %9fps frames=%10")
+            const QString deliveredText = delivered.valid
+                                              ? QStringLiteral("%1x%2 %3 %4bit")
+                                                    .arg(delivered.width)
+                                                    .arg(delivered.height)
+                                                    .arg(QString::fromUtf8(delivered.pixel_format))
+                                                    .arg(delivered.bit_depth)
+                                              : QStringLiteral("--");
+            const QString sb = QStringLiteral("Backend: %1 | FPGA reported %2 %3 | Delivered frame %4 | %5 | App runtime %6fps frames=%7")
                                    .arg(QStringLiteral("GVFG"))
                                    .arg(fpgaResolution)
                                    .arg(fpgaFps)
-                                   .arg(delivered.width)
-                                   .arg(delivered.height)
-                                   .arg(QString::fromUtf8(delivered.pixel_format))
-                                   .arg(delivered.bit_depth)
+                                   .arg(deliveredText)
                                    .arg(renderPath)
                                    .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
                                    .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
