@@ -44,14 +44,6 @@ link：
 gvfg.lib
 ```
 
-最小 Qt UI 範例：
-
-```text
-samples/gvfg_qt_preview
-```
-
-這個 sample 只示範 GVFG API，不依賴原本 `apps/qt6_viewer`。
-
 CMake build option：
 
 ```text

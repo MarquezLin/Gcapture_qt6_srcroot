@@ -14,7 +14,6 @@ GVFG 是客戶看到的 SDK/API 名稱。XDMA 只保留為底層 driver/backend 
 
 ```text
 BUILD_GVFG_SDK=ON
-BUILD_GVFG_SAMPLES=ON
 GVFG_XDMA_DEBUG_LOG=ON
 ```
 
@@ -27,7 +26,6 @@ GVFG_XDMA_DEBUG_LOG=ON
 - `sdk/gvfg`: customer-facing GVFG capture SDK。
 - `sdk/gvfg/src/backend/xdma`: internal low-level XDMA driver access。
 - `apps/qt6_viewer`: viewer demo，`GVFG Direct` 透過 GVFG SDK 啟動。
-- `samples/gvfg_qt_preview`: 最小客戶 sample。
 
 ## Customer API
 

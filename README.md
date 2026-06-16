@@ -6,7 +6,6 @@
 - `sdk/gdisplay`: display / EDID 相關 SDK。
 - `sdk/gvfg`: 對外的 GVFG capture SDK facade，內含低階 XDMA driver access backend，給 VFG100 / GVFG 客戶使用。
 - `apps/qt6_viewer`: Qt viewer demo，可以透過 `GVFG Direct` 使用 GVFG backend。
-- `samples/gvfg_qt_preview`: 最小客戶範例，示範如何直接使用 GVFG API。
 
 ## Build
 
@@ -15,7 +14,7 @@
 1. 開啟 repo root 的 `CMakeLists.txt`。
 2. 選擇 `Desktop Qt 6.x MSVC2022 64bit` kit。
 3. Configure。
-4. Build `qt6_viewer`、`gvfg_qt_preview` 或 `all`。
+4. Build `qt6_viewer` 或 `all`。
 
 輸出位置：
 
@@ -48,7 +47,6 @@ XDMA driver access 是 `gvfg.dll` 內部實作細節，客戶不需要也不應�
 
 ```text
 BUILD_GVFG_SDK=ON
-BUILD_GVFG_SAMPLES=ON
 ```
 
 如果要看底層 XDMA flow debug log：
@@ -56,22 +54,6 @@ BUILD_GVFG_SAMPLES=ON
 ```text
 GVFG_XDMA_DEBUG_LOG=ON
 ```
-
-## Customer Sample
-
-最小 Qt UI 範例：
-
-```text
-samples/gvfg_qt_preview
-```
-
-Build target：
-
-```text
-gvfg_qt_preview
-```
-
-這個 sample 使用獨立 preview 視窗，把 native HWND 傳給 `gvfg_set_preview()`，讓 SDK 直接畫 preview。
 
 ## Notes
 

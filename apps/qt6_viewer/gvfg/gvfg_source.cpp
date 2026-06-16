@@ -2,6 +2,64 @@
 
 #include <algorithm>
 
+#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
+namespace
+{
+QString gvfgEventName(gvfg_event_type_t type)
+{
+    switch (type)
+    {
+    case GVFG_EVENT_PLUG_IN:
+        return QStringLiteral("PLUG_IN");
+    case GVFG_EVENT_PLUG_OUT:
+        return QStringLiteral("PLUG_OUT");
+    case GVFG_EVENT_CAPTURE_PAUSED:
+        return QStringLiteral("CAPTURE_PAUSED");
+    case GVFG_EVENT_CAPTURE_RESUMED:
+        return QStringLiteral("CAPTURE_RESUMED");
+    default:
+        return QStringLiteral("UNKNOWN");
+    }
+}
+
+QImage frameToImage(const gvfg_frame_t &frame)
+{
+    if (!frame.data || frame.width <= 0 || frame.height <= 0)
+        return QImage();
+
+    switch (frame.pixel_format)
+    {
+    case GVFG_PIXFMT_BGRA8:
+    {
+        const int stride = frame.width * 4;
+        if (frame.data_size < static_cast<uint64_t>(stride) * static_cast<uint64_t>(frame.height))
+            return QImage();
+        const QImage image(static_cast<const uchar *>(frame.data), frame.width, frame.height, stride, QImage::Format_ARGB32);
+        return image.copy();
+    }
+    case GVFG_PIXFMT_BGRX32:
+    {
+        const int stride = frame.width * 4;
+        if (frame.data_size < static_cast<uint64_t>(stride) * static_cast<uint64_t>(frame.height))
+            return QImage();
+        const QImage image(static_cast<const uchar *>(frame.data), frame.width, frame.height, stride, QImage::Format_RGB32);
+        return image.copy();
+    }
+    case GVFG_PIXFMT_RGB24:
+    {
+        const int stride = frame.width * 3;
+        if (frame.data_size < static_cast<uint64_t>(stride) * static_cast<uint64_t>(frame.height))
+            return QImage();
+        const QImage image(static_cast<const uchar *>(frame.data), frame.width, frame.height, stride, QImage::Format_RGB888);
+        return image.copy();
+    }
+    default:
+        return QImage();
+    }
+}
+}
+#endif
+
 GvfgSource::GvfgSource(QObject *parent)
     : QObject(parent)
 {
@@ -37,6 +95,13 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         return false;
     }
 
+#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
+    if (!setPreview(previewHwnd, previewBitDepthMode))
+    {
+        stop();
+        return false;
+    }
+#else
     gvfg_set_callbacks(handle_, &GvfgSource::onFrame, &GvfgSource::onError, this);
 
     if (!setPreview(previewHwnd, previewBitDepthMode))
@@ -44,6 +109,7 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         stop();
         return false;
     }
+#endif
 
     st = gvfg_open(handle_, std::max(0, deviceIndex));
     if (st != GVFG_OK)
@@ -66,6 +132,10 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
     }
 
     running_ = true;
+#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
+    stopRequested_.store(false, std::memory_order_release);
+    readThread_ = std::thread([this]() { readLoop(); });
+#endif
     return true;
 }
 
@@ -74,6 +144,38 @@ bool GvfgSource::setPreview(void *previewHwnd, int previewBitDepthMode)
     if (!handle_)
         return false;
 
+#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
+    Q_UNUSED(previewBitDepthMode);
+
+    if (!previewHwnd)
+    {
+        if (previewHandle_)
+        {
+            gvfg_preview_destroy(previewHandle_);
+            previewHandle_ = nullptr;
+        }
+        return true;
+    }
+
+    if (!previewHandle_)
+    {
+        const gvfg_preview_status_t st = gvfg_preview_create(&previewHandle_);
+        if (st != GVFG_PREVIEW_OK || !previewHandle_)
+        {
+            emit errorOccurred(QStringLiteral("gvfg_preview_create failed: %1").arg(QString::fromUtf8(gvfg_preview_strerror(st))));
+            previewHandle_ = nullptr;
+            return false;
+        }
+    }
+
+    const gvfg_preview_status_t st = gvfg_preview_attach_window(previewHandle_, previewHwnd);
+    if (st != GVFG_PREVIEW_OK)
+    {
+        emit errorOccurred(QStringLiteral("gvfg_preview_attach_window failed: %1").arg(QString::fromUtf8(gvfg_preview_strerror(st))));
+        return false;
+    }
+    return true;
+#else
     gvfg_preview_desc_t preview{};
     preview.hwnd = previewHwnd;
     preview.enable_preview = previewHwnd ? 1 : 0;
@@ -85,11 +187,22 @@ bool GvfgSource::setPreview(void *previewHwnd, int previewBitDepthMode)
         return false;
     }
     return true;
+#endif
 }
 
 void GvfgSource::stop()
 {
     running_ = false;
+#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
+    stopRequested_.store(true, std::memory_order_release);
+    if (readThread_.joinable())
+        readThread_.join();
+    if (previewHandle_)
+    {
+        gvfg_preview_destroy(previewHandle_);
+        previewHandle_ = nullptr;
+    }
+#endif
     if (handle_)
     {
         gvfg_stop(handle_);
@@ -117,11 +230,54 @@ gvfg_runtime_info_t GvfgSource::runtimeInfo() const
 gvfg_preview_info_t GvfgSource::previewInfo() const
 {
     gvfg_preview_info_t info{};
+#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
+    if (previewHandle_)
+        gvfg_preview_get_info(previewHandle_, &info);
+#else
     if (handle_)
         gvfg_get_preview_info(handle_, &info);
+#endif
     return info;
 }
 
+#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
+void GvfgSource::readLoop()
+{
+    while (!stopRequested_.load(std::memory_order_acquire))
+    {
+        gvfg_event_t event{};
+        while (handle_ && gvfg_poll_event(handle_, &event, 0) == GVFG_OK)
+        {
+            emit errorOccurred(QStringLiteral("GVFG event %1 ts=%2")
+                                   .arg(gvfgEventName(event.type))
+                                   .arg(static_cast<qulonglong>(event.timestamp_ns)));
+        }
+
+        gvfg_frame_t frame{};
+        const gvfg_status_t st = handle_ ? gvfg_read_frame(handle_, &frame, 200) : GVFG_ESTATE;
+        if (st == GVFG_OK)
+        {
+            if (previewHandle_)
+                gvfg_preview_render_frame(previewHandle_, &frame);
+
+            const QImage image = frameToImage(frame);
+            gvfg_release_frame(handle_, &frame);
+
+            if (!image.isNull())
+                emit frameReady(image);
+            continue;
+        }
+
+        if (st == GVFG_ETIMEOUT)
+            continue;
+        if (stopRequested_.load(std::memory_order_acquire) || st == GVFG_ESTATE)
+            break;
+
+        emit errorOccurred(QStringLiteral("gvfg_read_frame failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
+        break;
+    }
+}
+#else
 void GvfgSource::onFrame(const gvfg_frame_t *frame, void *user)
 {
     auto *self = static_cast<GvfgSource *>(user);
@@ -146,3 +302,4 @@ void GvfgSource::onError(gvfg_status_t status, const char *message, void *user)
                                  .arg(static_cast<int>(status))
                                  .arg(detail.isEmpty() ? QString::fromUtf8(gvfg_strerror(status)) : detail));
 }
+#endif

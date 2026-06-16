@@ -36,10 +36,10 @@ QString buildRecordEncoderLabel(gcap_handle h, int backend, gcap_pixfmt_t fallba
     if (backend == GCAP_BACKEND_DSHOW)
     {
         if (fmt == GCAP_FMT_P010)
-            return QStringLiteral("FFmpeg HEVC / H.265 Main10 (input P010 10-bit, output yuv420p10le, video-only)");
+            return QStringLiteral("FFmpeg HEVC / H.265 via Media Foundation (input P010 10-bit, video-only)");
         if (fmt == GCAP_FMT_Y210)
-            return QStringLiteral("FFmpeg HEVC / H.265 Main10 (input Y210 10-bit 4:2:2, output yuv420p10le 10-bit 4:2:0, video-only)");
-        return QStringLiteral("FFmpeg H.264 / AVC (input %1, output yuv420p 8-bit, video-only)").arg(inFmt);
+            return QStringLiteral("FFmpeg HEVC / H.265 via Media Foundation (input Y210 10-bit 4:2:2, video-only)");
+        return QStringLiteral("FFmpeg H.264 / AVC via Media Foundation (input %1, video-only)").arg(inFmt);
     }
     if (gcap_recording_uses_hevc_main10(fmt))
         return QStringLiteral("Media Foundation HEVC / H.265 Encoder (Sink Writer, input %1 / 10-bit)").arg(inFmt);
@@ -348,6 +348,21 @@ void MainWindow::onStart()
         if (sig.height > 0)
             currentProfile_.height = sig.height;
 
+#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
+        if (sig.bit_depth >= 10)
+            currentProfile_.format = GCAP_FMT_Y210;
+
+        const QString signalFps = sig.frame_rate_name[0]
+                                      ? QString::fromLatin1(sig.frame_rate_name)
+                                      : QStringLiteral("--");
+        MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 %2x%3 fps=%4 format=%5 bitdepth=%6")
+                                .arg(deviceIndex_)
+                                .arg(currentProfile_.width)
+                                .arg(currentProfile_.height)
+                                .arg(signalFps)
+                                .arg(QString::fromLatin1(sig.video_format))
+                                .arg(sig.bit_depth));
+#else
         const auto &fpga = sig.fpga;
         const QString fpgaFps = fpga.frame_rate_valid
                                     ? QStringLiteral("%1 (%2)")
@@ -360,6 +375,7 @@ void MainWindow::onStart()
                                 .arg(currentProfile_.width)
                                 .arg(currentProfile_.height)
                                 .arg(fpgaFps));
+#endif
         updateRuntimeStatusUi();
         refreshCaptureInfoFromSdkAndRuntime(false);
         refreshDisplayInfoFromCurrentState();

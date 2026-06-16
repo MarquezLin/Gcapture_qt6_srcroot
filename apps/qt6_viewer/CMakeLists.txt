@@ -71,9 +71,10 @@ target_include_directories(qt6_viewer PRIVATE
 )
 
 if (WIN32 AND BUILD_GVFG_SDK)
-  target_include_directories(qt6_viewer PRIVATE
-    ${CMAKE_SOURCE_DIR}/sdk/gvfg/include
-  )
+  target_link_libraries(qt6_viewer PRIVATE gvfg)
+  if (TARGET gvfg_preview)
+    target_link_libraries(qt6_viewer PRIVATE gvfg_preview)
+  endif()
 endif()
 
 target_compile_definitions(qt6_viewer PRIVATE
@@ -88,10 +89,6 @@ target_link_libraries(qt6_viewer PRIVATE
   gdisplay
   dxgi d3d11 d3dcompiler
 )
-
-if (WIN32 AND BUILD_GVFG_SDK)
-  target_link_libraries(qt6_viewer PRIVATE gvfg)
-endif()
 
 # ---- NVAPI: shared root variable from top-level ----
 if (EXISTS "${NVAPI_ROOT}/include" AND EXISTS "${NVAPI_ROOT}/lib/x64/nvapi64.lib")
@@ -125,6 +122,13 @@ if (WIN32 AND BUILD_GVFG_SDK)
       $<TARGET_FILE:gvfg>
       $<TARGET_FILE_DIR:qt6_viewer>
   )
+  if (TARGET gvfg_preview)
+    add_custom_command(TARGET qt6_viewer POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:gvfg_preview>
+        $<TARGET_FILE_DIR:qt6_viewer>
+    )
+  endif()
 endif()
 
 # Copy FFmpeg runtime DLLs next to qt6_viewer.exe (Windows)
