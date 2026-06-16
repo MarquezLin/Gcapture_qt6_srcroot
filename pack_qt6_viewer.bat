@@ -70,6 +70,16 @@ set "SRC_ROOT=%BUILD_ROOT%\..\.."
 set "FFMPEG_BIN=%SRC_ROOT%\third_party\ffmpeg\bin"
 
 if exist "%FFMPEG_BIN%" (
+    if exist "%FFMPEG_BIN%\ffmpeg.exe" (
+        echo Check FFmpeg release license flags
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "$v = & '%FFMPEG_BIN%\ffmpeg.exe' -version 2>$null; $cfg = ($v | Select-String '^configuration:').Line; if ($cfg -match '--enable-gpl|--enable-nonfree') { Write-Host 'ERROR: FFmpeg build uses GPL/nonfree options. Replace third_party\ffmpeg with an LGPL shared build before release packaging.'; exit 2 }"
+        if errorlevel 1 (
+            pause
+            exit /b 1
+        )
+    ) else (
+        echo WARNING: ffmpeg.exe not found; cannot verify FFmpeg license flags.
+    )
     echo Copy FFmpeg DLLs
     copy /y "%FFMPEG_BIN%\*.dll" "%OUT_DIR%\" >nul
 ) else (

@@ -222,7 +222,7 @@ extern "C"
     typedef struct
     {
         char mode_name[64];       /** e.g. DShow + FFmpeg MP4 / Media Foundation Sink Writer. */
-        char encoder_name[160];   /** e.g. FFmpeg HEVC / H.265 Main10. */
+        char encoder_name[160];   /** e.g. FFmpeg HEVC / H.265 via Media Foundation. */
         char input_format[32];    /** SDK pixel format name. */
         char output_format[32];   /** Encoder/muxer output pixel/codec description. */
         int input_bit_depth;
@@ -748,7 +748,7 @@ extern "C"
     /** Return stable frame source display name. Never returns null. */
     GCAP_API const char *gcap_source_kind_name(int source_kind);
 
-    /** Return non-zero when the recording helper would choose HEVC/H.265 Main10 for the input format. */
+    /** Return non-zero when the recording helper would choose HEVC/H.265 for the input format. */
     GCAP_API int gcap_recording_uses_hevc_main10(gcap_pixfmt_t fmt);
 
     /** Return human-readable recording mode name for a backend. Never returns null. */

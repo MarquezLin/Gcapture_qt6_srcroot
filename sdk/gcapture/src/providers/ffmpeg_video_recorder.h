@@ -16,8 +16,12 @@ struct FfmpegVideoRecordConfig
     gcap_pixfmt_t input_format = GCAP_FMT_NV12;
 
     // Auto-selected by input_format:
-    //   NV12/YUY2/ARGB -> H.264 8-bit yuv420p
-    //   P010/Y210     -> HEVC Main10 yuv420p10le
+    //   NV12/YUY2/ARGB -> H.264 8-bit
+    //   P010/Y210     -> HEVC when available
+    //
+    // Release builds are expected to use an LGPL shared FFmpeg build. The
+    // recorder therefore prefers Media Foundation encoders instead of GPL-only
+    // libx264/libx265.
     bool force_hevc_main10 = false;
 };
 

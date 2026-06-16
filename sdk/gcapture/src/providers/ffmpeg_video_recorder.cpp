@@ -1,6 +1,8 @@
 #include "ffmpeg_video_recorder.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 #ifdef GCAP_ENABLE_FFMPEG
@@ -67,6 +69,90 @@ static bool supportedInput(gcap_pixfmt_t fmt)
 static bool wantsHevcMain10(gcap_pixfmt_t fmt, bool force)
 {
     return force || fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
+}
+
+static bool envFlagEnabled(const char *name)
+{
+    const char *value = std::getenv(name);
+    return value && value[0] && std::strcmp(value, "0") != 0;
+}
+
+static const AVCodec *findEncoderByNameList(const char *const *names)
+{
+    for (const char *const *name = names; *name; ++name)
+    {
+        if (const AVCodec *codec = avcodec_find_encoder_by_name(*name))
+            return codec;
+    }
+    return nullptr;
+}
+
+static const AVCodec *findReleaseEncoder(bool useHevc)
+{
+    static const char *const h264Encoders[] = {
+        "h264_mf",
+        nullptr,
+    };
+    static const char *const hevcEncoders[] = {
+        "hevc_mf",
+        nullptr,
+    };
+    return findEncoderByNameList(useHevc ? hevcEncoders : h264Encoders);
+}
+
+static const AVCodec *findGplEncoder(bool useHevc)
+{
+    static const char *const h264Encoders[] = {
+        "libx264",
+        nullptr,
+    };
+    static const char *const hevcEncoders[] = {
+        "libx265",
+        nullptr,
+    };
+    if (const AVCodec *codec = findEncoderByNameList(useHevc ? hevcEncoders : h264Encoders))
+        return codec;
+    return avcodec_find_encoder(useHevc ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264);
+}
+
+static bool codecSupportsPixFmt(const AVCodec *codec, AVPixelFormat fmt)
+{
+    if (!codec || !codec->pix_fmts)
+        return true;
+    for (const AVPixelFormat *p = codec->pix_fmts; *p != AV_PIX_FMT_NONE; ++p)
+    {
+        if (*p == fmt)
+            return true;
+    }
+    return false;
+}
+
+static AVPixelFormat chooseOutputFormat(const AVCodec *codec, bool useHevc)
+{
+    static const AVPixelFormat hevcPrefs[] = {
+        AV_PIX_FMT_YUV420P10LE,
+        AV_PIX_FMT_P010LE,
+        AV_PIX_FMT_YUV420P,
+        AV_PIX_FMT_NV12,
+        AV_PIX_FMT_NONE,
+    };
+    static const AVPixelFormat h264Prefs[] = {
+        AV_PIX_FMT_YUV420P,
+        AV_PIX_FMT_NV12,
+        AV_PIX_FMT_NONE,
+    };
+    const AVPixelFormat *prefs = useHevc ? hevcPrefs : h264Prefs;
+    for (const AVPixelFormat *p = prefs; *p != AV_PIX_FMT_NONE; ++p)
+    {
+        if (codecSupportsPixFmt(codec, *p))
+            return *p;
+    }
+    return codec && codec->pix_fmts ? codec->pix_fmts[0] : (useHevc ? AV_PIX_FMT_YUV420P10LE : AV_PIX_FMT_YUV420P);
+}
+
+static bool codecNameEquals(const AVCodec *codec, const char *name)
+{
+    return codec && codec->name && std::strcmp(codec->name, name) == 0;
 }
 
 static bool validateFrameView(const FfmpegVideoFrameView &view, AVPixelFormat srcFmt, std::string *error)
@@ -159,7 +245,7 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     }
 
     cfg_ = cfg;
-    const bool useHevcMain10 = wantsHevcMain10(cfg.input_format, cfg.force_hevc_main10);
+    const bool useHevc = wantsHevcMain10(cfg.input_format, cfg.force_hevc_main10);
 
     int ret = avformat_alloc_output_context2(&impl_->fmt, nullptr, nullptr, cfg.path.c_str());
     if (ret < 0 || !impl_->fmt)
@@ -169,30 +255,18 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
         return false;
     }
 
-    const AVCodec *codec = nullptr;
-    if (useHevcMain10)
+    const bool allowGplEncoders = envFlagEnabled("GCAP_FFMPEG_ALLOW_GPL_ENCODERS");
+    const AVCodec *codec = findReleaseEncoder(useHevc);
+    if (!codec && allowGplEncoders)
+        codec = findGplEncoder(useHevc);
+    if (!codec)
     {
-        codec = avcodec_find_encoder_by_name("libx265");
-        if (!codec)
-            codec = avcodec_find_encoder(AV_CODEC_ID_HEVC);
-        if (!codec)
-        {
-            setErr(error, "HEVC encoder not found. Install an FFmpeg build with libx265 or HEVC encoder support.");
-            close();
-            return false;
-        }
-    }
-    else
-    {
-        codec = avcodec_find_encoder_by_name("libx264");
-        if (!codec)
-            codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-        if (!codec)
-        {
-            setErr(error, "H.264 encoder not found. Install an FFmpeg build with libx264 or H.264 encoder support.");
-            close();
-            return false;
-        }
+        setErr(error,
+               useHevc
+                   ? "HEVC encoder not found. Use an LGPL shared FFmpeg build with hevc_mf, or set GCAP_FFMPEG_ALLOW_GPL_ENCODERS=1 for internal GPL builds."
+                   : "H.264 encoder not found. Use an LGPL shared FFmpeg build with h264_mf, or set GCAP_FFMPEG_ALLOW_GPL_ENCODERS=1 for internal GPL builds.");
+        close();
+        return false;
     }
 
     impl_->stream = avformat_new_stream(impl_->fmt, nullptr);
@@ -215,7 +289,7 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     impl_->codec->codec_type = AVMEDIA_TYPE_VIDEO;
     impl_->codec->width = cfg.width;
     impl_->codec->height = cfg.height;
-    impl_->codec->pix_fmt = useHevcMain10 ? AV_PIX_FMT_YUV420P10LE : AV_PIX_FMT_YUV420P;
+    impl_->codec->pix_fmt = chooseOutputFormat(codec, useHevc);
     impl_->codec->time_base = AVRational{cfg.fps_den, cfg.fps_num};
     impl_->codec->framerate = AVRational{cfg.fps_num, cfg.fps_den};
     impl_->codec->bit_rate = static_cast<int64_t>(cfg.bitrate_kbps) * 1000;
@@ -225,15 +299,23 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     if (impl_->fmt->oformat->flags & AVFMT_GLOBALHEADER)
         impl_->codec->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-    av_opt_set(impl_->codec->priv_data, "preset", "veryfast", 0);
-    if (useHevcMain10)
+    if (codecNameEquals(codec, "h264_mf") || codecNameEquals(codec, "hevc_mf"))
     {
-        av_opt_set(impl_->codec->priv_data, "profile", "main10", 0);
-        av_opt_set(impl_->codec->priv_data, "x265-params", "repeat-headers=1", 0);
+        av_opt_set(impl_->codec->priv_data, "rate_control", "cbr", 0);
+        av_opt_set(impl_->codec->priv_data, "scenario", "camera_record", 0);
     }
     else
     {
-        av_opt_set(impl_->codec->priv_data, "tune", "zerolatency", 0);
+        av_opt_set(impl_->codec->priv_data, "preset", "veryfast", 0);
+        if (useHevc)
+        {
+            av_opt_set(impl_->codec->priv_data, "profile", "main10", 0);
+            av_opt_set(impl_->codec->priv_data, "x265-params", "repeat-headers=1", 0);
+        }
+        else
+        {
+            av_opt_set(impl_->codec->priv_data, "tune", "zerolatency", 0);
+        }
     }
 
     ret = avcodec_open2(impl_->codec, codec, nullptr);
@@ -245,7 +327,7 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     }
 
     ret = avcodec_parameters_from_context(impl_->stream->codecpar, impl_->codec);
-    if (ret >= 0 && useHevcMain10 && impl_->stream && impl_->stream->codecpar)
+    if (ret >= 0 && useHevc && impl_->stream && impl_->stream->codecpar)
     {
         // Prefer hvc1 sample entry for better compatibility with common MP4 players.
         impl_->stream->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');

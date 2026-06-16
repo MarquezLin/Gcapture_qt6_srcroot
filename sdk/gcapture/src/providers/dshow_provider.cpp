@@ -356,14 +356,14 @@ namespace
     }
 
 
-    static bool ffmpegUseHevcMain10(gcap_pixfmt_t fmt)
+    static bool ffmpegUseHevc(gcap_pixfmt_t fmt)
     {
         return fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
     }
 
     static const char *ffmpegRecordCodecName(gcap_pixfmt_t fmt)
     {
-        return ffmpegUseHevcMain10(fmt) ? "HEVC Main10" : "H264";
+        return ffmpegUseHevc(fmt) ? "HEVC" : "H264";
     }
 
     static int dshowQualityRank(const GUID &g)
@@ -903,8 +903,8 @@ bool DShowProvider::getRecordingStats(gcap_recording_stats_t &out)
     out.fps_num = static_cast<int>(recordingFpsNum_ ? recordingFpsNum_ : 30);
     out.fps_den = static_cast<int>(recordingFpsDen_ ? recordingFpsDen_ : 1);
     out.input_pixfmt = gcapFmtFromDShowSubtype(subtype_);
-    out.output_bit_depth = ffmpegUseHevcMain10(out.input_pixfmt) ? 10 : 8;
-    strcpy_s(out.encoder_name, ffmpegUseHevcMain10(out.input_pixfmt) ? "FFmpeg HEVC / H.265 Main10" : "FFmpeg H.264 / AVC");
+    out.output_bit_depth = 8;
+    strcpy_s(out.encoder_name, ffmpegUseHevc(out.input_pixfmt) ? "FFmpeg HEVC / H.265 via Media Foundation" : "FFmpeg H.264 / AVC via Media Foundation");
     strcpy_s(out.muxer_name, "MP4 / FFmpeg");
     return true;
 }
@@ -3223,10 +3223,10 @@ gcap_status_t DShowProvider::startRecording(const char *pathUtf8)
     cfg.height = height_;
     cfg.fps_num = 30;
     cfg.fps_den = 1;
-    const int defaultBitrate = ffmpegUseHevcMain10(recFmt) ? 12000 : 8000;
+    const int defaultBitrate = ffmpegUseHevc(recFmt) ? 12000 : 8000;
     cfg.bitrate_kbps = readEnvIntClamp("GCAP_FFMPEG_BITRATE_KBPS", defaultBitrate, 500, 80000);
     cfg.input_format = recFmt;
-    cfg.force_hevc_main10 = ffmpegUseHevcMain10(recFmt);
+    cfg.force_hevc_main10 = ffmpegUseHevc(recFmt);
 
     std::string err;
     if (!rec->open(cfg, &err))

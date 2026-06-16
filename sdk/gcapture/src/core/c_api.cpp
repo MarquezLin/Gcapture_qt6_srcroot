@@ -691,24 +691,24 @@ extern "C"
             if (fmt == GCAP_FMT_P010)
             {
                 copy_cstr(out->encoder_name, sizeof(out->encoder_name),
-                          "FFmpeg HEVC / H.265 Main10 (input P010 10-bit, output yuv420p10le, video-only)");
-                copy_cstr(out->output_format, sizeof(out->output_format), "yuv420p10le");
-                out->output_bit_depth = 10;
+                          "FFmpeg HEVC / H.265 via Media Foundation (input P010 10-bit, LGPL-friendly video-only path)");
+                copy_cstr(out->output_format, sizeof(out->output_format), "HEVC");
+                out->output_bit_depth = 8;
             }
             else if (fmt == GCAP_FMT_Y210)
             {
                 copy_cstr(out->encoder_name, sizeof(out->encoder_name),
-                          "FFmpeg HEVC / H.265 Main10 (input Y210 10-bit 4:2:2, output yuv420p10le 10-bit 4:2:0, video-only)");
-                copy_cstr(out->output_format, sizeof(out->output_format), "yuv420p10le");
-                out->output_bit_depth = 10;
+                          "FFmpeg HEVC / H.265 via Media Foundation (input Y210 10-bit 4:2:2, LGPL-friendly video-only path)");
+                copy_cstr(out->output_format, sizeof(out->output_format), "HEVC");
+                out->output_bit_depth = 8;
             }
             else
             {
                 char label[160] = {};
                 std::snprintf(label, sizeof(label),
-                              "FFmpeg H.264 / AVC (input %s, output yuv420p 8-bit, video-only)", fmtName);
+                              "FFmpeg H.264 / AVC via Media Foundation (input %s, LGPL-friendly video-only path)", fmtName);
                 copy_cstr(out->encoder_name, sizeof(out->encoder_name), label);
-                copy_cstr(out->output_format, sizeof(out->output_format), "yuv420p");
+                copy_cstr(out->output_format, sizeof(out->output_format), "H.264");
                 out->output_bit_depth = 8;
             }
             // Current DShow FFmpeg recorder writes fixed output cadence.
