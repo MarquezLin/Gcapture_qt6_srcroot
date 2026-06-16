@@ -118,7 +118,61 @@ bool MainWindow::showCaptureErrorAndClose(const QString &action, gcap_status_t s
 
 void MainWindow::stopRecordingSession(bool showSummary)
 {
-    if (!recording_ || !h_)
+    if (!recording_)
+        return;
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (usingGvfg_ && gvfg_)
+    {
+        const uint64_t framesWritten = gvfg_->recordingFrames();
+        gvfg_->stopRecording();
+        recording_ = false;
+        ui->btnRecord->setText(QStringLiteral("Record"));
+
+        if (showSummary && !recordPath_.isEmpty() && recordStartTime_.isValid())
+        {
+            QFileInfo fi(recordPath_);
+            const qint64 sizeBytes = fi.size();
+            const qint64 ms = recordStartTime_.msecsTo(QDateTime::currentDateTime());
+            const double seconds = ms / 1000.0;
+            const double bitrateKbps = seconds > 0.0 ? (sizeBytes * 8.0 / 1000.0) / seconds : 0.0;
+            const double captureFps = seconds > 0.0 ? double(framesWritten) / seconds : avgFps_;
+            const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
+            const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
+
+            const QString info = QStringLiteral(
+                                     "Record done\n"
+                                     "file:%1\n"
+                                     "size:%2 MB\n"
+                                     "Actual resolution:%3 x %4\n"
+                                     "Capture FPS:%5\n"
+                                     "record mode:%6\n"
+                                     "encoder:%7\n"
+                                     "frames written:%8\n"
+                                     "file avg bit rate:%9 kbps")
+                                     .arg(recordPath_)
+                                     .arg(QString::number(sizeBytes / (1024.0 * 1024.0), 'f', 2))
+                                     .arg(srcW)
+                                     .arg(srcH)
+                                     .arg(QString::number(captureFps, 'f', 2))
+                                     .arg(QStringLiteral("GVFG + FFmpeg MP4"))
+                                     .arg(recordEncoderName_.isEmpty() ? QStringLiteral("FFmpeg") : recordEncoderName_)
+                                     .arg(QString::number(static_cast<qulonglong>(framesWritten)))
+                                     .arg(QString::number(bitrateKbps, 'f', 1));
+            QMessageBox::information(this, QStringLiteral("Record"), info);
+
+            if (ui->statusbar)
+            {
+                ui->statusbar->showMessage(QStringLiteral("Record done: GVFG + FFmpeg MP4 | file:%1 | avg %2 kbps")
+                                               .arg(fi.fileName())
+                                               .arg(QString::number(bitrateKbps, 'f', 1)));
+            }
+        }
+        return;
+    }
+#endif
+
+    if (!h_)
         return;
 
     gcap_stop_recording(h_);
@@ -548,8 +602,51 @@ void MainWindow::onRecord()
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     if (usingGvfg_)
     {
-        QMessageBox::information(this, QStringLiteral("Record"),
-                                 QStringLiteral("GVFG is currently preview-only. Recording will be added in the standalone GVFG SDK path later."));
+        if (!gvfg_ || !gvfg_->isRunning())
+        {
+            QMessageBox::warning(this, QStringLiteral("Record"),
+                                 QStringLiteral("Please press Start to begin GVFG capture before recording."));
+            return;
+        }
+
+        if (recording_)
+        {
+            stopRecordingSession(true);
+            return;
+        }
+
+        const QDateTime now = QDateTime::currentDateTime();
+        const QString fullPath = buildRecordingPath(now);
+        const int fpsNum = currentProfile_.fps_num > 0 ? currentProfile_.fps_num : 30;
+        const int fpsDen = currentProfile_.fps_den > 0 ? currentProfile_.fps_den : 1;
+        const bool hevc = currentProfile_.format == GCAP_FMT_P010 || currentProfile_.format == GCAP_FMT_Y210;
+        const int bitrateKbps = hevc ? 12000 : 8000;
+
+        QString error;
+        if (!gvfg_->startRecording(fullPath, fpsNum, fpsDen, bitrateKbps, &error))
+        {
+            QMessageBox::warning(this, QStringLiteral("Record"),
+                                 QStringLiteral("Start GVFG recording failed: %1").arg(error));
+            return;
+        }
+
+        recording_ = true;
+        ui->btnRecord->setText(QStringLiteral("Stop Rec"));
+        recordStartTime_ = now;
+        recordPath_ = fullPath;
+        recordEncoderName_ = hevc
+                                 ? QStringLiteral("FFmpeg HEVC / H.265 via Media Foundation")
+                                 : QStringLiteral("FFmpeg H.264 / AVC via Media Foundation");
+
+        if (ui->statusbar)
+        {
+            const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
+            const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
+            ui->statusbar->showMessage(QStringLiteral("Record mode: GVFG + FFmpeg MP4 | Encoder: %1 | %2 x %3")
+                                           .arg(recordEncoderName_)
+                                           .arg(srcW)
+                                           .arg(srcH));
+        }
         return;
     }
 #endif

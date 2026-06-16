@@ -44,6 +44,12 @@ if (WIN32 AND BUILD_GVFG_SDK)
     gvfg/gvfg_source.h
     gvfg/gvfg_source.cpp
   )
+  set(QT6_VIEWER_GVFG_RECORDING_SOURCE "${CMAKE_SOURCE_DIR}/sdk/gcapture/src/providers/ffmpeg_video_recorder.cpp")
+  if (EXISTS "${QT6_VIEWER_GVFG_RECORDING_SOURCE}")
+    list(APPEND VIEWER_SOURCES
+      ${QT6_VIEWER_GVFG_RECORDING_SOURCE}
+    )
+  endif()
 endif()
 
 if (QT_VERSION_MAJOR GREATER_EQUAL 6)
@@ -75,6 +81,13 @@ if (WIN32 AND BUILD_GVFG_SDK)
   if (TARGET gvfg_preview)
     target_link_libraries(qt6_viewer PRIVATE gvfg_preview)
   endif()
+  if (TARGET gvfg_convert)
+    target_link_libraries(qt6_viewer PRIVATE gvfg_convert)
+    target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_GVFG_CONVERT)
+  endif()
+  target_include_directories(qt6_viewer PRIVATE
+    ${CMAKE_SOURCE_DIR}/sdk/gcapture/src/providers
+  )
 endif()
 
 target_compile_definitions(qt6_viewer PRIVATE
@@ -95,6 +108,28 @@ if (EXISTS "${NVAPI_ROOT}/include" AND EXISTS "${NVAPI_ROOT}/lib/x64/nvapi64.lib
   target_include_directories(qt6_viewer PRIVATE "${NVAPI_ROOT}/include")
   target_link_libraries(qt6_viewer PRIVATE "${NVAPI_ROOT}/lib/x64/nvapi64.lib")
   target_compile_definitions(qt6_viewer PRIVATE GCAP_ENABLE_NVAPI)
+endif()
+
+# Optional FFmpeg recorder support for GVFG's pull-based frame path.
+if (WIN32 AND BUILD_GVFG_SDK AND FFMPEG_ROOT)
+  find_path(QT6_VIEWER_FFMPEG_INCLUDE_DIR libavformat/avformat.h PATHS "${FFMPEG_ROOT}/include" NO_DEFAULT_PATH)
+  find_library(QT6_VIEWER_FFMPEG_AVFORMAT_LIB avformat PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
+  find_library(QT6_VIEWER_FFMPEG_AVCODEC_LIB avcodec PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
+  find_library(QT6_VIEWER_FFMPEG_AVUTIL_LIB avutil PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
+  find_library(QT6_VIEWER_FFMPEG_SWSCALE_LIB swscale PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
+  if (QT6_VIEWER_FFMPEG_INCLUDE_DIR AND QT6_VIEWER_FFMPEG_AVFORMAT_LIB AND QT6_VIEWER_FFMPEG_AVCODEC_LIB AND QT6_VIEWER_FFMPEG_AVUTIL_LIB AND QT6_VIEWER_FFMPEG_SWSCALE_LIB)
+    target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_GVFG_RECORDING GCAP_ENABLE_FFMPEG)
+    target_include_directories(qt6_viewer PRIVATE "${QT6_VIEWER_FFMPEG_INCLUDE_DIR}")
+    target_link_libraries(qt6_viewer PRIVATE
+      ${QT6_VIEWER_FFMPEG_AVFORMAT_LIB}
+      ${QT6_VIEWER_FFMPEG_AVCODEC_LIB}
+      ${QT6_VIEWER_FFMPEG_AVUTIL_LIB}
+      ${QT6_VIEWER_FFMPEG_SWSCALE_LIB}
+    )
+    message(STATUS "qt6_viewer: GVFG FFmpeg recording enabled: ${FFMPEG_ROOT}")
+  else()
+    message(WARNING "qt6_viewer: FFmpeg not found; GVFG recording button will report unsupported.")
+  endif()
 endif()
 
 if (MSVC)
@@ -126,6 +161,13 @@ if (WIN32 AND BUILD_GVFG_SDK)
     add_custom_command(TARGET qt6_viewer POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:gvfg_preview>
+        $<TARGET_FILE_DIR:qt6_viewer>
+    )
+  endif()
+  if (TARGET gvfg_convert)
+    add_custom_command(TARGET qt6_viewer POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:gvfg_convert>
         $<TARGET_FILE_DIR:qt6_viewer>
     )
   endif()

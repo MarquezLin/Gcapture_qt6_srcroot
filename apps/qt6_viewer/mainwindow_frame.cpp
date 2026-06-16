@@ -183,6 +183,42 @@ void MainWindow::onFrameArrived(const QImage &img)
 
 void MainWindow::onSnapshot()
 {
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (usingGvfg_)
+    {
+        if (!gvfg_ || !gvfg_->isRunning())
+        {
+            QMessageBox::information(this, "Snapshot",
+                                     "There is currently no screenshot available (please start capturing first).");
+            return;
+        }
+
+        QString error;
+        const QImage snapshot = gvfg_->captureSnapshot(2000, &error);
+        if (snapshot.isNull())
+        {
+            QMessageBox::warning(this, "Snapshot",
+                                 QStringLiteral("GVFG snapshot failed.\n%1").arg(error));
+            return;
+        }
+
+        const QString pngPath = buildSnapshotPath();
+        if (!snapshot.save(pngPath, "PNG"))
+        {
+            QMessageBox::warning(this, "Snapshot",
+                                 QStringLiteral("Snapshot save failed.\nPath: %1").arg(pngPath));
+            return;
+        }
+
+        lastFrameImage_ = snapshot;
+        if (ui->statusbar)
+            ui->statusbar->showMessage(QStringLiteral("Snapshot saved: %1").arg(QFileInfo(pngPath).fileName()), 6000);
+        QMessageBox::information(this, "Snapshot",
+                                 QStringLiteral("Saved files:\n%1").arg(pngPath));
+        return;
+    }
+#endif
+
     if (lastFrameImage_.isNull())
     {
         QMessageBox::information(this, "Snapshot",
