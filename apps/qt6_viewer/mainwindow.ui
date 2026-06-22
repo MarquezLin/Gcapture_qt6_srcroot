@@ -6,102 +6,874 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>840</width>
-    <height>170</height>
+    <width>1180</width>
+    <height>680</height>
    </rect>
   </property>
+  <property name="minimumSize">
+   <size>
+    <width>980</width>
+    <height>560</height>
+   </size>
+  </property>
   <property name="windowTitle">
-   <string>Gigabyte</string>
+   <string>Gigabyte Capture Viewer</string>
   </property>
   <property name="windowIcon">
    <iconset resource="resources.qrc">
     <normaloff>:/new/prefix1/image/gigabyte.png</normaloff>:/new/prefix1/image/gigabyte.png</iconset>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QGridLayout" name="gridLayout">
-    <item row="1" column="2">
-     <widget class="QPushButton" name="btnShowEdid">
-      <property name="text">
-       <string>EDID</string>
+   <property name="styleSheet">
+    <string notr="true">QWidget#centralwidget {
+    background: #080d13;
+    color: #d8e6f3;
+}
+
+QLabel {
+    color: #d8e6f3;
+}
+
+QFrame#heroHeader {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #101b27, stop:0.58 #0c121a, stop:1 #13141b);
+    border: 1px solid #21364a;
+    border-radius: 8px;
+}
+
+QLabel#brandLogo {
+    background: #eef4fa;
+    border: 1px solid #2b506d;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QFrame#controlPanel,
+QFrame#previewPanel,
+QFrame#statusPanel {
+    background: #101822;
+    border: 1px solid #23394d;
+    border-radius: 8px;
+}
+
+QFrame#statusTile,
+QFrame#statusTile2,
+QFrame#statusTile3,
+QFrame#statusTile4 {
+    background: #0c141d;
+    border: 1px solid #203347;
+    border-radius: 6px;
+}
+
+QLabel#appTitle {
+    color: #f4f8fb;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+QLabel#appSubtitle,
+QLabel#panelHint,
+QLabel#previewHint,
+QLabel#metricLabel,
+QLabel#metricLabel2,
+QLabel#metricLabel3,
+QLabel#metricLabel4 {
+    color: #8fa6ba;
+}
+
+QLabel#sectionTitle,
+QLabel#sectionTitleActions,
+QLabel#sectionTitlePreview,
+QLabel#sectionTitleStatus {
+    color: #f0f6fb;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QLabel#labelDevice,
+QLabel#labelBackend,
+QLabel#labelGpu,
+QLabel#labelPixelFormat,
+QLabel#labelBitDepth {
+    color: #9db3c7;
+    font-weight: 600;
+}
+
+QLabel#statusBadge {
+    color: #9ce8ff;
+    background: #0c2534;
+    border: 1px solid #1f91c7;
+    border-radius: 6px;
+    padding: 7px 12px;
+    font-weight: 700;
+}
+
+QLabel#previewTitle {
+    color: #f6fbff;
+    font-size: 24px;
+    font-weight: 700;
+}
+
+QLabel#metricValue,
+QLabel#metricValue2,
+QLabel#metricValue3,
+QLabel#metricValue4 {
+    color: #f1f8ff;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QLabel#labelinfo1 {
+    color: #a9bfd2;
+    background: #0b121a;
+    border: 1px solid #1d2e3f;
+    border-radius: 6px;
+    padding: 9px 12px;
+}
+
+QComboBox {
+    background: #0a1119;
+    color: #e2edf7;
+    border: 1px solid #2a4358;
+    border-radius: 5px;
+    padding: 7px 32px 7px 10px;
+    min-height: 20px;
+}
+
+QComboBox:hover {
+    border-color: #2aa7ff;
+}
+
+QPushButton {
+    background: #162536;
+    color: #ecf6ff;
+    border: 1px solid #34516a;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-weight: 700;
+}
+
+QPushButton:hover {
+    background: #1f3449;
+    border-color: #2aa7ff;
+}
+
+QPushButton#btnStart {
+    background: #0b73b8;
+    border-color: #2aa7ff;
+}
+
+QPushButton#btnRecord {
+    background: #84262f;
+    border-color: #ee4d4d;
+}
+
+QPushButton#btnStop {
+    background: #333a43;
+    border-color: #5b6875;
+}</string>
+   </property>
+   <layout class="QVBoxLayout" name="mainLayout">
+    <property name="spacing">
+     <number>12</number>
+    </property>
+    <property name="leftMargin">
+     <number>16</number>
+    </property>
+    <property name="topMargin">
+     <number>16</number>
+    </property>
+    <property name="rightMargin">
+     <number>16</number>
+    </property>
+    <property name="bottomMargin">
+     <number>16</number>
+    </property>
+    <item>
+     <widget class="QFrame" name="heroHeader">
+      <property name="minimumSize">
+       <size>
+        <width>0</width>
+        <height>92</height>
+       </size>
       </property>
+      <property name="frameShape">
+       <enum>QFrame::Shape::StyledPanel</enum>
+      </property>
+      <layout class="QHBoxLayout" name="heroLayout">
+       <property name="spacing">
+        <number>16</number>
+       </property>
+       <property name="leftMargin">
+        <number>18</number>
+       </property>
+       <property name="topMargin">
+        <number>14</number>
+       </property>
+       <property name="rightMargin">
+        <number>18</number>
+       </property>
+       <property name="bottomMargin">
+        <number>14</number>
+       </property>
+       <item>
+        <widget class="QLabel" name="brandLogo">
+         <property name="minimumSize">
+          <size>
+           <width>62</width>
+           <height>62</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>62</width>
+           <height>62</height>
+          </size>
+         </property>
+         <property name="pixmap">
+          <pixmap resource="resources.qrc">:/new/prefix1/image/gigabyte.png</pixmap>
+         </property>
+         <property name="scaledContents">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="brandTextLayout">
+         <property name="spacing">
+          <number>4</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="appTitle">
+           <property name="text">
+            <string>GIGABYTE Capture Viewer</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="appSubtitle">
+           <property name="text">
+            <string>Signal acquisition, 10-bit preview, recording, and diagnostic toolkit</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <spacer name="heroSpacer">
+         <property name="orientation">
+          <enum>Qt::Orientation::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QLabel" name="statusBadge">
+         <property name="text">
+          <string>READY FOR SIGNAL</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignmentFlag::AlignCenter</set>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </widget>
     </item>
-    <item row="1" column="3">
-     <widget class="QPushButton" name="btnSnapshot">
-      <property name="text">
-       <string>Snapshot</string>
+    <item>
+     <layout class="QHBoxLayout" name="bodyLayout" stretch="0,1,0">
+      <property name="spacing">
+       <number>12</number>
       </property>
-     </widget>
-    </item>
-    <item row="0" column="2">
-     <widget class="QPushButton" name="btnStart">
-      <property name="text">
-       <string>Start</string>
-      </property>
-     </widget>
-    </item>
-    <item row="0" column="3">
-     <widget class="QPushButton" name="btnStop">
-      <property name="text">
-       <string>Stop</string>
-      </property>
-     </widget>
-    </item>
-    <item row="1" column="0">
-     <widget class="QComboBox" name="comboBackend"/>
-    </item>
-    <item row="2" column="0" colspan="6">
-     <widget class="QLabel" name="labelinfo1">
-      <property name="enabled">
-       <bool>false</bool>
-      </property>
-      <property name="text">
-       <string>info1</string>
-      </property>
-     </widget>
-    </item>
-    <item row="1" column="4">
-     <widget class="QPushButton" name="btnRecord">
-      <property name="enabled">
-       <bool>true</bool>
-      </property>
-      <property name="text">
-       <string>Record</string>
-      </property>
-     </widget>
-    </item>
-    <item row="0" column="5">
-     <widget class="QPushButton" name="btnOpenTiff">
-      <property name="enabled">
-       <bool>true</bool>
-      </property>
-      <property name="text">
-       <string>Open TIFF</string>
-      </property>
-     </widget>
-    </item>
-    <item row="0" column="0" colspan="2">
-     <widget class="QComboBox" name="comboDevice"/>
-    </item>
-    <item row="1" column="1">
-     <widget class="QComboBox" name="comboGpu"/>
-    </item>
-    <item row="1" column="5">
-     <widget class="QComboBox" name="comboPixelFormat"/>
-    </item>
-    <item row="0" column="4">
-     <widget class="QPushButton" name="btnPreview">
-      <property name="text">
-       <string>Show Preview</string>
-      </property>
-     </widget>
-    </item>
-    <item row="0" column="6">
-     <widget class="QComboBox" name="comboPreviewBitDepth">
-      <property name="enabled">
-       <bool>true</bool>
-      </property>
-     </widget>
+      <item>
+       <widget class="QFrame" name="controlPanel">
+        <property name="minimumSize">
+         <size>
+          <width>300</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>360</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Shape::StyledPanel</enum>
+        </property>
+        <layout class="QVBoxLayout" name="controlLayout">
+         <property name="spacing">
+          <number>10</number>
+         </property>
+         <property name="leftMargin">
+          <number>16</number>
+         </property>
+         <property name="topMargin">
+          <number>16</number>
+         </property>
+         <property name="rightMargin">
+          <number>16</number>
+         </property>
+         <property name="bottomMargin">
+          <number>16</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="sectionTitle">
+           <property name="text">
+            <string>Signal Source</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="panelHint">
+           <property name="text">
+            <string>Select hardware path and capture format.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QFormLayout" name="sourceForm">
+           <property name="horizontalSpacing">
+            <number>10</number>
+           </property>
+           <property name="verticalSpacing">
+            <number>9</number>
+           </property>
+           <item row="0" column="0">
+            <widget class="QLabel" name="labelDevice">
+             <property name="text">
+              <string>Device</string>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="1">
+            <widget class="QComboBox" name="comboDevice"/>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLabel" name="labelBackend">
+             <property name="text">
+              <string>Backend</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="1">
+            <widget class="QComboBox" name="comboBackend"/>
+           </item>
+           <item row="2" column="0">
+            <widget class="QLabel" name="labelGpu">
+             <property name="text">
+              <string>GPU</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="1">
+            <widget class="QComboBox" name="comboGpu"/>
+           </item>
+           <item row="3" column="0">
+            <widget class="QLabel" name="labelPixelFormat">
+             <property name="text">
+              <string>Pixel</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="1">
+            <widget class="QComboBox" name="comboPixelFormat"/>
+           </item>
+           <item row="4" column="0">
+            <widget class="QLabel" name="labelBitDepth">
+             <property name="text">
+              <string>Preview</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="1">
+            <widget class="QComboBox" name="comboPreviewBitDepth">
+             <property name="enabled">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QLabel" name="sectionTitleActions">
+           <property name="text">
+            <string>Capture Actions</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QGridLayout" name="actionGrid">
+           <property name="spacing">
+            <number>8</number>
+           </property>
+           <item row="0" column="0">
+            <widget class="QPushButton" name="btnStart">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>42</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Start</string>
+             </property>
+             <property name="icon">
+              <iconset resource="resources.qrc">
+               <normaloff>:/new/prefix1/image/icon_start.svg</normaloff>:/new/prefix1/image/icon_start.svg</iconset>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="1">
+            <widget class="QPushButton" name="btnStop">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>42</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Stop</string>
+             </property>
+             <property name="icon">
+              <iconset resource="resources.qrc">
+               <normaloff>:/new/prefix1/image/icon_stop.svg</normaloff>:/new/prefix1/image/icon_stop.svg</iconset>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QPushButton" name="btnRecord">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>38</height>
+              </size>
+             </property>
+             <property name="enabled">
+              <bool>true</bool>
+             </property>
+             <property name="text">
+              <string>Record</string>
+             </property>
+             <property name="icon">
+              <iconset resource="resources.qrc">
+               <normaloff>:/new/prefix1/image/icon_record.svg</normaloff>:/new/prefix1/image/icon_record.svg</iconset>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="1">
+            <widget class="QPushButton" name="btnSnapshot">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>38</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Snapshot</string>
+             </property>
+             <property name="icon">
+              <iconset resource="resources.qrc">
+               <normaloff>:/new/prefix1/image/icon_camera.svg</normaloff>:/new/prefix1/image/icon_camera.svg</iconset>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0" colspan="2">
+            <widget class="QPushButton" name="btnShowEdid">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>38</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>EDID</string>
+             </property>
+             <property name="icon">
+              <iconset resource="resources.qrc">
+               <normaloff>:/new/prefix1/image/icon_chip.svg</normaloff>:/new/prefix1/image/icon_chip.svg</iconset>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0" colspan="2">
+            <widget class="QPushButton" name="btnOpenTiff">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>38</height>
+              </size>
+             </property>
+             <property name="enabled">
+              <bool>true</bool>
+             </property>
+             <property name="text">
+              <string>Open TIFF Analyzer</string>
+             </property>
+             <property name="icon">
+              <iconset resource="resources.qrc">
+               <normaloff>:/new/prefix1/image/icon_image.svg</normaloff>:/new/prefix1/image/icon_image.svg</iconset>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <spacer name="controlSpacer">
+           <property name="orientation">
+            <enum>Qt::Orientation::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>40</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QFrame" name="previewPanel">
+        <property name="frameShape">
+         <enum>QFrame::Shape::StyledPanel</enum>
+        </property>
+        <layout class="QVBoxLayout" name="previewPanelLayout">
+         <property name="spacing">
+          <number>10</number>
+         </property>
+         <property name="leftMargin">
+          <number>16</number>
+         </property>
+         <property name="topMargin">
+          <number>16</number>
+         </property>
+         <property name="rightMargin">
+          <number>16</number>
+         </property>
+         <property name="bottomMargin">
+          <number>16</number>
+         </property>
+         <item>
+          <layout class="QHBoxLayout" name="previewHeaderLayout">
+           <item>
+            <widget class="QLabel" name="sectionTitlePreview">
+             <property name="text">
+              <string>Live Preview</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="previewHeaderSpacer">
+             <property name="orientation">
+              <enum>Qt::Orientation::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QPushButton" name="btnPreview">
+             <property name="minimumSize">
+              <size>
+               <width>118</width>
+               <height>34</height>
+              </size>
+             </property>
+             <property name="toolTip">
+              <string>Toggle fullscreen preview</string>
+             </property>
+             <property name="text">
+              <string>Fullscreen</string>
+             </property>
+             <property name="icon">
+              <iconset resource="resources.qrc">
+               <normaloff>:/new/prefix1/image/icon_monitor.svg</normaloff>:/new/prefix1/image/icon_monitor.svg</iconset>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QWidget" name="previewContainer">
+           <property name="minimumSize">
+            <size>
+             <width>320</width>
+             <height>250</height>
+            </size>
+           </property>
+           <layout class="QVBoxLayout" name="previewContainerLayout">
+            <property name="spacing">
+             <number>0</number>
+            </property>
+            <property name="leftMargin">
+             <number>0</number>
+            </property>
+            <property name="topMargin">
+             <number>0</number>
+            </property>
+            <property name="rightMargin">
+             <number>0</number>
+            </property>
+            <property name="bottomMargin">
+             <number>0</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="previewArt">
+              <property name="pixmap">
+               <pixmap resource="resources.qrc">:/new/prefix1/image/signal_pattern.svg</pixmap>
+              </property>
+              <property name="scaledContents">
+               <bool>true</bool>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignmentFlag::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="previewTitle">
+           <property name="text">
+            <string>Hardware Signal Pipeline</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignmentFlag::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="previewHint">
+           <property name="text">
+            <string>No active capture session.</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignmentFlag::AlignCenter</set>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="labelinfo1">
+           <property name="enabled">
+            <bool>true</bool>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>72</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>Idle</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QFrame" name="statusPanel">
+        <property name="minimumSize">
+         <size>
+          <width>250</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>300</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::Shape::StyledPanel</enum>
+        </property>
+        <layout class="QVBoxLayout" name="statusLayout">
+         <property name="spacing">
+          <number>10</number>
+         </property>
+         <property name="leftMargin">
+          <number>16</number>
+         </property>
+         <property name="topMargin">
+          <number>16</number>
+         </property>
+         <property name="rightMargin">
+          <number>16</number>
+         </property>
+         <property name="bottomMargin">
+          <number>16</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="sectionTitleStatus">
+           <property name="text">
+            <string>Live Status</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QFrame" name="statusTile">
+           <layout class="QVBoxLayout" name="statusTileLayout1">
+            <property name="leftMargin">
+             <number>12</number>
+            </property>
+            <property name="topMargin">
+             <number>10</number>
+            </property>
+            <property name="rightMargin">
+             <number>12</number>
+            </property>
+            <property name="bottomMargin">
+             <number>10</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="metricLabel">
+              <property name="text">
+               <string>Signal</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="metricValue">
+              <property name="text">
+               <string>Waiting</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QFrame" name="statusTile2">
+           <layout class="QVBoxLayout" name="statusTileLayout2">
+            <property name="leftMargin">
+             <number>12</number>
+            </property>
+            <property name="topMargin">
+             <number>10</number>
+            </property>
+            <property name="rightMargin">
+             <number>12</number>
+            </property>
+            <property name="bottomMargin">
+             <number>10</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="metricLabel2">
+              <property name="text">
+               <string>Frame Rate</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="metricValue2">
+              <property name="text">
+               <string>-- fps</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QFrame" name="statusTile3">
+           <layout class="QVBoxLayout" name="statusTileLayout3">
+            <property name="leftMargin">
+             <number>12</number>
+            </property>
+            <property name="topMargin">
+             <number>10</number>
+            </property>
+            <property name="rightMargin">
+             <number>12</number>
+            </property>
+            <property name="bottomMargin">
+             <number>10</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="metricLabel3">
+              <property name="text">
+               <string>Color Path</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="metricValue3">
+              <property name="text">
+               <string>10-bit Ready</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QFrame" name="statusTile4">
+           <layout class="QVBoxLayout" name="statusTileLayout4">
+            <property name="leftMargin">
+             <number>12</number>
+            </property>
+            <property name="topMargin">
+             <number>10</number>
+            </property>
+            <property name="rightMargin">
+             <number>12</number>
+            </property>
+            <property name="bottomMargin">
+             <number>10</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="metricLabel4">
+              <property name="text">
+               <string>Recorder</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="metricValue4">
+              <property name="text">
+               <string>Standby</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <spacer name="statusSpacer">
+           <property name="orientation">
+            <enum>Qt::Orientation::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>40</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
     </item>
    </layout>
   </widget>
@@ -110,7 +882,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>840</width>
+     <width>1180</width>
      <height>21</height>
     </rect>
    </property>

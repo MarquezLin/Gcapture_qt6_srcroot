@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="960" height="540" fill="#0a0f16"/>
+  <defs>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2aa7ff" stop-opacity="0.85"/>
+      <stop offset="0.55" stop-color="#21d0c3" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#ee4d4d" stop-opacity="0.62"/>
+    </linearGradient>
+    <radialGradient id="lens" cx="50%" cy="47%" r="48%">
+      <stop offset="0" stop-color="#1d3550" stop-opacity="0.88"/>
+      <stop offset="0.58" stop-color="#0f1a25" stop-opacity="0.46"/>
+      <stop offset="1" stop-color="#0a0f16" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="610" cy="240" r="220" fill="url(#lens)"/>
+  <g fill="none" stroke="#1d3f5d" stroke-width="1.2" opacity="0.42">
+    <path d="M60 92h190l38 38h102"/>
+    <path d="M90 172h228l34-34h130l54 54h202"/>
+    <path d="M76 264h184l48 48h226l28-28h292"/>
+    <path d="M116 386h174l62-62h194l44 44h258"/>
+    <path d="M160 444h314l34-34h180"/>
+    <path d="M760 72v98l-44 44v148l52 52v66"/>
+    <path d="M642 66v150l-36 36v214"/>
+    <path d="M476 86v86l52 52v142l-42 42v54"/>
+  </g>
+  <g fill="#2aa7ff" opacity="0.72">
+    <circle cx="250" cy="92" r="5"/>
+    <circle cx="390" cy="130" r="5"/>
+    <circle cx="738" cy="192" r="5"/>
+    <circle cx="260" cy="264" r="5"/>
+    <circle cx="854" cy="284" r="5"/>
+    <circle cx="848" cy="368" r="5"/>
+    <circle cx="688" cy="410" r="5"/>
+  </g>
+  <g fill="none" stroke="url(#glow)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M190 272h152l46-58h164l58 58h160"/>
+    <path d="M332 340h158l42-42h128"/>
+    <path d="M414 184h106l36 36h112"/>
+  </g>
+  <g opacity="0.92">
+    <rect x="394" y="188" width="200" height="132" rx="8" fill="#111b27" stroke="#4a6f8d" stroke-width="2"/>
+    <rect x="424" y="216" width="140" height="76" rx="3" fill="#13273a" stroke="#2aa7ff" stroke-opacity="0.76"/>
+    <path d="M456 254h78" stroke="#21d0c3" stroke-width="5" stroke-linecap="round"/>
+    <path d="M494 232v44" stroke="#ee4d4d" stroke-width="5" stroke-linecap="round"/>
+  </g>
+</svg>

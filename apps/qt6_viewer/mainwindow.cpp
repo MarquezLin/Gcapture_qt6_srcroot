@@ -28,6 +28,8 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QTimer>
+#include <QShortcut>
+#include <QKeySequence>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -470,7 +472,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
-    setWindowTitle(QStringLiteral("Gigabyte v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
+    setWindowTitle(QStringLiteral("GIGABYTE Capture Viewer v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     gvfg_ = new GvfgSource(this);
@@ -496,6 +498,13 @@ MainWindow::MainWindow(QWidget *parent)
     initializeGpuList();
     setupConnections();
 
+    auto *exitFullscreenShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(exitFullscreenShortcut, &QShortcut::activated, this, [this]()
+            {
+                if (previewFullscreen_)
+                    setPreviewFullscreen(false);
+            });
+
     g_mainWindow = this;
     gcap_set_log_callback(sdkLogCallback, this);
     logStartupInfo();
@@ -520,6 +529,9 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (previewFullscreen_)
+        setPreviewFullscreen(false);
+
     if (rawPreviewWindow_)
     {
         rawPreviewWindow_->close();
@@ -531,6 +543,157 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::updateBrandDashboard()
+{
+    const auto setLabel = [this](const char *name, const QString &text)
+    {
+        if (QLabel *label = findChild<QLabel *>(QString::fromLatin1(name)))
+            label->setText(text);
+    };
+
+    const bool active = h_
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+                        || usingGvfg_
+#endif
+        ;
+
+    QString backendText = tr("Idle");
+    QString renderPathText;
+    bool previewActive = false;
+    QString signalText = (lastFrameWidth_ > 0 && lastFrameHeight_ > 0)
+                             ? QStringLiteral("%1 x %2").arg(lastFrameWidth_).arg(lastFrameHeight_)
+                             : (active ? tr("Active") : tr("Waiting"));
+    double dashboardFps = avgFps_;
+    QString colorText = selectedPreviewBitDepthText();
+    uint64_t frameCounter = lastFramePtsNs_;
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (usingGvfg_ && gvfg_)
+    {
+        const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
+        const gvfg_preview_info_t pv = gvfg_->previewInfo();
+        backendText = QStringLiteral("GVFG");
+        previewActive = pv.active != 0;
+#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
+        renderPathText = pv.active
+                             ? QStringLiteral("gvfg_preview %1x%2 %3 %4bit")
+                                   .arg(pv.width)
+                                   .arg(pv.height)
+                                   .arg(QString::fromUtf8(pv.pixel_format))
+                                   .arg(pv.bit_depth)
+                             : tr("preview inactive");
+#else
+        renderPathText = pv.active ? QString::fromUtf8(pv.render_path) : tr("preview inactive");
+#endif
+        frameCounter = rt.delivered_frames;
+        dashboardFps = (rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps;
+#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
+        const auto &signal = rt.input_signal;
+        const auto &frame = rt.last_frame;
+        if (frame.valid && frame.width > 0 && frame.height > 0)
+        {
+            signalText = QStringLiteral("%1 x %2").arg(frame.width).arg(frame.height);
+            if (frame.bit_depth > 0)
+                colorText = QStringLiteral("%1-bit %2").arg(frame.bit_depth).arg(QString::fromUtf8(frame.pixel_format));
+        }
+        else if (signal.width > 0 && signal.height > 0)
+        {
+            signalText = QStringLiteral("%1 x %2").arg(signal.width).arg(signal.height);
+            if (signal.bit_depth > 0)
+                colorText = QStringLiteral("%1-bit %2").arg(signal.bit_depth).arg(QString::fromLatin1(signal.video_format));
+        }
+#else
+        const auto &fpga = rt.input_signal.fpga;
+        const auto &delivered = rt.delivered_frame;
+        if (delivered.valid && delivered.width > 0 && delivered.height > 0)
+        {
+            signalText = QStringLiteral("%1 x %2").arg(delivered.width).arg(delivered.height);
+            if (delivered.bit_depth > 0)
+                colorText = QStringLiteral("%1-bit %2").arg(delivered.bit_depth).arg(QString::fromUtf8(delivered.pixel_format));
+        }
+        else if (fpga.width_valid && fpga.height_valid)
+        {
+            signalText = QStringLiteral("%1 x %2").arg(fpga.width_raw).arg(fpga.height_raw);
+            if (fpga.bit_depth_valid && fpga.bit_depth > 0)
+                colorText = QStringLiteral("%1-bit %2").arg(fpga.bit_depth).arg(QString::fromLatin1(fpga.video_format));
+        }
+#endif
+    }
+#endif
+
+    if (h_)
+    {
+        gcap_runtime_info_t rt{};
+        if (gcap_get_runtime_info(h_, &rt) == GCAP_OK)
+        {
+            backendText = QString::fromUtf8(rt.backend_name);
+            renderPathText = QString::fromUtf8(rt.render_format);
+            previewActive = true;
+            dashboardFps = (rt.runtime_fps > 0.0) ? rt.runtime_fps : dashboardFps;
+            if (rt.negotiated.width > 0 && rt.negotiated.height > 0)
+                signalText = QStringLiteral("%1 x %2").arg(rt.negotiated.width).arg(rt.negotiated.height);
+            if (rt.render_format[0])
+                colorText = QString::fromUtf8(rt.render_format);
+        }
+    }
+
+    if (active && frameCounter > 0)
+    {
+        if (frameCounter == lastWatchdogFrameCounter_)
+        {
+            ++frameStallTicks_;
+            if (frameStallTicks_ >= 6 && !frameStallWarningActive_)
+            {
+                frameStallWarningActive_ = true;
+                MainWindow::postLog(QStringLiteral("[Watchdog] frame counter stalled for %1 ms | backend=%2 | counter=%3 | fps=%4 | previewActive=%5 | render=%6")
+                                        .arg(frameStallTicks_ * (runtimeStatusTimer_ ? runtimeStatusTimer_->interval() : 500))
+                                        .arg(backendText)
+                                        .arg(QString::number(static_cast<qulonglong>(frameCounter)))
+                                        .arg(dashboardFps > 0.0 ? QString::number(dashboardFps, 'f', 2) : QStringLiteral("--"))
+                                        .arg(previewActive ? QStringLiteral("yes") : QStringLiteral("no"))
+                                        .arg(renderPathText.isEmpty() ? QStringLiteral("--") : renderPathText),
+                                    true);
+            }
+        }
+        else
+        {
+            if (frameStallWarningActive_)
+            {
+                MainWindow::postLog(QStringLiteral("[Watchdog] frame counter recovered | backend=%1 | counter=%2")
+                                        .arg(backendText)
+                                        .arg(QString::number(static_cast<qulonglong>(frameCounter))));
+            }
+            frameStallTicks_ = 0;
+            frameStallWarningActive_ = false;
+            lastWatchdogFrameCounter_ = frameCounter;
+        }
+    }
+    else
+    {
+        frameStallTicks_ = 0;
+        frameStallWarningActive_ = false;
+        lastWatchdogFrameCounter_ = frameCounter;
+    }
+
+    setLabel("statusBadge", frameStallWarningActive_ ? tr("FRAME STALL")
+                                                     : (active ? tr("CAPTURING") : tr("READY FOR SIGNAL")));
+    setLabel("previewTitle", active ? tr("Capture Pipeline Active") : tr("Hardware Signal Pipeline"));
+    setLabel("previewHint", active ? tr("Live render is active in the center preview.")
+                                   : tr("No active capture session."));
+
+    const QString fpsText = (dashboardFps > 0.0)
+                                ? QStringLiteral("%1 fps").arg(QString::number(dashboardFps, 'f', 2))
+                                : QStringLiteral("-- fps");
+    const QString frameSuffix = frameCounter > 0
+                                    ? QStringLiteral(" | #%1").arg(QString::number(static_cast<qulonglong>(frameCounter)))
+                                    : QString();
+
+    setLabel("metricValue", signalText);
+    setLabel("metricValue2", fpsText + frameSuffix);
+    setLabel("metricValue3", colorText.isEmpty() ? tr("10-bit Ready") : colorText);
+    setLabel("metricValue4", recording_ ? tr("Recording") : tr("Standby"));
 }
 
 void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
@@ -612,6 +775,8 @@ void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)
 
 void MainWindow::updateRuntimeStatusUi()
 {
+    updateBrandDashboard();
+
     if (!ui->statusbar)
         return;
 
@@ -855,9 +1020,60 @@ void MainWindow::setupPreviewWindow()
     if (previewWindow_)
         return;
 
-    previewWindow_ = new previewwindow();
-    previewWindow_->setWindowTitle(QStringLiteral("Preview"));
-    previewWindow_->resize(1280, 720);
+    previewWindow_ = new previewwindow(ui->previewContainer);
+    previewWindow_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    ui->previewArt->hide();
+    ui->previewContainerLayout->addWidget(previewWindow_);
+    previewWindow_->show();
+}
+
+void MainWindow::setPreviewFullscreen(bool enabled)
+{
+    if (previewFullscreen_ == enabled)
+        return;
+
+    previewFullscreen_ = enabled;
+    if (enabled)
+    {
+        previewRestoreMaximized_ = isMaximized();
+        debugDockWasVisible_ = debugDock_ && debugDock_->isVisible();
+
+        if (debugDock_)
+            debugDock_->hide();
+        ui->heroHeader->hide();
+        ui->controlPanel->hide();
+        ui->statusPanel->hide();
+        ui->previewTitle->hide();
+        ui->previewHint->hide();
+        ui->labelinfo1->hide();
+        ui->menubar->hide();
+        ui->statusbar->hide();
+        ui->mainLayout->setContentsMargins(0, 0, 0, 0);
+        ui->previewPanelLayout->setContentsMargins(8, 8, 8, 8);
+        ui->btnPreview->setText(tr("Exit Fullscreen"));
+        showFullScreen();
+    }
+    else
+    {
+        showNormal();
+        if (previewRestoreMaximized_)
+            showMaximized();
+
+        ui->heroHeader->show();
+        ui->controlPanel->show();
+        ui->statusPanel->show();
+        ui->previewTitle->show();
+        ui->previewHint->show();
+        ui->labelinfo1->show();
+        ui->menubar->show();
+        ui->statusbar->show();
+        ui->mainLayout->setContentsMargins(16, 16, 16, 16);
+        ui->previewPanelLayout->setContentsMargins(16, 16, 16, 16);
+        ui->btnPreview->setText(tr("Fullscreen"));
+
+        if (debugDock_ && debugDockWasVisible_)
+            debugDock_->show();
+    }
 }
 
 void MainWindow::setupRuntimeStatusTimer()
@@ -1533,8 +1749,5 @@ void MainWindow::onOpenTiffAnalyze()
 
 void MainWindow::on_btnPreview_clicked()
 {
-    setupPreviewWindow();
-    previewWindow_->show();
-    previewWindow_->raise();
-    previewWindow_->activateWindow();
+    setPreviewFullscreen(!previewFullscreen_);
 }

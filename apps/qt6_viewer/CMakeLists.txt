@@ -39,6 +39,20 @@ set(VIEWER_SOURCES
   tiffanalysisdialog.cpp
 )
 
+set(VIEWER_DESIGN_ASSETS
+  styles/gigabyte_dark.qss
+  image/signal_pattern.svg
+  image/icon_start.svg
+  image/icon_stop.svg
+  image/icon_record.svg
+  image/icon_camera.svg
+  image/icon_monitor.svg
+  image/icon_chip.svg
+  image/icon_image.svg
+)
+
+list(APPEND VIEWER_SOURCES ${VIEWER_DESIGN_ASSETS})
+
 if (WIN32 AND BUILD_GVFG_SDK)
   list(APPEND VIEWER_SOURCES
     gvfg/gvfg_source.h
@@ -100,7 +114,7 @@ target_link_libraries(qt6_viewer PRIVATE
   Qt${QT_VERSION_MAJOR}::Widgets
   gcapture
   gdisplay
-  dxgi d3d11 d3dcompiler
+  dxgi d3d11 d3dcompiler dwmapi
 )
 
 # ---- NVAPI: shared root variable from top-level ----

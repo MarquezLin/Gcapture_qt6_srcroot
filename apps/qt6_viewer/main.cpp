@@ -6,10 +6,50 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QDateTime>
+#include <QEvent>
+#include <QPalette>
+#include <QWidget>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <dwmapi.h>
+#endif
 
 // ---- App-wide log file (works in release .exe on other machines) ----
 static QFile g_logFile;
 static QMutex g_logMutex;
+
+class DarkWindowTitleBarFilter final : public QObject
+{
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+#ifdef _WIN32
+        if (event->type() == QEvent::Show)
+        {
+            if (auto *widget = qobject_cast<QWidget *>(watched); widget && widget->isWindow())
+            {
+                const BOOL dark = TRUE;
+                const HWND hwnd = reinterpret_cast<HWND>(widget->winId());
+                constexpr DWORD kImmersiveDarkMode = 20;
+                constexpr DWORD kImmersiveDarkModeLegacy = 19;
+                if (FAILED(DwmSetWindowAttribute(hwnd, kImmersiveDarkMode, &dark, sizeof(dark))))
+                    DwmSetWindowAttribute(hwnd, kImmersiveDarkModeLegacy, &dark, sizeof(dark));
+            }
+        }
+#else
+        Q_UNUSED(watched);
+        Q_UNUSED(event);
+#endif
+        return false;
+    }
+};
 
 static void messageHandler(QtMsgType type, const QMessageLogContext &ctx, const QString &msg)
 {
@@ -76,6 +116,27 @@ static QString initAppLogFile(QApplication &app)
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+    QPalette palette;
+    palette.setColor(QPalette::Window, QColor(QStringLiteral("#0b1119")));
+    palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#d8e6f3")));
+    palette.setColor(QPalette::Base, QColor(QStringLiteral("#080e15")));
+    palette.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#0e1822")));
+    palette.setColor(QPalette::Text, QColor(QStringLiteral("#d8e6f3")));
+    palette.setColor(QPalette::Button, QColor(QStringLiteral("#162536")));
+    palette.setColor(QPalette::ButtonText, QColor(QStringLiteral("#ecf6ff")));
+    palette.setColor(QPalette::Highlight, QColor(QStringLiteral("#176fa7")));
+    palette.setColor(QPalette::HighlightedText, Qt::white);
+    palette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(QStringLiteral("#607487")));
+    palette.setColor(QPalette::Disabled, QPalette::Text, QColor(QStringLiteral("#607487")));
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(QStringLiteral("#607487")));
+    a.setPalette(palette);
+
+    DarkWindowTitleBarFilter titleBarFilter;
+    a.installEventFilter(&titleBarFilter);
+
+    QFile theme(QStringLiteral(":/new/prefix1/styles/gigabyte_dark.qss"));
+    if (theme.open(QIODevice::ReadOnly | QIODevice::Text))
+        a.setStyleSheet(QString::fromUtf8(theme.readAll()));
 
     // Create an always-on log file so the packaged .exe can be debugged on other PCs.
     initAppLogFile(a);

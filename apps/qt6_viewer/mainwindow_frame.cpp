@@ -39,17 +39,11 @@ void MainWindow::applyInitialPreviewSizeFromSource(int width, int height)
     if (initialPreviewSizeApplied_ || width <= 0 || height <= 0 || !previewWindow_)
         return;
 
-    // Only auto-size once after opening capture, using the actual frame size
-    // delivered by the backend callback. Later source mode changes should not
-    // resize the window; users can manually resize the preview as needed.
-    const QSize appliedContent = previewWindow_->resizeToSourceContent(width, height);
     initialPreviewSizeApplied_ = true;
 
-    MainWindow::postLog(QStringLiteral("[Preview] initial window size applied from source=%1x%2 content=%3x%4 window=%5x%6")
+    MainWindow::postLog(QStringLiteral("[Preview] embedded source=%1x%2 host=%3x%4")
                             .arg(width)
                             .arg(height)
-                            .arg(appliedContent.width())
-                            .arg(appliedContent.height())
                             .arg(previewWindow_->width())
                             .arg(previewWindow_->height()));
 }

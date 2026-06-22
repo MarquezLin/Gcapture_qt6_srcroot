@@ -129,6 +129,12 @@ private:
     uint64_t lastPacketCallbackPtsNs_ = 0;
     uint64_t framePacketLogCount_ = 0;
     uint64_t framePacketSessionId_ = 0;
+    uint64_t lastWatchdogFrameCounter_ = 0;
+    int frameStallTicks_ = 0;
+    bool frameStallWarningActive_ = false;
+    bool previewFullscreen_ = false;
+    bool previewRestoreMaximized_ = false;
+    bool debugDockWasVisible_ = false;
     QTimer *runtimeStatusTimer_ = nullptr;
     QString lastRuntimeStatusText_;
     QString lastGvfgRawStateKey_;
@@ -137,6 +143,7 @@ private:
     QString lastPixelFormatWarningKey_;
     bool initialPreviewSizeApplied_ = false;
     void updateRuntimeStatusUi();
+    void updateBrandDashboard();
     void applyInitialPreviewSizeFromSource(int width, int height);
     int currentDeviceIndex() const;
     QString currentDeviceText() const;
@@ -155,6 +162,7 @@ private:
     void refreshSignalInfoDialog();
     void refreshDisplayInfoDialog();
     void setupPreviewWindow();
+    void setPreviewFullscreen(bool enabled);
     void setupRuntimeStatusTimer();
     void setupDebugDock();
     void setupProcAmpAction();

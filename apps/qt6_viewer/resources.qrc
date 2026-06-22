@@ -1,5 +1,14 @@
 <RCC>
     <qresource prefix="/new/prefix1">
         <file>image/gigabyte.png</file>
+        <file>image/signal_pattern.svg</file>
+        <file>image/icon_start.svg</file>
+        <file>image/icon_stop.svg</file>
+        <file>image/icon_record.svg</file>
+        <file>image/icon_camera.svg</file>
+        <file>image/icon_monitor.svg</file>
+        <file>image/icon_chip.svg</file>
+        <file>image/icon_image.svg</file>
+        <file>styles/gigabyte_dark.qss</file>
     </qresource>
 </RCC>

@@ -67,6 +67,9 @@ void MainWindow::resetRuntimeTracking()
     framePacketLogCount_ = 0;
     lastGvfgRawStateKey_.clear();
     ++framePacketSessionId_;
+    lastWatchdogFrameCounter_ = 0;
+    frameStallTicks_ = 0;
+    frameStallWarningActive_ = false;
     initialPreviewSizeApplied_ = false;
     lastFrameImage_ = QImage();
 }
@@ -339,12 +342,6 @@ void MainWindow::onStart()
         MainWindow::postLog(QStringLiteral("[Start] ignored: capture session is already running."));
         if (ui->statusbar)
             ui->statusbar->showMessage(QStringLiteral("Capture is already running."), 3000);
-        if (previewWindow_)
-        {
-            previewWindow_->show();
-            previewWindow_->raise();
-            previewWindow_->activateWindow();
-        }
         return;
     }
 
@@ -355,9 +352,6 @@ void MainWindow::onStart()
 
     setupPreviewWindow();
     previewWindow_->clearFrame();
-    previewWindow_->show();
-    previewWindow_->raise();
-    previewWindow_->activateWindow();
 
     void *hwnd = previewWindow_ ? previewWindow_->previewHwnd() : nullptr;
 
