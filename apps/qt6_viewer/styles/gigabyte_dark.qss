@@ -304,6 +304,9 @@ QPushButton:hover {
 
 QPushButton:pressed {
     background: #0f6da7;
+    border-color: #1e75a5;
+    padding-top: 9px;
+    padding-bottom: 7px;
 }
 
 QPushButton:disabled {
@@ -321,6 +324,13 @@ QPushButton#btnStart:hover {
     background: #1089d8;
 }
 
+QPushButton#btnStart:pressed {
+    background: #07598f;
+    border-color: #166f9e;
+    padding-top: 9px;
+    padding-bottom: 7px;
+}
+
 QPushButton#btnRecord {
     background: #84262f;
     border-color: #ee4d4d;
@@ -330,9 +340,23 @@ QPushButton#btnRecord:hover {
     background: #a5303b;
 }
 
+QPushButton#btnRecord:pressed {
+    background: #651b23;
+    border-color: #a92b37;
+    padding-top: 9px;
+    padding-bottom: 7px;
+}
+
 QPushButton#btnStop {
     background: #333a43;
     border-color: #5b6875;
+}
+
+QPushButton#btnStop:pressed {
+    background: #222831;
+    border-color: #3f4a55;
+    padding-top: 9px;
+    padding-bottom: 7px;
 }
 
 QSlider::groove:horizontal {
