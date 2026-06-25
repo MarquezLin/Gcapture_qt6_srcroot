@@ -308,7 +308,7 @@ void MainWindow::refreshCaptureRuntimeInfo()
         captureInfo_.signalProbe = fpgaSignal;
         captureInfo_.negotiated = dmaBuffer;
         captureInfo_.backendName = QStringLiteral("GVFG");
-        captureInfo_.frameSource = QStringLiteral("FPGA registers / XDMA C2H");
+        captureInfo_.frameSource = QStringLiteral("GVFG capture frame");
         captureInfo_.pathName = QStringLiteral("FPGA reported signal -> gvfg_read_frame");
         captureInfo_.captureFormat = frame.valid ? QString::fromUtf8(frame.pixel_format) : QStringLiteral("--");
         captureInfo_.renderFormat = pv.active
@@ -347,7 +347,7 @@ void MainWindow::refreshCaptureRuntimeInfo()
         captureInfo_.signalProbe = fpgaSignal;
         captureInfo_.negotiated = dmaBuffer;
         captureInfo_.backendName = QStringLiteral("GVFG");
-        captureInfo_.frameSource = QStringLiteral("FPGA registers / XDMA C2H");
+        captureInfo_.frameSource = QStringLiteral("GVFG capture frame");
         captureInfo_.pathName = QStringLiteral("FPGA reported signal -> delivered frame callback");
         captureInfo_.captureFormat = delivered.valid ? QString::fromUtf8(delivered.pixel_format) : QStringLiteral("--");
         captureInfo_.renderFormat = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
@@ -481,7 +481,7 @@ void MainWindow::refreshDisplayInfoFromFrame(const QImage &img)
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     else if (backend == kQtViewerGvfgBackend || usingGvfg_)
     {
-        displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::Xdma;
+        displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::Gvfg;
         displayInfo_.pipe.adapterName = gpuName_;
         displayInfo_.pipe.adapterIndex = gpuIndex_;
     }

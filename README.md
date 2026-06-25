@@ -1,62 +1,83 @@
 # win-capture-sdk_qt6
 
-這個 repo 目前分成幾個主要部分：
+This repository contains the Qt 6 viewer and the local capture/display SDK code
+used by the viewer.
 
-- `sdk/gcapture`: 既有 capture SDK，提供 DirectShow / WinMF 路線。
-- `sdk/gdisplay`: display / EDID 相關 SDK。
-- `sdk/gvfg`: 對外的 GVFG capture SDK facade，內含低階 XDMA driver access backend，給 VFG100 / GVFG 客戶使用。
-- `apps/qt6_viewer`: Qt viewer demo，可以透過 `GVFG Direct` 使用 GVFG backend。
+The source tree is intentionally limited to these runtime paths:
+
+- `sdk/gcapture`: local capture SDK for Windows Media Foundation and DirectShow.
+- `sdk/gdisplay`: local display / EDID helper SDK used by the viewer.
+- `apps/qt6_viewer`: Qt viewer application.
+- External `GVFG_Standalone`: GVFG capture SDK imported as prebuilt `gvfg*.dll`
+  and `gvfg*.lib`.
+
+Legacy low-level hardware backend source is not part of this project. GVFG
+hardware access lives behind the external GVFG SDK.
 
 ## Build
 
-建議使用 Qt Creator：
+Recommended flow:
 
-1. 開啟 repo root 的 `CMakeLists.txt`。
-2. 選擇 `Desktop Qt 6.x MSVC2022 64bit` kit。
-3. Configure。
-4. Build `qt6_viewer` 或 `all`。
+1. Open this repository root in Qt Creator.
+2. Select a Desktop Qt 6 MSVC 64-bit kit.
+3. Configure.
+4. Build `qt6_viewer` or `all`.
 
-輸出位置：
+Build outputs are written under the CMake build directory:
 
-- `build/.../bin`: `.exe` / `.dll`
-- `build/.../lib`: `.lib`
+- `bin`: executables and runtime DLLs.
+- `lib`: import libraries.
 
-## GVFG SDK
+## GVFG Integration
 
-`sdk/gvfg` 是對外的 GVFG capture SDK。客戶只需要 include：
-
-```c
-#include <gvfg_capture.h>
-```
-
-並 link：
+GVFG is imported from a sibling standalone SDK by default:
 
 ```text
-gvfg.lib
+../../GVFG_Standalone
 ```
 
-執行時需要放在 exe 旁邊：
+The expected external layout is:
 
 ```text
-gvfg.dll
+GVFG_Standalone/
+  sdk/gvfg/include/gvfg_capture.h
+  helpers/gvfg_preview/include/gvfg_preview.h
+  build/<config>/bin/gvfg.dll
+  build/<config>/bin/gvfg_preview.dll
+  build/<config>/lib/gvfg.lib
+  build/<config>/lib/gvfg_preview.lib
 ```
 
-XDMA driver access 是 `gvfg.dll` 內部實作細節，客戶不需要也不應直接使用。
+Optional convert helper support is enabled when these files exist:
 
-## Build Options
+```text
+helpers/gvfg_convert/include/gvfg_convert.h
+build/<config>/bin/gvfg_convert.dll
+build/<config>/lib/gvfg_convert.lib
+```
+
+Relevant CMake options:
 
 ```text
 BUILD_GVFG_SDK=ON
+GVFG_STANDALONE_ROOT=<path-to-GVFG_Standalone>
+GVFG_STANDALONE_BUILD_DIR=<path-containing-bin-and-lib>
 ```
 
-如果要看底層 XDMA flow debug log：
+If `GVFG_STANDALONE_BUILD_DIR` is not set, CMake scans
+`GVFG_STANDALONE_ROOT/build/*` and uses the first directory containing
+`bin/gvfg.dll` and `lib/gvfg.lib`.
 
-```text
-GVFG_XDMA_DEBUG_LOG=ON
-```
+## Packaging
 
-## Notes
+`pack_qt6_viewer.bat` copies:
 
-- GVFG 是對外 SDK/API 名稱。
-- XDMA 是目前底層 driver/backend 技術名稱。
-- DirectShow / WinMF API 仍留在 `gcapture`，不混進 GVFG API。
+- `qt6_viewer.exe`
+- `gcapture.dll`
+- `gdisplay.dll`
+- `gvfg.dll`
+- `gvfg_preview.dll`
+- `gvfg_convert.dll` when present
+- FFmpeg runtime DLLs when present
+
+Then it runs `windeployqt` and creates a release zip.

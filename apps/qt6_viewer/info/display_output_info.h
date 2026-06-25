@@ -39,7 +39,7 @@ struct DisplayOutputInfo
             WinMFCpu = 0,
             WinMFGpu = 1,
             DirectShow = 2,
-            Xdma = 3
+            Gvfg = 3
         };
 
         Path path = Path::Unknown;

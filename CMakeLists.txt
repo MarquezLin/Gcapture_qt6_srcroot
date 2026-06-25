@@ -30,14 +30,11 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(_DEFAULT_GVFG_STANDALONE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../GVFG_Standalone")
 if (EXISTS "${_DEFAULT_GVFG_STANDALONE_ROOT}/sdk/gvfg/include/gvfg_capture.h")
   set(_DEFAULT_BUILD_GVFG_SDK ON)
-  set(_DEFAULT_USE_EXTERNAL_GVFG_SDK ON)
 else()
   set(_DEFAULT_BUILD_GVFG_SDK OFF)
-  set(_DEFAULT_USE_EXTERNAL_GVFG_SDK OFF)
 endif()
 
-option(BUILD_GVFG_SDK "Enable GVFG SDK and viewer integration" ${_DEFAULT_BUILD_GVFG_SDK})
-option(USE_EXTERNAL_GVFG_SDK "Use prebuilt GVFG SDK from GVFG_STANDALONE_ROOT instead of building sdk/gvfg" ${_DEFAULT_USE_EXTERNAL_GVFG_SDK})
+option(BUILD_GVFG_SDK "Enable external GVFG SDK viewer integration" ${_DEFAULT_BUILD_GVFG_SDK})
 set(GVFG_STANDALONE_ROOT "${_DEFAULT_GVFG_STANDALONE_ROOT}" CACHE PATH "GVFG standalone SDK source root")
 set(GVFG_STANDALONE_BUILD_DIR "" CACHE PATH "GVFG standalone SDK build directory containing bin/gvfg.dll and lib/gvfg.lib")
 
@@ -46,64 +43,60 @@ add_subdirectory(sdk/gcapture)
 add_subdirectory(sdk/gdisplay)
 
 if (WIN32 AND BUILD_GVFG_SDK)
-  if (USE_EXTERNAL_GVFG_SDK)
-    if (NOT EXISTS "${GVFG_STANDALONE_ROOT}/sdk/gvfg/include/gvfg_capture.h")
-      message(FATAL_ERROR "GVFG_STANDALONE_ROOT does not contain sdk/gvfg/include/gvfg_capture.h: ${GVFG_STANDALONE_ROOT}")
-    endif()
-
-    set(_gvfg_build_dir "${GVFG_STANDALONE_BUILD_DIR}")
-    if (NOT _gvfg_build_dir)
-      file(GLOB _gvfg_build_candidates LIST_DIRECTORIES true "${GVFG_STANDALONE_ROOT}/build/*")
-      foreach(_candidate IN LISTS _gvfg_build_candidates)
-        if (EXISTS "${_candidate}/bin/gvfg.dll" AND EXISTS "${_candidate}/lib/gvfg.lib")
-          set(_gvfg_build_dir "${_candidate}")
-          break()
-        endif()
-      endforeach()
-    endif()
-
-    if (NOT _gvfg_build_dir)
-      message(FATAL_ERROR "Could not find GVFG standalone build output. Set GVFG_STANDALONE_BUILD_DIR to a directory containing bin/gvfg.dll and lib/gvfg.lib.")
-    endif()
-    if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg.lib")
-      message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg.dll and lib/gvfg.lib: ${_gvfg_build_dir}")
-    endif()
-    if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg_preview.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg_preview.lib")
-      message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg_preview.dll and lib/gvfg_preview.lib: ${_gvfg_build_dir}")
-    endif()
-
-    add_library(gvfg SHARED IMPORTED GLOBAL)
-    set_target_properties(gvfg PROPERTIES
-      IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg.dll"
-      IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg.lib"
-      INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
-      INTERFACE_COMPILE_DEFINITIONS QT6_VIEWER_USE_STANDALONE_GVFG
-    )
-
-    add_library(gvfg_preview SHARED IMPORTED GLOBAL)
-    set_target_properties(gvfg_preview PROPERTIES
-      IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg_preview.dll"
-      IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg_preview.lib"
-      INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_preview/include;${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
-    )
-
-    if (EXISTS "${_gvfg_build_dir}/bin/gvfg_convert.dll" AND
-        EXISTS "${_gvfg_build_dir}/lib/gvfg_convert.lib" AND
-        EXISTS "${GVFG_STANDALONE_ROOT}/helpers/gvfg_convert/include/gvfg_convert.h")
-      add_library(gvfg_convert SHARED IMPORTED GLOBAL)
-      set_target_properties(gvfg_convert PROPERTIES
-        IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg_convert.dll"
-        IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg_convert.lib"
-        INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_convert/include;${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
-      )
-    else()
-      message(WARNING "GVFG convert helper not found; qt6_viewer will use local snapshot conversion fallback.")
-    endif()
-
-    message(STATUS "Using external GVFG SDK: ${_gvfg_build_dir}")
-  else()
-    add_subdirectory(sdk/gvfg)
+  if (NOT EXISTS "${GVFG_STANDALONE_ROOT}/sdk/gvfg/include/gvfg_capture.h")
+    message(FATAL_ERROR "GVFG_STANDALONE_ROOT does not contain sdk/gvfg/include/gvfg_capture.h: ${GVFG_STANDALONE_ROOT}")
   endif()
+
+  set(_gvfg_build_dir "${GVFG_STANDALONE_BUILD_DIR}")
+  if (NOT _gvfg_build_dir)
+    file(GLOB _gvfg_build_candidates LIST_DIRECTORIES true "${GVFG_STANDALONE_ROOT}/build/*")
+    foreach(_candidate IN LISTS _gvfg_build_candidates)
+      if (EXISTS "${_candidate}/bin/gvfg.dll" AND EXISTS "${_candidate}/lib/gvfg.lib")
+        set(_gvfg_build_dir "${_candidate}")
+        break()
+      endif()
+    endforeach()
+  endif()
+
+  if (NOT _gvfg_build_dir)
+    message(FATAL_ERROR "Could not find GVFG standalone build output. Set GVFG_STANDALONE_BUILD_DIR to a directory containing bin/gvfg.dll and lib/gvfg.lib.")
+  endif()
+  if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg.lib")
+    message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg.dll and lib/gvfg.lib: ${_gvfg_build_dir}")
+  endif()
+  if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg_preview.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg_preview.lib")
+    message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg_preview.dll and lib/gvfg_preview.lib: ${_gvfg_build_dir}")
+  endif()
+
+  add_library(gvfg SHARED IMPORTED GLOBAL)
+  set_target_properties(gvfg PROPERTIES
+    IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg.dll"
+    IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg.lib"
+    INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
+    INTERFACE_COMPILE_DEFINITIONS QT6_VIEWER_USE_STANDALONE_GVFG
+  )
+
+  add_library(gvfg_preview SHARED IMPORTED GLOBAL)
+  set_target_properties(gvfg_preview PROPERTIES
+    IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg_preview.dll"
+    IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg_preview.lib"
+    INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_preview/include;${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
+  )
+
+  if (EXISTS "${_gvfg_build_dir}/bin/gvfg_convert.dll" AND
+      EXISTS "${_gvfg_build_dir}/lib/gvfg_convert.lib" AND
+      EXISTS "${GVFG_STANDALONE_ROOT}/helpers/gvfg_convert/include/gvfg_convert.h")
+    add_library(gvfg_convert SHARED IMPORTED GLOBAL)
+    set_target_properties(gvfg_convert PROPERTIES
+      IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg_convert.dll"
+      IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg_convert.lib"
+      INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_convert/include;${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
+    )
+  else()
+    message(WARNING "GVFG convert helper not found; qt6_viewer will use local snapshot conversion fallback.")
+  endif()
+
+  message(STATUS "Using external GVFG SDK: ${_gvfg_build_dir}")
 endif()
 
 # Apps / demos
