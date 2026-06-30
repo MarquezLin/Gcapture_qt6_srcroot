@@ -478,7 +478,18 @@ MainWindow::MainWindow(QWidget *parent)
     gvfg_ = new GvfgSource(this);
     connect(gvfg_, &GvfgSource::frameReady, this, &MainWindow::sigFrame, Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::errorOccurred, this, [this](const QString &message)
-            { MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message), true); },
+            {
+                MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message), true);
+                if (message.startsWith(QStringLiteral("GVFG recording stopped:")))
+                {
+                    recording_ = false;
+                    if (ui->btnRecord)
+                        ui->btnRecord->setText(QStringLiteral("Record"));
+                    if (ui->statusbar)
+                        ui->statusbar->showMessage(message, 8000);
+                    QMessageBox::warning(this, QStringLiteral("Record"), message);
+                }
+            },
             Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::preStartRuntimeInfoReady, this, [this](const gvfg_runtime_info_t &info)
             {

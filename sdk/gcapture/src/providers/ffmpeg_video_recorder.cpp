@@ -11,6 +11,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/opt.h>
+#include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
 #endif
@@ -127,8 +128,27 @@ static bool codecSupportsPixFmt(const AVCodec *codec, AVPixelFormat fmt)
     return false;
 }
 
+static bool codecNameEquals(const AVCodec *codec, const char *name)
+{
+    return codec && codec->name && std::strcmp(codec->name, name) == 0;
+}
+
+static const char *pixFmtName(AVPixelFormat fmt)
+{
+    const char *name = av_get_pix_fmt_name(fmt);
+    return name ? name : "unknown";
+}
+
 static AVPixelFormat chooseOutputFormat(const AVCodec *codec, bool useHevc)
 {
+    if (codecNameEquals(codec, "h264_mf") || codecNameEquals(codec, "hevc_mf"))
+    {
+        if (codecSupportsPixFmt(codec, AV_PIX_FMT_NV12))
+            return AV_PIX_FMT_NV12;
+        if (codecSupportsPixFmt(codec, AV_PIX_FMT_YUV420P))
+            return AV_PIX_FMT_YUV420P;
+    }
+
     static const AVPixelFormat hevcPrefs[] = {
         AV_PIX_FMT_YUV420P10LE,
         AV_PIX_FMT_P010LE,
@@ -148,11 +168,6 @@ static AVPixelFormat chooseOutputFormat(const AVCodec *codec, bool useHevc)
             return *p;
     }
     return codec && codec->pix_fmts ? codec->pix_fmts[0] : (useHevc ? AV_PIX_FMT_YUV420P10LE : AV_PIX_FMT_YUV420P);
-}
-
-static bool codecNameEquals(const AVCodec *codec, const char *name)
-{
-    return codec && codec->name && std::strcmp(codec->name, name) == 0;
 }
 
 static bool validateFrameView(const FfmpegVideoFrameView &view, AVPixelFormat srcFmt, std::string *error)
@@ -301,8 +316,8 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
 
     if (codecNameEquals(codec, "h264_mf") || codecNameEquals(codec, "hevc_mf"))
     {
-        av_opt_set(impl_->codec->priv_data, "rate_control", "cbr", 0);
-        av_opt_set(impl_->codec->priv_data, "scenario", "camera_record", 0);
+        av_opt_set_int(impl_->codec->priv_data, "rate_control", 0, 0); // cbr
+        av_opt_set_int(impl_->codec->priv_data, "scenario", 5, 0);     // camera_record
     }
     else
     {
@@ -321,7 +336,13 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     ret = avcodec_open2(impl_->codec, codec, nullptr);
     if (ret < 0)
     {
-        setErr(error, "avcodec_open2 failed: " + ffErr(ret));
+        setErr(error,
+               std::string("avcodec_open2 failed for ") +
+                   (codec->name ? codec->name : "unknown encoder") +
+                   " output=" + pixFmtName(impl_->codec->pix_fmt) +
+                   " size=" + std::to_string(cfg.width) + "x" + std::to_string(cfg.height) +
+                   " fps=" + std::to_string(cfg.fps_num) + "/" + std::to_string(cfg.fps_den) +
+                   ": " + ffErr(ret));
         close();
         return false;
     }

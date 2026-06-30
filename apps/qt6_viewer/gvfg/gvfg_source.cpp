@@ -440,33 +440,19 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         return false;
     }
 
-    FfmpegVideoRecordConfig cfg{};
-    cfg.path = path.toStdString();
-    cfg.width = width;
-    cfg.height = height;
-    cfg.fps_num = fpsNum > 0 ? fpsNum : 30;
-    cfg.fps_den = fpsDen > 0 ? fpsDen : 1;
-    cfg.bitrate_kbps = bitrateKbps > 0 ? bitrateKbps : ((recordFmt == GCAP_FMT_P010 || recordFmt == GCAP_FMT_Y210) ? 12000 : 8000);
-    cfg.input_format = recordFmt;
-    cfg.force_hevc_main10 = (recordFmt == GCAP_FMT_P010 || recordFmt == GCAP_FMT_Y210);
-
-    auto recorder = std::make_unique<FfmpegVideoRecorder>();
-    std::string detail;
-    if (!recorder->open(cfg, &detail))
-    {
-        if (error)
-            *error = QString::fromStdString(detail);
-        return false;
-    }
-
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
-        recorder_ = std::move(recorder);
+        recordingConfig_.path = path.toStdString();
+        recordingConfig_.fpsNum = fpsNum > 0 ? fpsNum : 30;
+        recordingConfig_.fpsDen = fpsDen > 0 ? fpsDen : 1;
+        recordingConfig_.bitrateKbps = bitrateKbps > 0 ? bitrateKbps : ((recordFmt == GCAP_FMT_P010 || recordFmt == GCAP_FMT_Y210) ? 12000 : 8000);
         recording_ = true;
+        recordingOpenPending_ = true;
         recordingFrames_ = 0;
         recordingWidth_ = width;
         recordingHeight_ = height;
         recordingPixelFormat_ = pixelFormat;
+        recorder_.reset();
     }
     return true;
 #endif
@@ -481,6 +467,7 @@ void GvfgSource::stopRecording()
         std::lock_guard<std::mutex> lock(recordingMutex_);
         recording_ = false;
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
+        recordingOpenPending_ = false;
         recorderToClose = std::move(recorder_);
 #endif
     }
@@ -641,7 +628,7 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
     bool failed = false;
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
-        if (!recording_ || !recorder_)
+        if (!recording_ || (!recorder_ && !recordingOpenPending_))
             return;
 
         if (frame.width != recordingWidth_ || frame.height != recordingHeight_ || frame.pixel_format != recordingPixelFormat_)
@@ -651,19 +638,55 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
         }
         else
         {
-            FfmpegVideoFrameView view{};
-            if (!makeFfmpegFrameView(frame, static_cast<int64_t>(recordingFrames_), view))
+            if (recordingOpenPending_)
             {
-                error = "GVFG frame format is not supported by the FFmpeg recorder";
-                failed = true;
+                const gcap_pixfmt_t recordFmt = gcapPixelFormatForGvfg(recordingPixelFormat_);
+                if (recordFmt == static_cast<gcap_pixfmt_t>(-1))
+                {
+                    error = "GVFG frame format is not supported by the FFmpeg recorder";
+                    failed = true;
+                }
+                else
+                {
+                    FfmpegVideoRecordConfig cfg{};
+                    cfg.path = recordingConfig_.path;
+                    cfg.width = recordingWidth_;
+                    cfg.height = recordingHeight_;
+                    cfg.fps_num = recordingConfig_.fpsNum;
+                    cfg.fps_den = recordingConfig_.fpsDen;
+                    cfg.bitrate_kbps = recordingConfig_.bitrateKbps;
+                    cfg.input_format = recordFmt;
+                    cfg.force_hevc_main10 = (recordFmt == GCAP_FMT_P010 || recordFmt == GCAP_FMT_Y210);
+
+                    auto recorder = std::make_unique<FfmpegVideoRecorder>();
+                    if (!recorder->open(cfg, &error))
+                    {
+                        failed = true;
+                    }
+                    else
+                    {
+                        recorder_ = std::move(recorder);
+                        recordingOpenPending_ = false;
+                    }
+                }
             }
-            else if (!recorder_->writeFrame(view, &error))
+
+            if (!failed)
             {
-                failed = true;
-            }
-            else
-            {
-                ++recordingFrames_;
+                FfmpegVideoFrameView view{};
+                if (!makeFfmpegFrameView(frame, static_cast<int64_t>(recordingFrames_), view))
+                {
+                    error = "GVFG frame format is not supported by the FFmpeg recorder";
+                    failed = true;
+                }
+                else if (!recorder_ || !recorder_->writeFrame(view, &error))
+                {
+                    failed = true;
+                }
+                else
+                {
+                    ++recordingFrames_;
+                }
             }
         }
 

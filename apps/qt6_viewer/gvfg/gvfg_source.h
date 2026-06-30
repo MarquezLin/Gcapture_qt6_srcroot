@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #endif
 
@@ -79,6 +80,16 @@ private:
     int recordingHeight_ = 0;
     int recordingPixelFormat_ = GVFG_PIXFMT_UNKNOWN;
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
+    struct RecordingConfig
+    {
+        std::string path;
+        int fpsNum = 30;
+        int fpsDen = 1;
+        int bitrateKbps = 8000;
+    };
+
+    bool recordingOpenPending_ = false;
+    RecordingConfig recordingConfig_;
     std::unique_ptr<FfmpegVideoRecorder> recorder_;
 #endif
 #endif

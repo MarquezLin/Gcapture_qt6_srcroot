@@ -53,6 +53,24 @@ QString buildRecordModeLabel(gcap_handle h, int backend)
         return QString::fromUtf8(info.mode_name);
     return QString::fromUtf8(gcap_recording_mode_name(backend));
 }
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+gcap_pixfmt_t gvfgRecordingFormatFromRuntime(const gvfg_runtime_info_t &rt, gcap_pixfmt_t fallback)
+{
+    const QString fmt = QString::fromUtf8(rt.last_frame.pixel_format).trimmed().toUpper();
+    if (fmt == QStringLiteral("YUY2"))
+        return GCAP_FMT_YUY2;
+    if (fmt == QStringLiteral("NV12"))
+        return GCAP_FMT_NV12;
+    if (fmt == QStringLiteral("P010"))
+        return GCAP_FMT_P010;
+    if (fmt == QStringLiteral("Y210"))
+        return GCAP_FMT_Y210;
+    if (fmt == QStringLiteral("BGRA8") || fmt == QStringLiteral("BGRA") || fmt == QStringLiteral("BGRX32"))
+        return GCAP_FMT_ARGB;
+    return fallback;
+}
+#endif
 }
 
 
@@ -136,6 +154,22 @@ void MainWindow::stopRecordingSession(bool showSummary)
         {
             QFileInfo fi(recordPath_);
             const qint64 sizeBytes = fi.size();
+            if (framesWritten == 0 || !fi.exists() || sizeBytes <= 0)
+            {
+                const QString info = QStringLiteral(
+                                         "No frames were written.\n"
+                                         "file:%1\n"
+                                         "frames written:%2\n"
+                                         "The recording was stopped before the GVFG recorder wrote its first frame.")
+                                         .arg(recordPath_)
+                                         .arg(QString::number(static_cast<qulonglong>(framesWritten)));
+                QMessageBox::warning(this, QStringLiteral("Record"), info);
+
+                if (ui->statusbar)
+                    ui->statusbar->showMessage(QStringLiteral("Record stopped: no frames were written"), 8000);
+                return;
+            }
+
             const qint64 ms = recordStartTime_.msecsTo(QDateTime::currentDateTime());
             const double seconds = ms / 1000.0;
             const double bitrateKbps = seconds > 0.0 ? (sizeBytes * 8.0 / 1000.0) / seconds : 0.0;
@@ -613,7 +647,9 @@ void MainWindow::onRecord()
         const QString fullPath = buildRecordingPath(now);
         const int fpsNum = currentProfile_.fps_num > 0 ? currentProfile_.fps_num : 30;
         const int fpsDen = currentProfile_.fps_den > 0 ? currentProfile_.fps_den : 1;
-        const bool hevc = currentProfile_.format == GCAP_FMT_P010 || currentProfile_.format == GCAP_FMT_Y210;
+        const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
+        const gcap_pixfmt_t recFmt = gvfgRecordingFormatFromRuntime(rt, currentProfile_.format);
+        const bool hevc = recFmt == GCAP_FMT_P010 || recFmt == GCAP_FMT_Y210;
         const int bitrateKbps = hevc ? 12000 : 8000;
 
         QString error;
