@@ -10,7 +10,6 @@
 #include <gvfg_convert.h>
 #endif
 
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
 namespace
 {
 QString gvfgEventName(gvfg_event_type_t type)
@@ -232,7 +231,6 @@ bool makeFfmpegFrameView(const gvfg_frame_t &frame, int64_t pts, FfmpegVideoFram
 }
 #endif
 }
-#endif
 
 GvfgSource::GvfgSource(QObject *parent)
     : QObject(parent)
@@ -269,21 +267,11 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         return false;
     }
 
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
     if (!setPreview(previewHwnd, previewBitDepthMode))
     {
         stop();
         return false;
     }
-#else
-    gvfg_set_callbacks(handle_, &GvfgSource::onFrame, &GvfgSource::onError, this);
-
-    if (!setPreview(previewHwnd, previewBitDepthMode))
-    {
-        stop();
-        return false;
-    }
-#endif
 
     st = gvfg_open(handle_, std::max(0, deviceIndex));
     if (st != GVFG_OK)
@@ -306,10 +294,8 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
     }
 
     running_ = true;
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
     stopRequested_.store(false, std::memory_order_release);
     readThread_ = std::thread([this]() { readLoop(); });
-#endif
     return true;
 }
 
@@ -318,7 +304,6 @@ bool GvfgSource::setPreview(void *previewHwnd, int previewBitDepthMode)
     if (!handle_)
         return false;
 
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
     Q_UNUSED(previewBitDepthMode);
 
     if (!previewHwnd)
@@ -349,25 +334,11 @@ bool GvfgSource::setPreview(void *previewHwnd, int previewBitDepthMode)
         return false;
     }
     return true;
-#else
-    gvfg_preview_desc_t preview{};
-    preview.hwnd = previewHwnd;
-    preview.enable_preview = previewHwnd ? 1 : 0;
-    preview.swapchain_bitdepth = previewBitDepthMode;
-    const gvfg_status_t st = gvfg_set_preview(handle_, &preview);
-    if (st != GVFG_OK)
-    {
-        emit errorOccurred(QStringLiteral("gvfg_set_preview failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
-        return false;
-    }
-    return true;
-#endif
 }
 
 void GvfgSource::stop()
 {
     running_ = false;
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
     stopRequested_.store(true, std::memory_order_release);
     snapshotCv_.notify_all();
     if (readThread_.joinable())
@@ -378,7 +349,6 @@ void GvfgSource::stop()
         gvfg_preview_destroy(previewHandle_);
         previewHandle_ = nullptr;
     }
-#endif
     if (handle_)
     {
         gvfg_stop(handle_);
@@ -387,7 +357,6 @@ void GvfgSource::stop()
     }
 }
 
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
 bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error)
 {
 #ifndef QT6_VIEWER_ENABLE_GVFG_RECORDING
@@ -522,7 +491,6 @@ QImage GvfgSource::captureSnapshot(int timeoutMs, QString *error)
         *error = snapshotError_.isEmpty() ? QStringLiteral("GVFG snapshot conversion is not supported for the current frame format.") : snapshotError_;
     return snapshotImage_;
 }
-#endif
 
 gvfg_signal_status_t GvfgSource::signalStatus() const
 {
@@ -543,17 +511,11 @@ gvfg_runtime_info_t GvfgSource::runtimeInfo() const
 gvfg_preview_info_t GvfgSource::previewInfo() const
 {
     gvfg_preview_info_t info{};
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
     if (previewHandle_)
         gvfg_preview_get_info(previewHandle_, &info);
-#else
-    if (handle_)
-        gvfg_get_preview_info(handle_, &info);
-#endif
     return info;
 }
 
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
 void GvfgSource::readLoop()
 {
     while (!stopRequested_.load(std::memory_order_acquire))
@@ -626,6 +588,7 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
     std::string error;
     bool failed = false;
+    std::unique_ptr<FfmpegVideoRecorder> recorderToClose;
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
         if (!recording_ || (!recorder_ && !recordingOpenPending_))
@@ -693,10 +656,13 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
         if (failed)
         {
             recording_ = false;
-            recorder_->close();
-            recorder_.reset();
+            recordingOpenPending_ = false;
+            recorderToClose = std::move(recorder_);
         }
     }
+
+    if (recorderToClose)
+        recorderToClose->close();
 
     if (failed)
         emit errorOccurred(QStringLiteral("GVFG recording stopped: %1").arg(QString::fromStdString(error)));
@@ -704,29 +670,3 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
     Q_UNUSED(frame);
 #endif
 }
-#else
-void GvfgSource::onFrame(const gvfg_frame_t *frame, void *user)
-{
-    auto *self = static_cast<GvfgSource *>(user);
-    if (!self || !frame || !frame->data || frame->width <= 0 || frame->height <= 0 || frame->stride <= 0)
-        return;
-
-    const QImage image(static_cast<const uchar *>(frame->data),
-                       frame->width,
-                       frame->height,
-                       frame->stride,
-                       QImage::Format_ARGB32);
-    emit self->frameReady(image.copy());
-}
-
-void GvfgSource::onError(gvfg_status_t status, const char *message, void *user)
-{
-    auto *self = static_cast<GvfgSource *>(user);
-    if (!self)
-        return;
-    const QString detail = QString::fromUtf8(message ? message : "");
-    emit self->errorOccurred(QStringLiteral("GVFG error %1: %2")
-                                 .arg(static_cast<int>(status))
-                                 .arg(detail.isEmpty() ? QString::fromUtf8(gvfg_strerror(status)) : detail));
-}
-#endif

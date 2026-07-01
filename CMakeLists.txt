@@ -73,7 +73,6 @@ if (WIN32 AND BUILD_GVFG_SDK)
     IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg.dll"
     IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg.lib"
     INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
-    INTERFACE_COMPILE_DEFINITIONS QT6_VIEWER_USE_STANDALONE_GVFG
   )
 
   add_library(gvfg_preview SHARED IMPORTED GLOBAL)

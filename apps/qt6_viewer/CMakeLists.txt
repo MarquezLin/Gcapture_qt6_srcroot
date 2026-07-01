@@ -12,6 +12,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
+option(QT6_VIEWER_ENABLE_GVFG_RECORDING "Enable GVFG FFmpeg recording support in qt6_viewer when FFmpeg is available" ON)
+
 set(VIEWER_SOURCES
   main.cpp
   mainwindow.cpp
@@ -78,7 +80,9 @@ else()
 endif()
 
 if (WIN32 AND BUILD_GVFG_SDK)
-  target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_GVFG_BACKEND)
+  target_compile_definitions(qt6_viewer PRIVATE
+    QT6_VIEWER_ENABLE_GVFG_BACKEND
+  )
 endif()
 
 # Includes
@@ -125,7 +129,7 @@ if (EXISTS "${NVAPI_ROOT}/include" AND EXISTS "${NVAPI_ROOT}/lib/x64/nvapi64.lib
 endif()
 
 # Optional FFmpeg recorder support for GVFG's pull-based frame path.
-if (WIN32 AND BUILD_GVFG_SDK AND FFMPEG_ROOT)
+if (WIN32 AND BUILD_GVFG_SDK AND QT6_VIEWER_ENABLE_GVFG_RECORDING AND FFMPEG_ROOT)
   find_path(QT6_VIEWER_FFMPEG_INCLUDE_DIR libavformat/avformat.h PATHS "${FFMPEG_ROOT}/include" NO_DEFAULT_PATH)
   find_library(QT6_VIEWER_FFMPEG_AVFORMAT_LIB avformat PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
   find_library(QT6_VIEWER_FFMPEG_AVCODEC_LIB avcodec PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
@@ -144,6 +148,8 @@ if (WIN32 AND BUILD_GVFG_SDK AND FFMPEG_ROOT)
   else()
     message(WARNING "qt6_viewer: FFmpeg not found; GVFG recording button will report unsupported.")
   endif()
+elseif (WIN32 AND BUILD_GVFG_SDK AND NOT QT6_VIEWER_ENABLE_GVFG_RECORDING)
+  message(STATUS "qt6_viewer: GVFG FFmpeg recording disabled by QT6_VIEWER_ENABLE_GVFG_RECORDING=OFF.")
 endif()
 
 if (MSVC)

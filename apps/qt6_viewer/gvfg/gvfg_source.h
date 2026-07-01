@@ -6,7 +6,6 @@
 #include <QStringList>
 
 #include <gvfg_capture.h>
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
 #include <gvfg_preview.h>
 
 #include <atomic>
@@ -16,9 +15,8 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#endif
 
-#if defined(QT6_VIEWER_USE_STANDALONE_GVFG) && defined(QT6_VIEWER_ENABLE_GVFG_RECORDING)
+#ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
 class FfmpegVideoRecorder;
 #endif
 
@@ -36,13 +34,11 @@ public:
     bool setPreview(void *previewHwnd, int previewBitDepthMode);
     void stop();
     bool isRunning() const { return running_; }
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
     bool startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error);
     void stopRecording();
     bool isRecording() const;
     uint64_t recordingFrames() const;
     QImage captureSnapshot(int timeoutMs, QString *error);
-#endif
 
     gvfg_signal_status_t signalStatus() const;
     gvfg_runtime_info_t runtimeInfo() const;
@@ -54,16 +50,10 @@ signals:
     void preStartRuntimeInfoReady(const gvfg_runtime_info_t &info);
 
 private:
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
     void readLoop();
     void writeRecordingFrame(const gvfg_frame_t &frame);
-#else
-    static void onFrame(const gvfg_frame_t *frame, void *user);
-    static void onError(gvfg_status_t status, const char *message, void *user);
-#endif
 
     gvfg_handle handle_ = nullptr;
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
     gvfg_preview_handle previewHandle_ = nullptr;
     std::thread readThread_;
     std::atomic_bool stopRequested_{false};
@@ -91,7 +81,6 @@ private:
     bool recordingOpenPending_ = false;
     RecordingConfig recordingConfig_;
     std::unique_ptr<FfmpegVideoRecorder> recorder_;
-#endif
 #endif
     bool running_ = false;
 };

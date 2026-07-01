@@ -112,7 +112,6 @@ namespace
     }
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
     static QString formatGvfgStatusLogLine(const gvfg_runtime_info_t &rt)
     {
         const auto &signal = rt.input_signal;
@@ -156,76 +155,6 @@ namespace
             .arg(frame.bit_depth)
             .arg(rt.delivered_frames);
     }
-#else
-    static QString hex32(uint32_t value)
-    {
-        return QStringLiteral("0x") + QString::number(value, 16).rightJustified(8, QLatin1Char('0')).toUpper();
-    }
-
-    static QString formatGvfgStatusLogLine(const gvfg_runtime_info_t &rt)
-    {
-        const auto &fpga = rt.input_signal.fpga;
-        return QStringLiteral("[GVFG][fpga_raw]\n"
-                              "  valid_mask=%1\n"
-                              "  resolution:   width_valid=%2 width_raw=%3 height_valid=%4 height_raw=%5\n"
-                              "  video_format: valid=%6 raw=%7 code=%8 name=%9\n"
-                              "  frame_rate:   valid=%10 raw=%11 code=%12 bits=%13 name=%14\n"
-                              "  bit_depth:    valid=%15 raw=%16 value=%17\n"
-                              "  status:       valid=%18 raw=%19 sdi_lock=%20 sdi_ddr=%21 hdmi_lock=%22 hdmi_ddr=%23")
-            .arg(hex32(fpga.valid_mask))
-            .arg(fpga.width_valid)
-            .arg(fpga.width_raw)
-            .arg(fpga.height_valid)
-            .arg(fpga.height_raw)
-            .arg(fpga.video_format_valid)
-            .arg(hex32(fpga.video_format_raw))
-            .arg(fpga.video_format_code)
-            .arg(QString::fromLatin1(fpga.video_format))
-            .arg(fpga.frame_rate_valid)
-            .arg(hex32(fpga.frame_rate_raw))
-            .arg(fpga.frame_rate_code)
-            .arg(QString::fromLatin1(fpga.frame_rate_bits))
-            .arg(QString::fromLatin1(fpga.frame_rate_name))
-            .arg(fpga.bit_depth_valid)
-            .arg(hex32(fpga.bit_depth_raw))
-            .arg(fpga.bit_depth)
-            .arg(fpga.status_valid)
-            .arg(hex32(fpga.status_raw))
-            .arg(fpga.sdi_locked)
-            .arg(fpga.sdi_ddr_ok)
-            .arg(fpga.hdmi_locked)
-            .arg(fpga.hdmi_ddr_ok);
-    }
-
-    static QString formatGvfgStatusStateKey(const gvfg_runtime_info_t &rt)
-    {
-        const auto &fpga = rt.input_signal.fpga;
-        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14|%15|%16|%17|%18|%19|%20|%21|%22|%23")
-            .arg(fpga.valid_mask)
-            .arg(fpga.width_valid)
-            .arg(fpga.width_raw)
-            .arg(fpga.height_valid)
-            .arg(fpga.height_raw)
-            .arg(fpga.video_format_valid)
-            .arg(fpga.video_format_raw)
-            .arg(fpga.video_format_code)
-            .arg(QString::fromLatin1(fpga.video_format))
-            .arg(fpga.frame_rate_valid)
-            .arg(fpga.frame_rate_raw)
-            .arg(fpga.frame_rate_code)
-            .arg(QString::fromLatin1(fpga.frame_rate_bits))
-            .arg(QString::fromLatin1(fpga.frame_rate_name))
-            .arg(fpga.bit_depth_valid)
-            .arg(fpga.bit_depth_raw)
-            .arg(fpga.bit_depth)
-            .arg(fpga.status_valid)
-            .arg(fpga.status_raw)
-            .arg(fpga.sdi_locked)
-            .arg(fpga.sdi_ddr_ok)
-            .arg(fpga.hdmi_locked)
-            .arg(fpga.hdmi_ddr_ok);
-    }
-#endif
 #endif
 
     static std::vector<gcap_pixfmt_t> enumerateSupportedPixelFormats(int backend, int deviceIndex)
@@ -587,7 +516,6 @@ void MainWindow::updateBrandDashboard()
         const gvfg_preview_info_t pv = gvfg_->previewInfo();
         backendText = QStringLiteral("GVFG");
         previewActive = pv.active != 0;
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
         renderPathText = pv.active
                              ? QStringLiteral("gvfg_preview %1x%2 %3 %4bit")
                                    .arg(pv.width)
@@ -595,12 +523,8 @@ void MainWindow::updateBrandDashboard()
                                    .arg(QString::fromUtf8(pv.pixel_format))
                                    .arg(pv.bit_depth)
                              : tr("preview inactive");
-#else
-        renderPathText = pv.active ? QString::fromUtf8(pv.render_path) : tr("preview inactive");
-#endif
         frameCounter = rt.delivered_frames;
         dashboardFps = (rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps;
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
         const auto &signal = rt.input_signal;
         const auto &frame = rt.last_frame;
         if (frame.valid && frame.width > 0 && frame.height > 0)
@@ -615,22 +539,6 @@ void MainWindow::updateBrandDashboard()
             if (signal.bit_depth > 0)
                 colorText = QStringLiteral("%1-bit %2").arg(signal.bit_depth).arg(QString::fromLatin1(signal.video_format));
         }
-#else
-        const auto &fpga = rt.input_signal.fpga;
-        const auto &delivered = rt.delivered_frame;
-        if (delivered.valid && delivered.width > 0 && delivered.height > 0)
-        {
-            signalText = QStringLiteral("%1 x %2").arg(delivered.width).arg(delivered.height);
-            if (delivered.bit_depth > 0)
-                colorText = QStringLiteral("%1-bit %2").arg(delivered.bit_depth).arg(QString::fromUtf8(delivered.pixel_format));
-        }
-        else if (fpga.width_valid && fpga.height_valid)
-        {
-            signalText = QStringLiteral("%1 x %2").arg(fpga.width_raw).arg(fpga.height_raw);
-            if (fpga.bit_depth_valid && fpga.bit_depth > 0)
-                colorText = QStringLiteral("%1-bit %2").arg(fpga.bit_depth).arg(QString::fromLatin1(fpga.video_format));
-        }
-#endif
     }
 #endif
 
@@ -804,7 +712,6 @@ void MainWindow::updateRuntimeStatusUi()
                 MainWindow::postLog(formatGvfgStatusLogLine(rt));
                 lastGvfgRawStateKey_ = rawStateKey;
             }
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
             const auto &signal = rt.input_signal;
             const auto &frame = rt.last_frame;
             const double runtimeFps = (rt.capture_fps > 0.0) ? rt.capture_fps : avgFps_;
@@ -836,33 +743,6 @@ void MainWindow::updateRuntimeStatusUi()
                                    .arg(renderPath)
                                    .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
                                    .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
-#else
-            const auto &fpga = rt.input_signal.fpga;
-            const auto &delivered = rt.delivered_frame;
-            const double runtimeFps = (rt.capture_fps > 0.0) ? rt.capture_fps : avgFps_;
-            const QString renderPath = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
-            const QString fpgaResolution = (fpga.width_valid && fpga.height_valid)
-                                               ? QStringLiteral("%1x%2").arg(fpga.width_raw).arg(fpga.height_raw)
-                                               : QStringLiteral("--");
-            const QString fpgaFps = fpga.frame_rate_valid
-                                        ? QStringLiteral("%1fps").arg(QString::fromLatin1(fpga.frame_rate_name))
-                                        : QStringLiteral("--fps");
-            const QString deliveredText = delivered.valid
-                                              ? QStringLiteral("%1x%2 %3 %4bit")
-                                                    .arg(delivered.width)
-                                                    .arg(delivered.height)
-                                                    .arg(QString::fromUtf8(delivered.pixel_format))
-                                                    .arg(delivered.bit_depth)
-                                              : QStringLiteral("--");
-            const QString sb = QStringLiteral("Backend: %1 | FPGA reported %2 %3 | Delivered frame %4 | %5 | App runtime %6fps frames=%7")
-                                   .arg(QStringLiteral("GVFG"))
-                                   .arg(fpgaResolution)
-                                   .arg(fpgaFps)
-                                   .arg(deliveredText)
-                                   .arg(renderPath)
-                                   .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
-                                   .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
-#endif
             if (lastRuntimeStatusText_ != sb)
             {
                 ui->statusbar->showMessage(sb);

@@ -430,7 +430,6 @@ void MainWindow::onStart()
         if (sig.height > 0)
             currentProfile_.height = sig.height;
 
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
         if (sig.bit_depth >= 10)
             currentProfile_.format = GCAP_FMT_Y210;
 
@@ -444,20 +443,6 @@ void MainWindow::onStart()
                                 .arg(signalFps)
                                 .arg(QString::fromLatin1(sig.video_format))
                                 .arg(sig.bit_depth));
-#else
-        const auto &fpga = sig.fpga;
-        const QString fpgaFps = fpga.frame_rate_valid
-                                    ? QStringLiteral("%1 (%2)")
-                                          .arg(QString::fromLatin1(fpga.frame_rate_name))
-                                          .arg(QString::fromLatin1(fpga.frame_rate_bits))
-                                    : QStringLiteral("--");
-
-        MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 %2x%3 fpga_fps=%4")
-                                .arg(deviceIndex_)
-                                .arg(currentProfile_.width)
-                                .arg(currentProfile_.height)
-                                .arg(fpgaFps));
-#endif
         updateRuntimeStatusUi();
         refreshCaptureInfoFromSdkAndRuntime(false);
         refreshDisplayInfoFromCurrentState();

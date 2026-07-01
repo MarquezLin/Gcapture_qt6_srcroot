@@ -279,7 +279,6 @@ void MainWindow::refreshCaptureRuntimeInfo()
     {
         const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
         const gvfg_preview_info_t pv = gvfg_->previewInfo();
-#ifdef QT6_VIEWER_USE_STANDALONE_GVFG
         const auto &signal = rt.input_signal;
         const auto &frame = rt.last_frame;
 
@@ -318,40 +317,6 @@ void MainWindow::refreshCaptureRuntimeInfo()
                                               .arg(QString::fromUtf8(pv.pixel_format))
                                               .arg(pv.bit_depth)
                                         : QStringLiteral("App-owned render");
-#else
-        const auto &fpga = rt.input_signal.fpga;
-        const auto &delivered = rt.delivered_frame;
-
-        gcap_signal_status_t fpgaSignal{};
-        fpgaSignal.width = fpga.width_valid ? static_cast<int>(fpga.width_raw) : rt.input_signal.width;
-        fpgaSignal.height = fpga.height_valid ? static_cast<int>(fpga.height_raw) : rt.input_signal.height;
-        fpgaSignal.fps_num = 0;
-        fpgaSignal.fps_den = 0;
-        fpgaSignal.pixfmt = (fpga.bit_depth_valid && fpga.bit_depth >= 10) ? GCAP_FMT_Y210 : GCAP_FMT_YUY2;
-        fpgaSignal.bit_depth = fpga.bit_depth_valid ? fpga.bit_depth : rt.input_signal.bit_depth;
-        fpgaSignal.csp = GCAP_CSP_BT709;
-        fpgaSignal.range = GCAP_RANGE_LIMITED;
-
-        gcap_signal_status_t dmaBuffer{};
-        if (delivered.valid)
-        {
-            dmaBuffer.width = delivered.width;
-            dmaBuffer.height = delivered.height;
-            dmaBuffer.pixfmt = pixFmtFromNameInfo(delivered.pixel_format);
-            dmaBuffer.bit_depth = delivered.bit_depth;
-            dmaBuffer.csp = GCAP_CSP_BT709;
-            dmaBuffer.range = GCAP_RANGE_LIMITED;
-        }
-
-        captureInfo_.signal = fpgaSignal;
-        captureInfo_.signalProbe = fpgaSignal;
-        captureInfo_.negotiated = dmaBuffer;
-        captureInfo_.backendName = QStringLiteral("GVFG");
-        captureInfo_.frameSource = QStringLiteral("GVFG capture frame");
-        captureInfo_.pathName = QStringLiteral("FPGA reported signal -> delivered frame callback");
-        captureInfo_.captureFormat = delivered.valid ? QString::fromUtf8(delivered.pixel_format) : QStringLiteral("--");
-        captureInfo_.renderFormat = pv.active ? QString::fromUtf8(pv.render_path) : QStringLiteral("App-owned render");
-#endif
         return;
     }
 #endif
