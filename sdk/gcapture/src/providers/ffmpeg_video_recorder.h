@@ -20,8 +20,7 @@ struct FfmpegVideoRecordConfig
     //   P010/Y210     -> HEVC when available
     //
     // Release builds are expected to use an LGPL shared FFmpeg build. The
-    // recorder therefore prefers Media Foundation encoders instead of GPL-only
-    // libx264/libx265.
+    // recorder uses Media Foundation encoders instead of GPL-only encoders.
     bool force_hevc_main10 = false;
 };
 

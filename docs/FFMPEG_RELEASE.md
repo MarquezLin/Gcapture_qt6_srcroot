@@ -7,16 +7,12 @@ Required FFmpeg build properties:
 - Shared libraries/DLLs are used.
 - The FFmpeg configure line does not contain `--enable-gpl`.
 - The FFmpeg configure line does not contain `--enable-nonfree`.
-- GPL-only encoders such as `libx264` and `libx265` are not required by the SDK.
+- GPL-only encoders are not used by the SDK recorder.
 
 The DShow recorder prefers the FFmpeg Media Foundation encoders:
 
 - `h264_mf` for 8-bit H.264/AVC output.
 - `hevc_mf` for HEVC/H.265 output from 10-bit input formats when available.
-
-For internal testing only, `GCAP_FFMPEG_ALLOW_GPL_ENCODERS=1` allows the recorder
-to fall back to GPL encoders such as `libx264` or `libx265`. Do not set this in a
-customer release environment.
 
 Before shipping:
 

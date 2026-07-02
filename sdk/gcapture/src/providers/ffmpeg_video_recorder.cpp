@@ -1,7 +1,6 @@
 #include "ffmpeg_video_recorder.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -72,12 +71,6 @@ static bool wantsHevcMain10(gcap_pixfmt_t fmt, bool force)
     return force || fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
 }
 
-static bool envFlagEnabled(const char *name)
-{
-    const char *value = std::getenv(name);
-    return value && value[0] && std::strcmp(value, "0") != 0;
-}
-
 static const AVCodec *findEncoderByNameList(const char *const *names)
 {
     for (const char *const *name = names; *name; ++name)
@@ -99,21 +92,6 @@ static const AVCodec *findReleaseEncoder(bool useHevc)
         nullptr,
     };
     return findEncoderByNameList(useHevc ? hevcEncoders : h264Encoders);
-}
-
-static const AVCodec *findGplEncoder(bool useHevc)
-{
-    static const char *const h264Encoders[] = {
-        "libx264",
-        nullptr,
-    };
-    static const char *const hevcEncoders[] = {
-        "libx265",
-        nullptr,
-    };
-    if (const AVCodec *codec = findEncoderByNameList(useHevc ? hevcEncoders : h264Encoders))
-        return codec;
-    return avcodec_find_encoder(useHevc ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264);
 }
 
 static bool codecSupportsPixFmt(const AVCodec *codec, AVPixelFormat fmt)
@@ -270,16 +248,13 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
         return false;
     }
 
-    const bool allowGplEncoders = envFlagEnabled("GCAP_FFMPEG_ALLOW_GPL_ENCODERS");
     const AVCodec *codec = findReleaseEncoder(useHevc);
-    if (!codec && allowGplEncoders)
-        codec = findGplEncoder(useHevc);
     if (!codec)
     {
         setErr(error,
                useHevc
-                   ? "HEVC encoder not found. Use an LGPL shared FFmpeg build with hevc_mf, or set GCAP_FFMPEG_ALLOW_GPL_ENCODERS=1 for internal GPL builds."
-                   : "H.264 encoder not found. Use an LGPL shared FFmpeg build with h264_mf, or set GCAP_FFMPEG_ALLOW_GPL_ENCODERS=1 for internal GPL builds.");
+                   ? "HEVC encoder not found. Use an LGPL shared FFmpeg build with hevc_mf."
+                   : "H.264 encoder not found. Use an LGPL shared FFmpeg build with h264_mf.");
         close();
         return false;
     }
