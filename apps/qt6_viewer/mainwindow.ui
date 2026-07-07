@@ -17,7 +17,7 @@
    </size>
   </property>
   <property name="windowTitle">
-   <string>Gigabyte Capture Viewer</string>
+   <string>Gigabyte Video Capture</string>
   </property>
   <property name="windowIcon">
    <iconset resource="resources.qrc">
@@ -274,7 +274,7 @@ QPushButton#btnStop:pressed {
          <item>
           <widget class="QLabel" name="appTitle">
            <property name="text">
-            <string>GIGABYTE Capture Viewer</string>
+            <string>GIGABYTE Video Capture</string>
            </property>
           </widget>
          </item>
@@ -354,7 +354,7 @@ QPushButton#btnStop:pressed {
          <item>
           <widget class="QLabel" name="sectionTitle">
            <property name="text">
-            <string>Signal Source</string>
+            <string>Video Source</string>
            </property>
           </widget>
          </item>

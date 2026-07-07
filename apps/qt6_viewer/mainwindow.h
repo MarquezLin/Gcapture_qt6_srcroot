@@ -10,6 +10,8 @@
 #include <QTimer>
 #include <QPlainTextEdit>
 #include <QByteArray>
+#include <QFrame>
+#include <QMargins>
 #include <gcapture.h>
 #include <cstdint>
 #include "inputinfodialog.h"
@@ -134,6 +136,9 @@ private:
     bool frameStallWarningActive_ = false;
     bool previewFullscreen_ = false;
     bool previewRestoreMaximized_ = false;
+    QMargins previewPanelMargins_;
+    int previewPanelSpacing_ = 10;
+    QFrame::Shape previewPanelFrameShape_ = QFrame::StyledPanel;
     bool debugDockWasVisible_ = false;
     QTimer *runtimeStatusTimer_ = nullptr;
     QString lastRuntimeStatusText_;

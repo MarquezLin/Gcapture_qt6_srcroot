@@ -6,7 +6,6 @@
 
 class QPlainTextEdit;
 class QLabel;
-class QCheckBox;
 class TiffPreviewWidget;
 
 class TiffAnalysisDialog : public QDialog
@@ -18,12 +17,11 @@ public:
 
 private slots:
     void refreshViewerDiagnostics();
-    void onDitheringToggled(bool checked);
 
 private:
     QPlainTextEdit *text_ = nullptr;
+    QLabel *pixelLabel_ = nullptr;
     QLabel *viewerDiagLabel_ = nullptr;
-    QCheckBox *ditherCheck_ = nullptr;
     TiffPreviewWidget *viewer_ = nullptr;
 };
 

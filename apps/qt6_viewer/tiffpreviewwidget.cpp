@@ -4,8 +4,12 @@
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QHideEvent>
+#include <QMouseEvent>
+#include <QWheelEvent>
 #include <QPaintEvent>
 #include <QByteArray>
+#include <QPoint>
+#include <cmath>
 #include <cstring>
 
 #ifdef _WIN32
@@ -28,10 +32,10 @@ struct Vertex
 
 struct PsConstants
 {
-    UINT ditheringEnabled;
-    float invTargetWidth;
-    float invTargetHeight;
-    float pad;
+    float uvOffsetX;
+    float uvOffsetY;
+    float uvScaleX;
+    float uvScaleY;
 };
 
 static QString dxgiFormatName(DXGI_FORMAT fmt)
@@ -67,6 +71,7 @@ TiffPreviewWidget::TiffPreviewWidget(QWidget *parent)
 {
     setAttribute(Qt::WA_NativeWindow, true);
     setAutoFillBackground(false);
+    setMouseTracking(true);
 }
 
 TiffPreviewWidget::~TiffPreviewWidget()
@@ -89,6 +94,7 @@ void TiffPreviewWidget::setFrame(const QImage &img)
         frameStrideBytes_ = frame8_.bytesPerLine();
         frameDirty_ = true;
     }
+    resetZoom();
     renderNow();
 }
 
@@ -104,11 +110,26 @@ void TiffPreviewWidget::setFrameRgba64(int width, int height, const QByteArray &
         frameStrideBytes_ = strideBytes;
         frameDirty_ = true;
     }
+    resetZoom();
     renderNow();
+}
+
+void TiffPreviewWidget::setSourceFormatInfo(const QString &photometric, int samplesPerPixel, int bitsPerSample)
+{
+    QMutexLocker lock(&frameMtx_);
+    sourcePhotometric_ = photometric;
+    sourceSamplesPerPixel_ = samplesPerPixel;
+    sourceBitsPerSample_ = bitsPerSample;
 }
 
 void TiffPreviewWidget::clearFrame()
 {
+    if (middleButtonPanning_)
+    {
+        middleButtonPanning_ = false;
+        releaseMouse();
+        unsetCursor();
+    }
     {
         QMutexLocker lock(&frameMtx_);
         pendingKind_ = PendingKind::None;
@@ -118,6 +139,9 @@ void TiffPreviewWidget::clearFrame()
         frameHeight_ = 0;
         frameStrideBytes_ = 0;
         frameDirty_ = false;
+        sourcePhotometric_.clear();
+        sourceSamplesPerPixel_ = 0;
+        sourceBitsPerSample_ = 0;
     }
 #ifdef _WIN32
     internalSrv_.Reset();
@@ -125,20 +149,11 @@ void TiffPreviewWidget::clearFrame()
     internalTextureFormat_ = DXGI_FORMAT_UNKNOWN;
 #endif
     internalTextureFormatName_ = QStringLiteral("None");
+    resetZoom();
     renderNow();
+    emit pixelHoverTextChanged(QStringLiteral("Pixel: --"));
     emit diagnosticsChanged();
 }
-
-void TiffPreviewWidget::setDitheringEnabled(bool enabled)
-{
-    if (ditheringEnabled_ == enabled)
-        return;
-    ditheringEnabled_ = enabled;
-    renderNow();
-    emit diagnosticsChanged();
-}
-
-bool TiffPreviewWidget::isDitheringEnabled() const { return ditheringEnabled_; }
 
 QString TiffPreviewWidget::rendererName() const { return rendererName_; }
 QString TiffPreviewWidget::internalTextureFormatName() const { return internalTextureFormatName_; }
@@ -146,13 +161,9 @@ QString TiffPreviewWidget::outputSurfaceFormatName() const { return outputSurfac
 bool TiffPreviewWidget::isTenBitOutputSurface() const { return outputSurface10Bit_; }
 QString TiffPreviewWidget::diagnosticsText() const
 {
-    return QStringLiteral("Renderer: %1\nInternal Texture: %2\nOutput Surface: %3\n10-bit Output Surface: %4\nSwapChain 8-bit Fallback: %5\nDithering: %6")
+    return QStringLiteral("Renderer: %1\n10-bit Output Surface: %2")
         .arg(rendererName_.isEmpty() ? QStringLiteral("Unavailable") : rendererName_)
-        .arg(internalTextureFormatName_)
-        .arg(outputSurfaceFormatName_)
-        .arg(outputSurface10Bit_ ? QStringLiteral("Yes") : QStringLiteral("No"))
-        .arg(swapChainFallbackTo8Bit_ ? QStringLiteral("Yes") : QStringLiteral("No"))
-        .arg(ditheringEnabled_ ? QStringLiteral("On") : QStringLiteral("Off"));
+        .arg(outputSurface10Bit_ ? QStringLiteral("Yes") : QStringLiteral("No"));
 }
 
 void TiffPreviewWidget::paintEvent(QPaintEvent *event)
@@ -161,10 +172,248 @@ void TiffPreviewWidget::paintEvent(QPaintEvent *event)
     renderNow();
 }
 
+void TiffPreviewWidget::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::MiddleButton)
+    {
+        middleButtonPanning_ = true;
+        lastPanPos_ = event->position().toPoint();
+        setCursor(Qt::ClosedHandCursor);
+        grabMouse();
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void TiffPreviewWidget::mouseMoveEvent(QMouseEvent *event)
+{
+    if (middleButtonPanning_ && (event->buttons() & Qt::MiddleButton))
+    {
+        const QRect imageRect = imageDisplayRect();
+        if (!imageRect.isEmpty())
+        {
+            const QPoint pos = event->position().toPoint();
+            const QPoint delta = pos - lastPanPos_;
+            const float visibleScale = 1.0f / qMax(1.0f, zoomScale_);
+            uvOffsetX_ -= float(delta.x()) / float(qMax(1, imageRect.width() - 1)) * visibleScale;
+            uvOffsetY_ -= float(delta.y()) / float(qMax(1, imageRect.height() - 1)) * visibleScale;
+            clampZoomOffset();
+            lastPanPos_ = pos;
+            emit pixelHoverTextChanged(pixelTextAt(pos));
+            renderNow();
+        }
+        event->accept();
+        return;
+    }
+
+    const QString text = pixelTextAt(event->position().toPoint());
+    emit pixelHoverTextChanged(text);
+    QWidget::mouseMoveEvent(event);
+}
+
+void TiffPreviewWidget::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::MiddleButton && middleButtonPanning_)
+    {
+        middleButtonPanning_ = false;
+        releaseMouse();
+        unsetCursor();
+        emit pixelHoverTextChanged(pixelTextAt(event->position().toPoint()));
+        event->accept();
+        return;
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
+void TiffPreviewWidget::wheelEvent(QWheelEvent *event)
+{
+    if (!(event->modifiers() & Qt::ControlModifier))
+    {
+        QWidget::wheelEvent(event);
+        return;
+    }
+
+    const int delta = event->angleDelta().y();
+    if (delta == 0 || width() <= 0 || height() <= 0)
+    {
+        event->accept();
+        return;
+    }
+
+    const QRect imageRect = imageDisplayRect();
+    if (imageRect.isEmpty())
+    {
+        event->accept();
+        return;
+    }
+
+    const QPointF pos = event->position();
+    const float normX = qBound(0.0f, float((pos.x() - imageRect.x()) / qMax(1, imageRect.width() - 1)), 1.0f);
+    const float normY = qBound(0.0f, float((pos.y() - imageRect.y()) / qMax(1, imageRect.height() - 1)), 1.0f);
+    const float oldVisibleScale = 1.0f / zoomScale_;
+    const float anchorU = uvOffsetX_ + normX * oldVisibleScale;
+    const float anchorV = uvOffsetY_ + normY * oldVisibleScale;
+
+    const float factor = float(std::pow(1.25, double(delta) / 120.0));
+    zoomScale_ = qBound(1.0f, zoomScale_ * factor, 64.0f);
+    const float newVisibleScale = 1.0f / zoomScale_;
+    uvOffsetX_ = anchorU - normX * newVisibleScale;
+    uvOffsetY_ = anchorV - normY * newVisibleScale;
+    clampZoomOffset();
+
+    emit pixelHoverTextChanged(pixelTextAt(pos.toPoint()));
+    renderNow();
+    event->accept();
+}
+
+void TiffPreviewWidget::leaveEvent(QEvent *event)
+{
+    emit pixelHoverTextChanged(QStringLiteral("Pixel: move cursor over image"));
+    QWidget::leaveEvent(event);
+}
+
 void TiffPreviewWidget::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     renderNow();
+}
+
+QString TiffPreviewWidget::pixelTextAt(const QPoint &widgetPos) const
+{
+    QMutexLocker lock(&frameMtx_);
+    if (pendingKind_ == PendingKind::None || frameWidth_ <= 0 || frameHeight_ <= 0 || width() <= 0 || height() <= 0)
+        return QStringLiteral("Pixel: --");
+
+    const QRect imageRect = imageDisplayRect();
+    if (imageRect.isEmpty() || !imageRect.contains(widgetPos))
+        return QStringLiteral("Pixel: --");
+
+    const float visibleScale = 1.0f / qMax(1.0f, zoomScale_);
+    const float localX = float(widgetPos.x() - imageRect.x()) / float(qMax(1, imageRect.width() - 1));
+    const float localY = float(widgetPos.y() - imageRect.y()) / float(qMax(1, imageRect.height() - 1));
+    const float u = qBound(0.0f, uvOffsetX_ + localX * visibleScale, 1.0f);
+    const float v = qBound(0.0f, uvOffsetY_ + localY * visibleScale, 1.0f);
+    const int px = qBound(0, int(std::round(u * float(frameWidth_ - 1))), frameWidth_ - 1);
+    const int py = qBound(0, int(std::round(v * float(frameHeight_ - 1))), frameHeight_ - 1);
+
+    if (pendingKind_ == PendingKind::Rgba64)
+    {
+        const qsizetype rowOffset = qsizetype(py) * qsizetype(frameStrideBytes_);
+        const qsizetype pixelOffset = rowOffset + qsizetype(px) * 8;
+        if (pixelOffset + 8 > frameRgba64_.size())
+            return QStringLiteral("Pixel: x=%1 y=%2 out of range").arg(px).arg(py);
+
+        quint16 rgba[4] = {};
+        memcpy(rgba, frameRgba64_.constData() + pixelOffset, sizeof(rgba));
+        const auto to10 = [](quint16 v) {
+            return (quint32(v) * 1023u + 32767u) / 65535u;
+        };
+        const QString photo = sourcePhotometric_.trimmed().toLower();
+        const bool isGray = sourceSamplesPerPixel_ == 1 ||
+                            photo.contains(QStringLiteral("blackiszero")) ||
+                            photo.contains(QStringLiteral("whiteiszero"));
+        const bool isRgb = photo == QStringLiteral("rgb") ||
+                           photo.contains(QStringLiteral("rgb"));
+        const QString depth = sourceBitsPerSample_ > 0
+                                  ? QString::number(sourceBitsPerSample_)
+                                  : QStringLiteral("16");
+
+        if (isGray)
+        {
+            return QStringLiteral("Pixel: x=%1 y=%2  Source=Gray%3  Gray16=%4  Gray10~=%5")
+                .arg(px)
+                .arg(py)
+                .arg(depth)
+                .arg(rgba[0])
+                .arg(to10(rgba[0]));
+        }
+
+        if (isRgb)
+        {
+            QString text = QStringLiteral("Pixel: x=%1 y=%2  Source=RGB%3  RGB16=(%4, %5, %6)  RGB10~=(%7, %8, %9)")
+                               .arg(px)
+                               .arg(py)
+                               .arg(depth)
+                               .arg(rgba[0])
+                               .arg(rgba[1])
+                               .arg(rgba[2])
+                               .arg(to10(rgba[0]))
+                               .arg(to10(rgba[1]))
+                               .arg(to10(rgba[2]));
+            if (sourceSamplesPerPixel_ >= 4)
+                text += QStringLiteral("  A16=%1").arg(rgba[3]);
+            return text;
+        }
+
+        return QStringLiteral("Pixel: x=%1 y=%2  Source=%3/%4spp  Preview RGBA16=(%5, %6, %7, %8)  RGB10~=(%9, %10, %11)")
+            .arg(px)
+            .arg(py)
+            .arg(sourcePhotometric_.isEmpty() ? QStringLiteral("Unknown") : sourcePhotometric_)
+            .arg(sourceSamplesPerPixel_)
+            .arg(rgba[0])
+            .arg(rgba[1])
+            .arg(rgba[2])
+            .arg(rgba[3])
+            .arg(to10(rgba[0]))
+            .arg(to10(rgba[1]))
+            .arg(to10(rgba[2]));
+    }
+
+    if (!frame8_.isNull() && px < frame8_.width() && py < frame8_.height())
+    {
+        const QRgb c = frame8_.pixel(px, py);
+        return QStringLiteral("Pixel: x=%1 y=%2  RGBA8=(%3, %4, %5, %6)")
+            .arg(px)
+            .arg(py)
+            .arg(qRed(c))
+            .arg(qGreen(c))
+            .arg(qBlue(c))
+            .arg(qAlpha(c));
+    }
+
+    return QStringLiteral("Pixel: --");
+}
+
+QRect TiffPreviewWidget::imageDisplayRect() const
+{
+    if (frameWidth_ <= 0 || frameHeight_ <= 0 || width() <= 0 || height() <= 0)
+        return QRect();
+
+    const double imageAspect = double(frameWidth_) / double(frameHeight_);
+    const double widgetAspect = double(width()) / double(height());
+    int displayW = width();
+    int displayH = height();
+    if (widgetAspect > imageAspect)
+    {
+        displayH = height();
+        displayW = qMax(1, int(std::round(double(displayH) * imageAspect)));
+    }
+    else
+    {
+        displayW = width();
+        displayH = qMax(1, int(std::round(double(displayW) / imageAspect)));
+    }
+
+    const int x = (width() - displayW) / 2;
+    const int y = (height() - displayH) / 2;
+    return QRect(x, y, displayW, displayH);
+}
+
+void TiffPreviewWidget::resetZoom()
+{
+    zoomScale_ = 1.0f;
+    uvOffsetX_ = 0.0f;
+    uvOffsetY_ = 0.0f;
+}
+
+void TiffPreviewWidget::clampZoomOffset()
+{
+    zoomScale_ = qBound(1.0f, zoomScale_, 64.0f);
+    const float visibleScale = 1.0f / zoomScale_;
+    const float maxOffset = qMax(0.0f, 1.0f - visibleScale);
+    uvOffsetX_ = qBound(0.0f, uvOffsetX_, maxOffset);
+    uvOffsetY_ = qBound(0.0f, uvOffsetY_, maxOffset);
 }
 
 void TiffPreviewWidget::showEvent(QShowEvent *event)
@@ -322,24 +571,10 @@ void TiffPreviewWidget::ensurePipeline()
     static const char *psSrc =
         "Texture2D tex0 : register(t0);"
         "SamplerState samp0 : register(s0);"
-        "cbuffer PsConstants : register(b0) { uint ditheringEnabled; float invTargetWidth; float invTargetHeight; float _pad; };"
+        "cbuffer PsConstants : register(b0) { float2 uvOffset; float2 uvScale; };"
         "struct PSIn { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };"
-        "float bayer4(int2 p) {"
-        "  int x = p.x & 3; int y = p.y & 3;"
-        "  static const float m[16] = { 0.0/16.0, 8.0/16.0, 2.0/16.0, 10.0/16.0,"
-        "                               12.0/16.0, 4.0/16.0, 14.0/16.0, 6.0/16.0,"
-        "                               3.0/16.0, 11.0/16.0, 1.0/16.0, 9.0/16.0,"
-        "                               15.0/16.0, 7.0/16.0, 13.0/16.0, 5.0/16.0 };"
-        "  return m[y * 4 + x] - 0.5;"
-        "}"
         "float4 main(PSIn i) : SV_Target {"
-        "  float4 c = tex0.Sample(samp0, i.uv);"
-        "  if (ditheringEnabled != 0) {"
-        "    int2 pix = int2(i.pos.xy);"
-        "    float n = bayer4(pix) / 1023.0;"
-        "    c.rgb = saturate(c.rgb + n);"
-        "  }"
-        "  return c;"
+        "  return tex0.Sample(samp0, uvOffset + i.uv * uvScale);"
         "}";
 
     const QByteArray vsBlob = compileShader(vsSrc, "main", "vs_4_0");
@@ -473,15 +708,23 @@ void TiffPreviewWidget::renderNow()
     context_->OMSetRenderTargets(1, backbufferRtv_.GetAddressOf(), nullptr);
     context_->ClearRenderTargetView(backbufferRtv_.Get(), clearColor);
 
-    D3D11_VIEWPORT vp = {};
-    vp.Width = float(qMax(1, width()));
-    vp.Height = float(qMax(1, height()));
-    vp.MinDepth = 0.f;
-    vp.MaxDepth = 1.f;
-    context_->RSSetViewports(1, &vp);
-
     if (internalSrv_ && vs_ && ps_ && sampler_ && vb_ && inputLayout_)
     {
+        const QRect imageRect = imageDisplayRect();
+        if (imageRect.isEmpty())
+        {
+            swapChain_->Present(1, 0);
+            return;
+        }
+        D3D11_VIEWPORT vp = {};
+        vp.TopLeftX = float(imageRect.x());
+        vp.TopLeftY = float(imageRect.y());
+        vp.Width = float(qMax(1, imageRect.width()));
+        vp.Height = float(qMax(1, imageRect.height()));
+        vp.MinDepth = 0.f;
+        vp.MaxDepth = 1.f;
+        context_->RSSetViewports(1, &vp);
+
         const UINT stride = sizeof(Vertex);
         const UINT offset = 0;
         context_->IASetInputLayout(inputLayout_.Get());
@@ -492,7 +735,14 @@ void TiffPreviewWidget::renderNow()
         context_->PSSetSamplers(0, 1, sampler_.GetAddressOf());
         if (psConstants_)
         {
-            const PsConstants psData = { ditheringEnabled_ ? 1u : 0u, 1.0f / qMax(1, width()), 1.0f / qMax(1, height()), 0.0f };
+            clampZoomOffset();
+            const float visibleScale = 1.0f / zoomScale_;
+            const PsConstants psData = {
+                uvOffsetX_,
+                uvOffsetY_,
+                visibleScale,
+                visibleScale
+            };
             context_->UpdateSubresource(psConstants_.Get(), 0, nullptr, &psData, 0, 0);
             context_->PSSetConstantBuffers(0, 1, psConstants_.GetAddressOf());
         }

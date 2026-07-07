@@ -49,15 +49,22 @@ static MainWindow *g_mainWindow = nullptr;
 static void sdkLogCallback(gcap_log_level_t level, const char *message_utf8, void *user)
 {
     Q_UNUSED(user);
-    const QString prefix = [level]() -> QString {
+    const QString prefix = [level]() -> QString
+    {
         switch (level)
         {
-        case GCAP_LOG_TRACE: return QStringLiteral("[SDK][TRACE]");
-        case GCAP_LOG_DEBUG: return QStringLiteral("[SDK][DEBUG]");
-        case GCAP_LOG_INFO:  return QStringLiteral("[SDK][INFO]");
-        case GCAP_LOG_WARN:  return QStringLiteral("[SDK][WARN]");
-        case GCAP_LOG_ERROR: return QStringLiteral("[SDK][ERROR]");
-        default:             return QStringLiteral("[SDK]");
+        case GCAP_LOG_TRACE:
+            return QStringLiteral("[SDK][TRACE]");
+        case GCAP_LOG_DEBUG:
+            return QStringLiteral("[SDK][DEBUG]");
+        case GCAP_LOG_INFO:
+            return QStringLiteral("[SDK][INFO]");
+        case GCAP_LOG_WARN:
+            return QStringLiteral("[SDK][WARN]");
+        case GCAP_LOG_ERROR:
+            return QStringLiteral("[SDK][ERROR]");
+        default:
+            return QStringLiteral("[SDK]");
         }
     }();
     QString msg = QString::fromUtf8(message_utf8 ? message_utf8 : "").trimmed();
@@ -401,7 +408,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
-    setWindowTitle(QStringLiteral("GIGABYTE Capture Viewer v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
+    setWindowTitle(QStringLiteral("GIGABYTE Video Capture utility v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     gvfg_ = new GvfgSource(this);
@@ -417,16 +424,13 @@ MainWindow::MainWindow(QWidget *parent)
                     if (ui->statusbar)
                         ui->statusbar->showMessage(message, 8000);
                     QMessageBox::warning(this, QStringLiteral("Record"), message);
-                }
-            },
-            Qt::QueuedConnection);
+                } }, Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::preStartRuntimeInfoReady, this, [this](const gvfg_runtime_info_t &info)
             {
                 const QString rawStateKey = formatGvfgStatusStateKey(info);
                 MainWindow::postLog(QStringLiteral("[GVFG] signal before stream start"));
                 MainWindow::postLog(formatGvfgStatusLogLine(info));
-                lastGvfgRawStateKey_ = rawStateKey;
-            });
+                lastGvfgRawStateKey_ = rawStateKey; });
 #endif
 
     setupRuntimeStatusTimer();
@@ -439,11 +443,11 @@ MainWindow::MainWindow(QWidget *parent)
     setupConnections();
 
     auto *exitFullscreenShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    exitFullscreenShortcut->setContext(Qt::ApplicationShortcut);
     connect(exitFullscreenShortcut, &QShortcut::activated, this, [this]()
             {
                 if (previewFullscreen_)
-                    setPreviewFullscreen(false);
-            });
+                    setPreviewFullscreen(false); });
 
     g_mainWindow = this;
     gcap_set_log_callback(sdkLogCallback, this);
@@ -928,6 +932,9 @@ void MainWindow::setPreviewFullscreen(bool enabled)
     {
         previewRestoreMaximized_ = isMaximized();
         debugDockWasVisible_ = debugDock_ && debugDock_->isVisible();
+        previewPanelMargins_ = ui->previewPanelLayout->contentsMargins();
+        previewPanelSpacing_ = ui->previewPanelLayout->spacing();
+        previewPanelFrameShape_ = ui->previewPanel->frameShape();
 
         if (debugDock_)
             debugDock_->hide();
@@ -937,11 +944,15 @@ void MainWindow::setPreviewFullscreen(bool enabled)
         ui->previewTitle->hide();
         ui->previewHint->hide();
         ui->labelinfo1->hide();
+        ui->sectionTitlePreview->hide();
+        ui->btnPreview->hide();
         ui->menubar->hide();
         ui->statusbar->hide();
         ui->mainLayout->setContentsMargins(0, 0, 0, 0);
-        ui->previewPanelLayout->setContentsMargins(8, 8, 8, 8);
-        ui->btnPreview->setText(tr("Exit Fullscreen"));
+        ui->previewPanelLayout->setContentsMargins(0, 0, 0, 0);
+        ui->previewPanelLayout->setSpacing(0);
+        ui->previewPanel->setFrameShape(QFrame::NoFrame);
+        ui->previewPanel->setStyleSheet(QStringLiteral("QFrame#previewPanel { background: #000000; border: 0; border-radius: 0; }"));
         showFullScreen();
     }
     else
@@ -956,10 +967,15 @@ void MainWindow::setPreviewFullscreen(bool enabled)
         ui->previewTitle->show();
         ui->previewHint->show();
         ui->labelinfo1->show();
+        ui->sectionTitlePreview->show();
+        ui->btnPreview->show();
         ui->menubar->show();
         ui->statusbar->show();
         ui->mainLayout->setContentsMargins(16, 16, 16, 16);
-        ui->previewPanelLayout->setContentsMargins(16, 16, 16, 16);
+        ui->previewPanelLayout->setContentsMargins(previewPanelMargins_);
+        ui->previewPanelLayout->setSpacing(previewPanelSpacing_);
+        ui->previewPanel->setFrameShape(previewPanelFrameShape_);
+        ui->previewPanel->setStyleSheet(QString());
         ui->btnPreview->setText(tr("Fullscreen"));
 
         if (debugDock_ && debugDockWasVisible_)
@@ -1075,8 +1091,6 @@ void MainWindow::setupBackendControls()
     const QSignalBlocker blocker(ui->comboBackend);
     ui->comboBackend->clear();
     ui->comboBackend->addItem("DirectShow", 2);
-    ui->comboBackend->addItem("WinMF GPU", 1);
-    ui->comboBackend->addItem("WinMF CPU", 0);
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     ui->comboBackend->addItem("GVFG Direct", kQtViewerGvfgBackend);
@@ -1129,7 +1143,7 @@ void MainWindow::applyPreviewSettingsToActiveSession()
     if (usingGvfg_ && gvfg_)
     {
         const bool ok = gvfg_->setPreview(previewWindow_ ? previewWindow_->previewHwnd() : nullptr,
-                                           selectedPreviewBitDepthMode());
+                                          selectedPreviewBitDepthMode());
         MainWindow::postLog(QStringLiteral("[Preview] GVFG requested %1%2")
                                 .arg(selectedPreviewBitDepthText())
                                 .arg(ok ? QString() : QStringLiteral(" failed")),
@@ -1604,12 +1618,12 @@ void MainWindow::onOpenTiffAnalyze()
         {
             ui->labelinfo1->setEnabled(true);
             ui->labelinfo1->setText(
-                tr("TIFF: %1 | stored=%2-bit | effective=%3-bit | 10-bit evidence=%4 | ramp=%5")
+                tr("TIFF: %1 | %2x%3 | %4 | stored=%5-bit")
                     .arg(QFileInfo(path).fileName())
-                    .arg(lastTiffReport_.storedBitDepth)
-                    .arg(lastTiffReport_.effectiveBitDepth)
-                    .arg(lastTiffReport_.likelyTenBitContent ? tr("Yes") : tr("No"))
-                    .arg(lastTiffReport_.rampStatusText));
+                    .arg(lastTiffReport_.width)
+                    .arg(lastTiffReport_.height)
+                    .arg(lastTiffReport_.photometric)
+                    .arg(lastTiffReport_.storedBitDepth));
         }
         else
         {
@@ -1621,12 +1635,12 @@ void MainWindow::onOpenTiffAnalyze()
     if (lastTiffReport_.ok)
     {
         MainWindow::postLog(
-            QStringLiteral("[TIFF] %1 stored=%2 effective=%3 likely10=%4 rampStatus=%5 fmt=%6 range=%7..%8 unique=%9")
+            QStringLiteral("[TIFF] %1 size=%2x%3 photometric=%4 stored=%5 fmt=%6 range=%7..%8 unique=%9")
                 .arg(path)
+                .arg(lastTiffReport_.width)
+                .arg(lastTiffReport_.height)
+                .arg(lastTiffReport_.photometric)
                 .arg(lastTiffReport_.storedBitDepth)
-                .arg(lastTiffReport_.effectiveBitDepth)
-                .arg(lastTiffReport_.likelyTenBitContent ? QStringLiteral("Yes") : QStringLiteral("No"))
-                .arg(lastTiffReport_.rampStatusText)
                 .arg(lastTiffReport_.pixelFormatName)
                 .arg(lastTiffReport_.minValue)
                 .arg(lastTiffReport_.maxValue)

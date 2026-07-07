@@ -5,9 +5,12 @@
 #include <QImage>
 #include <QMutex>
 #include <QByteArray>
+#include <QRect>
 #include <QString>
 
 class QHideEvent;
+class QMouseEvent;
+class QWheelEvent;
 
 #ifdef _WIN32
 #include <dxgi1_2.h>
@@ -25,9 +28,8 @@ public:
     WId nativePreviewId() const { return winId(); }
     void setFrame(const QImage &img);
     void setFrameRgba64(int width, int height, const QByteArray &rgba64, int strideBytes);
+    void setSourceFormatInfo(const QString &photometric, int samplesPerPixel, int bitsPerSample);
     void clearFrame();
-    void setDitheringEnabled(bool enabled);
-    bool isDitheringEnabled() const;
 
     QString rendererName() const;
     QString internalTextureFormatName() const;
@@ -37,10 +39,16 @@ public:
 
 signals:
     void diagnosticsChanged();
+    void pixelHoverTextChanged(const QString &text);
 
 protected:
     QPaintEngine *paintEngine() const override { return nullptr; }
     void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+    void leaveEvent(QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
     void hideEvent(QHideEvent *event) override;
@@ -62,6 +70,10 @@ private:
     void releaseSwapChainResources();
     void releaseAllD3d();
     void updateDiagnosticsLocked();
+    QString pixelTextAt(const QPoint &widgetPos) const;
+    QRect imageDisplayRect() const;
+    void resetZoom();
+    void clampZoomOffset();
 
     mutable QMutex frameMtx_;
     PendingKind pendingKind_ = PendingKind::None;
@@ -71,13 +83,20 @@ private:
     int frameHeight_ = 0;
     int frameStrideBytes_ = 0;
     bool frameDirty_ = false;
+    QString sourcePhotometric_;
+    int sourceSamplesPerPixel_ = 0;
+    int sourceBitsPerSample_ = 0;
 
     QString rendererName_;
     QString internalTextureFormatName_ = QStringLiteral("None");
     QString outputSurfaceFormatName_ = QStringLiteral("None");
     bool outputSurface10Bit_ = false;
     bool swapChainFallbackTo8Bit_ = false;
-    bool ditheringEnabled_ = true;
+    float zoomScale_ = 1.0f;
+    float uvOffsetX_ = 0.0f;
+    float uvOffsetY_ = 0.0f;
+    bool middleButtonPanning_ = false;
+    QPoint lastPanPos_;
 
 #ifdef _WIN32
     Microsoft::WRL::ComPtr<ID3D11Device> device_;

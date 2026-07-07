@@ -116,80 +116,27 @@ QString TiffAnalyzer::formatReportText(const TiffBitDepthReport &r)
         return lines.join('\n');
     }
 
-    const bool hasOver8BitValues = r.maxValue > 255;
-    const bool rampCheckApplicable = (r.rampStatus == GCAP_TIFF_RAMP_DETECTED_VALID ||
-                                      r.rampStatus == GCAP_TIFF_RAMP_DETECTED_INVALID ||
-                                      r.likelyTenBitRamp ||
-                                      r.strictTenBitRamp ||
-                                      r.visualTenBitRampCandidate);
-
-    QString conclusion;
-    if (r.likelyTenBitContent || hasOver8BitValues)
-    {
-        conclusion = QStringLiteral("Values exceed 8-bit range; image contains >8-bit data evidence.");
-    }
-    else if (r.storedBitDepth > 8)
-    {
-        conclusion = QStringLiteral("Stored in a >8-bit TIFF container, but sampled values do not exceed 8-bit range.");
-    }
-    else
-    {
-        conclusion = QStringLiteral("No >8-bit evidence from sampled values.");
-    }
-
     lines << QStringLiteral("Status: OK");
-    lines << QStringLiteral("Analyzer: gcapture SDK / WIC");
+    lines << QStringLiteral("Reader: gcapture SDK / WIC");
 
     lines << QString();
     lines << QStringLiteral("[TIFF Container]");
     lines << QStringLiteral("Size: %1 x %2").arg(r.width).arg(r.height);
     lines << QStringLiteral("Pixel format: %1").arg(r.pixelFormatName);
     lines << QStringLiteral("Photometric: %1").arg(r.photometric);
-    lines << QStringLiteral("Samples per pixel: %1").arg(r.samplesPerPixel);
-    lines << QStringLiteral("Bits per sample: %1").arg(r.bitsPerSample);
     lines << QStringLiteral("Stored bit depth: %1-bit").arg(r.storedBitDepth);
 
     lines << QString();
-    lines << QStringLiteral("[Value Evidence]");
-    lines << QStringLiteral("Conclusion: %1").arg(conclusion);
-    lines << QStringLiteral("Estimated actual data depth: %1-bit").arg(r.effectiveBitDepth);
+    lines << QStringLiteral("[Sample Values]");
     lines << QStringLiteral("Value range: %1 .. %2").arg(r.minValue).arg(r.maxValue);
     lines << QStringLiteral("Unique values: %1").arg(r.uniqueValueCount);
-    lines << QStringLiteral("Values above 255: %1").arg(hasOver8BitValues ? QStringLiteral("Yes") : QStringLiteral("No"));
+    lines << QStringLiteral("Values above 255: %1").arg(r.maxValue > 255 ? QStringLiteral("Yes") : QStringLiteral("No"));
 
     lines << QString();
-    lines << QStringLiteral("[Ramp Check]");
-    if (!rampCheckApplicable)
-    {
-        lines << QStringLiteral("Status: Not applicable");
-        lines << QStringLiteral("Reason: Only used for generated grayscale ramp test images.");
-    }
-    else if (r.rampStatus == GCAP_TIFF_RAMP_DETECTED_VALID || r.likelyTenBitRamp)
-    {
-        lines << QStringLiteral("Status: Valid grayscale ramp detected");
-        lines << QStringLiteral("Result: The image looks like a generated grayscale ramp test image.");
-        lines << QStringLiteral("10-bit ramp evidence: Yes");
-
-        if (r.sampledRowY >= 0 && !r.sampledRowRaw16Csv.isEmpty())
-        {
-            lines << QString();
-            lines << QStringLiteral("[Ramp Sample]");
-            lines << QStringLiteral("Row: Y=%1 (%2)").arg(r.sampledRowY).arg(r.sampledRowSource);
-            lines << QStringLiteral("Logical 10-bit range: 0..1023");
-            if (!r.sampledRowLogical10Rule.isEmpty())
-                lines << QStringLiteral("Conversion rule: %1").arg(r.sampledRowLogical10Rule);
-            lines << QStringLiteral("Raw 16-bit values:");
-            lines << r.sampledRowRaw16Csv;
-            lines << QStringLiteral("Converted 10-bit values:");
-            lines << r.sampledRowLogical10Csv;
-        }
-    }
-    else
-    {
-        lines << QStringLiteral("Status: Ramp-like image detected, but not valid");
-        lines << QStringLiteral("Result: The image has some ramp-like characteristics, but it is not continuous enough to be treated as a valid ramp test image.");
-        lines << QStringLiteral("10-bit ramp evidence: No");
-    }
+    lines << QStringLiteral("[Preview Buffer]");
+    lines << QStringLiteral("Viewer format: RGBA64");
+    lines << QStringLiteral("Preview stride: %1 bytes").arg(r.previewStrideBytes);
+    lines << QStringLiteral("Preview data size: %1 bytes").arg(r.previewRgba64.size());
 
     return lines.join('\n');
 }
