@@ -93,10 +93,6 @@ private:
     QImage lastFrameImage_;
     QString recordAudioDeviceIdUtf8_;
 
-    // GPU adapter selection for NV12 -> RGBA rendering.
-    int gpuIndex_ = -1;
-    QString gpuName_;
-
     // Debug log panel.
     QDockWidget *debugDock_ = nullptr;
     QPlainTextEdit *debugText_ = nullptr;
@@ -179,7 +175,6 @@ private:
     void refreshPixelFormatOptions(bool showFailurePrompt = false);
     void notifyPixelFormatEnumerationFailure(int backend);
     void initializeDeviceList();
-    void initializeGpuList();
     void setupConnections();
     void logStartupInfo();
     void resetRuntimeTracking();

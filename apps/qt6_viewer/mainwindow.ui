@@ -92,7 +92,6 @@ QLabel#sectionTitleStatus {
 
 QLabel#labelDevice,
 QLabel#labelBackend,
-QLabel#labelGpu,
 QLabel#labelPixelFormat,
 QLabel#labelBitDepth {
     color: #9db3c7;
@@ -394,33 +393,23 @@ QPushButton#btnStop:pressed {
             <widget class="QComboBox" name="comboBackend"/>
            </item>
            <item row="2" column="0">
-            <widget class="QLabel" name="labelGpu">
-             <property name="text">
-              <string>GPU</string>
-             </property>
-            </widget>
-           </item>
-           <item row="2" column="1">
-            <widget class="QComboBox" name="comboGpu"/>
-           </item>
-           <item row="3" column="0">
             <widget class="QLabel" name="labelPixelFormat">
              <property name="text">
               <string>Pixel</string>
              </property>
             </widget>
            </item>
-           <item row="3" column="1">
+           <item row="2" column="1">
             <widget class="QComboBox" name="comboPixelFormat"/>
            </item>
-           <item row="4" column="0">
+           <item row="3" column="0">
             <widget class="QLabel" name="labelBitDepth">
              <property name="text">
               <string>Preview</string>
              </property>
             </widget>
            </item>
-           <item row="4" column="1">
+           <item row="3" column="1">
             <widget class="QComboBox" name="comboPreviewBitDepth">
              <property name="enabled">
               <bool>true</bool>

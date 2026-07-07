@@ -661,6 +661,7 @@ bool WinMFProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     out.negotiated.hdr = -1;
 
     const bool gpu = (use_dxgi_ && !cpu_path_);
+    out.preview_adapter_index = -1;
     out.runtime_fps = fps_avg_;
     out.active_backend = gpu ? GCAP_BACKEND_WINMF_GPU : GCAP_BACKEND_WINMF_CPU;
     strcpy_s(out.backend_name, gpu ? "WinMF GPU" : "WinMF CPU");
@@ -668,6 +669,11 @@ bool WinMFProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     strcpy_s(out.path_name, gpu ? "WinMF GPU Preview" : "WinMF CPU Preview");
     strcpy_s(out.source_format, gcap_subtype_name(cur_subtype_));
     strcpy_s(out.render_format, gpu ? (pipeline_ && pipeline_->preview_swapchain_10bit() ? "FP16 Scene -> 10bit Swapchain" : "FP16 Scene -> 8bit Swapchain") : "BGRA8 CPU");
+    if (gpu && !gpu_name_w_.empty())
+    {
+        const std::string gpuName = wide_to_utf8(gpu_name_w_);
+        strcpy_s(out.preview_adapter_name, gpuName.c_str());
+    }
     fill_runtime_signal_text_mf(out, cur_subtype_);
     return true;
 }

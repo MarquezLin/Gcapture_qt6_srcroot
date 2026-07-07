@@ -35,9 +35,6 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <dxgi1_2.h>
-#include <wrl.h>
-using Microsoft::WRL::ComPtr;
 #endif
 
 static MainWindow *g_mainWindow = nullptr;
@@ -439,7 +436,7 @@ MainWindow::MainWindow(QWidget *parent)
     setupBackendControls();
     setupPreviewBitDepthControls();
     initializeDeviceList();
-    initializeGpuList();
+    gcap_set_d3d_adapter(-1);
     setupConnections();
 
     auto *exitFullscreenShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
@@ -1318,55 +1315,6 @@ void MainWindow::initializeDeviceList()
     refreshPixelFormatOptions(true);
 }
 
-void MainWindow::initializeGpuList()
-{
-#ifdef _WIN32
-    if (!ui->comboGpu)
-        return;
-
-    ComPtr<IDXGIFactory1> fac;
-    if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void **>(fac.GetAddressOf()))) && fac)
-    {
-        UINT idx = 0;
-        while (true)
-        {
-            ComPtr<IDXGIAdapter1> ad;
-            HRESULT hr = fac->EnumAdapters1(idx, &ad);
-            if (hr == DXGI_ERROR_NOT_FOUND)
-                break;
-            if (FAILED(hr) || !ad)
-            {
-                ++idx;
-                continue;
-            }
-
-            DXGI_ADAPTER_DESC1 desc{};
-            if (SUCCEEDED(ad->GetDesc1(&desc)))
-            {
-                if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
-                {
-                    ++idx;
-                    continue;
-                }
-                QString name = QString::fromWCharArray(desc.Description);
-                ui->comboGpu->addItem(name, static_cast<int>(idx));
-            }
-            ++idx;
-        }
-    }
-
-    if (ui->comboGpu->count() == 0)
-        ui->comboGpu->addItem(QStringLiteral("Default GPU (DXGI)"), -1);
-
-    ui->comboGpu->setCurrentIndex(0);
-    gpuIndex_ = ui->comboGpu->currentData().toInt();
-    gpuName_ = ui->comboGpu->currentText();
-    gcap_set_d3d_adapter(gpuIndex_);
-#else
-    Q_UNUSED(this);
-#endif
-}
-
 void MainWindow::setupConnections()
 {
     if (ui->comboDevice)
@@ -1440,21 +1388,6 @@ void MainWindow::setupConnections()
                 this, [this](int)
                 { applyPreviewSettingsToActiveSession(); });
     }
-
-#ifdef _WIN32
-    if (ui->comboGpu)
-    {
-        connect(ui->comboGpu,
-                QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this,
-                [this](int idx)
-                {
-                    gpuIndex_ = ui->comboGpu->itemData(idx).toInt();
-                    gpuName_ = ui->comboGpu->itemText(idx);
-                    gcap_set_d3d_adapter(gpuIndex_);
-                });
-    }
-#endif
 
     connect(ui->btnStart, &QPushButton::clicked, this, &MainWindow::onStart);
     connect(ui->btnStop, &QPushButton::clicked, this, &MainWindow::onStop);

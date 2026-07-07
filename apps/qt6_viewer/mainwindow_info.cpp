@@ -430,25 +430,32 @@ void MainWindow::refreshDisplayInfoFromFrame(const QImage &img)
     displayInfo_.pipe = {};
     int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
     int actualBackend = backend;
+    gcap_runtime_info_t runtimeInfo{};
+    bool hasRuntimeInfo = false;
     if (h_)
     {
+        hasRuntimeInfo = (gcap_get_runtime_info(h_, &runtimeInfo) == GCAP_OK);
+        if (hasRuntimeInfo && runtimeInfo.active_backend >= 0)
+            actualBackend = runtimeInfo.active_backend;
         int q = gcap_get_active_backend(h_);
-        if (q >= 0)
+        if (!hasRuntimeInfo && q >= 0)
             actualBackend = q;
     }
 
     if (actualBackend == GCAP_BACKEND_WINMF_GPU)
     {
         displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::WinMFGpu;
-        displayInfo_.pipe.adapterName = gpuName_;
-        displayInfo_.pipe.adapterIndex = gpuIndex_;
     }
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     else if (backend == kQtViewerGvfgBackend || usingGvfg_)
     {
         displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::Gvfg;
-        displayInfo_.pipe.adapterName = gpuName_;
-        displayInfo_.pipe.adapterIndex = gpuIndex_;
+        if (usingGvfg_ && gvfg_)
+        {
+            const gvfg_preview_info_t previewInfo = gvfg_->previewInfo();
+            displayInfo_.pipe.adapterName = QString::fromUtf8(previewInfo.adapter_name);
+            displayInfo_.pipe.adapterIndex = previewInfo.adapter_index;
+        }
     }
 #endif
     else if (actualBackend == GCAP_BACKEND_WINMF_CPU)
@@ -458,6 +465,12 @@ void MainWindow::refreshDisplayInfoFromFrame(const QImage &img)
     else
     {
         displayInfo_.pipe.path = DisplayOutputInfo::Pipeline::Path::DirectShow;
+    }
+
+    if (hasRuntimeInfo)
+    {
+        displayInfo_.pipe.adapterName = QString::fromUtf8(runtimeInfo.preview_adapter_name);
+        displayInfo_.pipe.adapterIndex = runtimeInfo.preview_adapter_index;
     }
 }
 

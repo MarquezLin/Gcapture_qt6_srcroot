@@ -6,17 +6,41 @@ static QString pipelineToString(const DisplayOutputInfo::Pipeline &p)
     switch (p.path)
     {
     case Path::WinMFGpu:
-        return QStringLiteral("NV12 -> RGBA: GPU path (WinMF GPU), Adapter: %1 (index %2)")
-            .arg(p.adapterName.isEmpty() ? QStringLiteral("(default)") : p.adapterName)
-            .arg(p.adapterIndex);
+        return QStringLiteral("NV12 -> RGBA: GPU path (WinMF GPU)");
     case Path::WinMFCpu:
         return QStringLiteral("NV12 -> RGBA: CPU path (WinMF CPU)");
     case Path::DirectShow:
-        return QStringLiteral("NV12 -> RGBA: N/A (DirectShow backend)");
+        return QStringLiteral("DirectShow preview path");
     case Path::Gvfg:
         return QStringLiteral("YUY2 -> RGB: GPU shader path (GVFG)");
     default:
         return QStringLiteral("NV12 -> RGBA: (unknown)");
+    }
+}
+
+static QString previewGpuToString(const DisplayOutputInfo::Pipeline &p)
+{
+    using Path = DisplayOutputInfo::Pipeline::Path;
+
+    if (!p.adapterName.isEmpty())
+    {
+        if (p.adapterIndex >= 0)
+            return QStringLiteral("Preview GPU: %1 (DXGI index %2)").arg(p.adapterName).arg(p.adapterIndex);
+        return QStringLiteral("Preview GPU: %1").arg(p.adapterName);
+    }
+
+    switch (p.path)
+    {
+    case Path::WinMFCpu:
+        return QStringLiteral("Preview GPU: none (WinMF CPU path)");
+    case Path::Gvfg:
+        return QStringLiteral("Preview GPU: not reported by GVFG preview helper");
+    case Path::DirectShow:
+        return QStringLiteral("Preview GPU: not reported by active DirectShow renderer");
+    case Path::WinMFGpu:
+        return QStringLiteral("Preview GPU: system default (adapter name unavailable)");
+    default:
+        return QStringLiteral("Preview GPU: unknown");
     }
 }
 
@@ -66,6 +90,7 @@ QString formatDisplayOutputInfo(const DisplayOutputInfo &info)
 
     // 4) Pipeline
     lines << pipelineToString(info.pipe);
+    lines << previewGpuToString(info.pipe);
 
     return lines.join('\n');
 }

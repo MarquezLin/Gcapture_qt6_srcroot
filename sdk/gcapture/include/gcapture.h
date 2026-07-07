@@ -211,6 +211,8 @@ extern "C"
         char path_name[64];                /** Display string describing active preview/capture path. */
         char source_format[32];            /** Legacy display field: negotiated media subtype name. */
         char render_format[32];            /** Display field: canvas / scene processing format. */
+        char preview_adapter_name[160];    /** Actual D3D/DXGI adapter used by SDK preview processing when reported. */
+        int preview_adapter_index;         /** DXGI adapter index for preview_adapter_name, or -1 when unknown/default not resolved. */
         char input_signal_desc[64];        /** Display field: RGB/YUV, color space, bit depth, may be inferred. */
         char input_signal_note[32];        /** Display field: Inferred / Driver / Unknown. */
         char negotiated_desc[32];          /** Display field: RGB24 / NV12 / YUY2 / ARGB32 / etc. */

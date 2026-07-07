@@ -115,7 +115,6 @@ QLabel#appTitle {
 
 QLabel#labelDevice,
 QLabel#labelBackend,
-QLabel#labelGpu,
 QLabel#labelPixelFormat,
 QLabel#labelBitDepth {
     color: #9db3c7;

@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <dshow.h>
 #include <d3d9.h>
+#include <dxgi1_2.h>
 #include <vmr9.h>
 #include <evcode.h>
 #include "../core/logging.h"
@@ -111,6 +112,59 @@ namespace
         char buf[128] = {};
         WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, buf, static_cast<int>(sizeof(buf)), nullptr, nullptr);
         return std::string(buf);
+    }
+
+    static bool sameLuid(const LUID &a, const LUID &b)
+    {
+        return a.LowPart == b.LowPart && a.HighPart == b.HighPart;
+    }
+
+    static int dxgiAdapterIndexForLuid(const LUID &luid)
+    {
+        ComPtr<IDXGIFactory1> factory;
+        if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || !factory)
+            return -1;
+
+        for (UINT i = 0;; ++i)
+        {
+            ComPtr<IDXGIAdapter1> adapter;
+            const HRESULT hr = factory->EnumAdapters1(i, &adapter);
+            if (hr == DXGI_ERROR_NOT_FOUND)
+                break;
+            if (FAILED(hr) || !adapter)
+                continue;
+
+            DXGI_ADAPTER_DESC1 desc{};
+            if (SUCCEEDED(adapter->GetDesc1(&desc)) && sameLuid(desc.AdapterLuid, luid))
+                return static_cast<int>(i);
+        }
+        return -1;
+    }
+
+    static void fillPreviewAdapterInfo(ID3D11Device *device, gcap_runtime_info_t &out)
+    {
+        out.preview_adapter_index = -1;
+        if (!device)
+            return;
+
+        ComPtr<IDXGIDevice> dxgiDevice;
+        if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dxgiDevice))) || !dxgiDevice)
+            return;
+
+        ComPtr<IDXGIAdapter> adapter;
+        if (FAILED(dxgiDevice->GetAdapter(&adapter)) || !adapter)
+            return;
+
+        DXGI_ADAPTER_DESC desc{};
+        if (FAILED(adapter->GetDesc(&desc)))
+            return;
+
+        char name[sizeof(out.preview_adapter_name)] = {};
+        WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1,
+                            name, static_cast<int>(sizeof(name)), nullptr, nullptr);
+        if (name[0])
+            strcpy_s(out.preview_adapter_name, name);
+        out.preview_adapter_index = dxgiAdapterIndexForLuid(desc.AdapterLuid);
     }
 
 
@@ -833,6 +887,7 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     }
 
     out.runtime_fps = rawRenderer_.runtimeFpsAvg();
+    out.preview_adapter_index = -1;
     out.active_backend = GCAP_BACKEND_DSHOW;
     strcpy_s(out.backend_name, rawOnlyActive_ ? "DShow Raw" : "DShow");
     strcpy_s(out.path_name, rawOnlyActive_ ? "DShow Raw Preview" : "DShow VMR9 Preview");
@@ -846,6 +901,8 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
         strcpy_s(out.render_format, pipeline_ ? (pipeline_->preview_swapchain_10bit() ? "FP16 Scene -> 10bit Swapchain" : "FP16 Scene -> 8bit Swapchain") : "FP16 Scene");
     else
         strcpy_s(out.render_format, "Renderer Native");
+    if (rawOnlyActive_)
+        fillPreviewAdapterInfo(d3d_.Get(), out);
     fill_runtime_signal_text(out);
     // BackendFmt in the UI should show the DirectShow subtype that is actually active
     // after graph/raw-sink negotiation. Do not collapse HDYC/UYVY into generic YUY2.

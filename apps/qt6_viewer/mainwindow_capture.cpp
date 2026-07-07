@@ -451,8 +451,7 @@ void MainWindow::onStart()
 #endif
 
     gcap_set_backend(backend);
-    if (ui->comboGpu)
-        gcap_set_d3d_adapter(ui->comboGpu->currentData().toInt());
+    gcap_set_d3d_adapter(-1);
 
     gcap_status_t st = gcap_create(&h_);
     if (st != GCAP_OK || !h_)

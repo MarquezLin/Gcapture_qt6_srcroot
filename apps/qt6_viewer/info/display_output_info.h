@@ -43,7 +43,7 @@ struct DisplayOutputInfo
         };
 
         Path path = Path::Unknown;
-        QString adapterName; // "NVIDIA ..."
+        QString adapterName; // Actual preview-processing GPU when reported.
         int adapterIndex = -1;
 
         // 你若想也可以加 negotiated pixfmt / bitdepth 等
