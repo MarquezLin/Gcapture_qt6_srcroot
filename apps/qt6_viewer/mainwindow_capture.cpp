@@ -185,6 +185,7 @@ void MainWindow::stopRecordingSession(bool showSummary)
     if (usingGvfg_ && gvfg_)
     {
         const uint64_t framesWritten = gvfg_->recordingFrames();
+        const gvfg_runtime_info_t runtimeInfo = gvfg_->runtimeInfo();
         gvfg_->stopRecording();
         recording_ = false;
         ui->btnRecord->setText(QStringLiteral("Record"));
@@ -215,8 +216,12 @@ void MainWindow::stopRecordingSession(bool showSummary)
             const double seconds = ms / 1000.0;
             const double bitrateKbps = seconds > 0.0 ? (sizeBytes * 8.0 / 1000.0) / seconds : 0.0;
             const double captureFps = seconds > 0.0 ? double(framesWritten) / seconds : avgFps_;
-            const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
-            const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
+            const int srcW = runtimeInfo.last_frame.valid && runtimeInfo.last_frame.width > 0
+                                 ? runtimeInfo.last_frame.width
+                                 : (lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width);
+            const int srcH = runtimeInfo.last_frame.valid && runtimeInfo.last_frame.height > 0
+                                 ? runtimeInfo.last_frame.height
+                                 : (lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height);
 
             const QString info = QStringLiteral(
                                      "Record done\n"
@@ -680,8 +685,14 @@ void MainWindow::onRecord()
                                 .arg(fpsDen));
         const gcap_pixfmt_t recFmt = gvfgRecordingFormatFromRuntime(rt, currentProfile_.format);
         const bool hevc = ui->comboRecordCodec && ui->comboRecordCodec->currentIndex() == 1;
-        const int width = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
-        const int height = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
+        const int width = rt.last_frame.valid && rt.last_frame.width > 0
+                              ? rt.last_frame.width
+                              : (lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width);
+        const int height = rt.last_frame.valid && rt.last_frame.height > 0
+                               ? rt.last_frame.height
+                               : (lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height);
+        currentProfile_.width = width;
+        currentProfile_.height = height;
         const gcap_pixfmt_t bitrateFmt = hevc ? recFmt : GCAP_FMT_YUY2;
         const int bitrateKbps = gcap_ffmpeg_recommended_bitrate_kbps(width, height, fpsNum, fpsDen, bitrateFmt);
 
@@ -705,8 +716,8 @@ void MainWindow::onRecord()
 
         if (ui->statusbar)
         {
-            const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
-            const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
+            const int srcW = width;
+            const int srcH = height;
             ui->statusbar->showMessage(QStringLiteral("Record mode: GVFG + FFmpeg MP4 | Encoder: %1 | %2 x %3")
                                            .arg(recordEncoderName_)
                                            .arg(srcW)
