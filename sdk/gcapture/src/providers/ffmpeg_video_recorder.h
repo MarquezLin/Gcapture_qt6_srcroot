@@ -1,9 +1,34 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 
 #include "gcapture.h"
+
+inline int gcap_ffmpeg_recommended_bitrate_kbps(int width, int height, int fps_num, int fps_den, gcap_pixfmt_t input_format)
+{
+    const bool useHevc = input_format == GCAP_FMT_P010 || input_format == GCAP_FMT_Y210;
+    if (width <= 0 || height <= 0)
+        return useHevc ? 12000 : 8000;
+
+    const int shortEdge = (std::min)(width, height);
+    const double fps = (fps_den > 0) ? (static_cast<double>(fps_num) / static_cast<double>(fps_den)) : static_cast<double>(fps_num);
+    const bool highFps = fps > 40.0;
+
+    // H.264 values follow YouTube's SDR upload recommendations; HEVC uses a conservative lower table.
+    if (shortEdge >= 4320)
+        return useHevc ? (highFps ? 160000 : 110000) : (highFps ? 240000 : 160000);
+    if (shortEdge >= 2160)
+        return useHevc ? (highFps ? 45000 : 30000) : (highFps ? 68000 : 45000);
+    if (shortEdge >= 1440)
+        return useHevc ? (highFps ? 16000 : 11000) : (highFps ? 24000 : 16000);
+    if (shortEdge >= 1080)
+        return useHevc ? (highFps ? 9000 : 6000) : (highFps ? 12000 : 8000);
+    if (shortEdge >= 720)
+        return useHevc ? (highFps ? 5000 : 3500) : (highFps ? 7500 : 5000);
+    return useHevc ? (highFps ? 3000 : 2000) : (highFps ? 4000 : 2500);
+}
 
 struct FfmpegVideoRecordConfig
 {
@@ -19,9 +44,10 @@ struct FfmpegVideoRecordConfig
     //   NV12/YUY2/ARGB -> H.264 8-bit
     //   P010/Y210     -> HEVC when available
     //
-    // Release builds are expected to use an LGPL shared FFmpeg build. The
-    // recorder uses Media Foundation encoders instead of GPL-only encoders.
+    // Release builds are expected to use an LGPL shared FFmpeg build. Prefer
+    // Intel Quick Sync, then Media Foundation, then an LGPL software encoder.
     bool force_hevc_main10 = false;
+    bool force_h264 = false;
 };
 
 struct FfmpegVideoFrameView

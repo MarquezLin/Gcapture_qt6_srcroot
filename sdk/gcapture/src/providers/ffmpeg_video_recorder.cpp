@@ -84,11 +84,14 @@ static const AVCodec *findEncoderByNameList(const char *const *names)
 static const AVCodec *findReleaseEncoder(bool useHevc)
 {
     static const char *const h264Encoders[] = {
+        "h264_qsv",
         "h264_mf",
+        "libopenh264",
         nullptr,
     };
     static const char *const hevcEncoders[] = {
-        "hevc_mf",
+        "hevc_qsv",
+        "libkvazaar",
         nullptr,
     };
     return findEncoderByNameList(useHevc ? hevcEncoders : h264Encoders);
@@ -119,7 +122,7 @@ static const char *pixFmtName(AVPixelFormat fmt)
 
 static AVPixelFormat chooseOutputFormat(const AVCodec *codec, bool useHevc)
 {
-    if (codecNameEquals(codec, "h264_mf") || codecNameEquals(codec, "hevc_mf"))
+    if (codecNameEquals(codec, "h264_mf"))
     {
         if (codecSupportsPixFmt(codec, AV_PIX_FMT_NV12))
             return AV_PIX_FMT_NV12;
@@ -238,7 +241,7 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     }
 
     cfg_ = cfg;
-    const bool useHevc = wantsHevcMain10(cfg.input_format, cfg.force_hevc_main10);
+    const bool useHevc = !cfg.force_h264 && wantsHevcMain10(cfg.input_format, cfg.force_hevc_main10);
 
     int ret = avformat_alloc_output_context2(&impl_->fmt, nullptr, nullptr, cfg.path.c_str());
     if (ret < 0 || !impl_->fmt)
@@ -253,8 +256,8 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     {
         setErr(error,
                useHevc
-                   ? "HEVC encoder not found. Use an LGPL shared FFmpeg build with hevc_mf."
-                   : "H.264 encoder not found. Use an LGPL shared FFmpeg build with h264_mf.");
+                   ? "HEVC Main10 encoder not found. Install an LGPL shared FFmpeg build with hevc_qsv or libkvazaar."
+                   : "H.264 encoder not found. Install an LGPL shared FFmpeg build with h264_qsv, h264_mf, or libopenh264.");
         close();
         return false;
     }

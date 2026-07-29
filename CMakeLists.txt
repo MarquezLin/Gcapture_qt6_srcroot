@@ -36,7 +36,7 @@ endif()
 
 option(BUILD_GVFG_SDK "Enable external GVFG SDK viewer integration" ${_DEFAULT_BUILD_GVFG_SDK})
 set(GVFG_STANDALONE_ROOT "${_DEFAULT_GVFG_STANDALONE_ROOT}" CACHE PATH "GVFG standalone SDK source root")
-set(GVFG_STANDALONE_BUILD_DIR "" CACHE PATH "GVFG standalone SDK build directory containing bin/gvfg.dll and lib/gvfg.lib")
+set(GVFG_STANDALONE_BUILD_DIR "${GVFG_STANDALONE_ROOT}/build" CACHE PATH "GVFG standalone SDK build root or directory containing bin/gvfg.dll and lib/gvfg.lib")
 
 # SDK / DLLs
 add_subdirectory(sdk/gcapture)
@@ -48,10 +48,38 @@ if (WIN32 AND BUILD_GVFG_SDK)
   endif()
 
   set(_gvfg_build_dir "${GVFG_STANDALONE_BUILD_DIR}")
-  if (NOT _gvfg_build_dir)
-    file(GLOB _gvfg_build_candidates LIST_DIRECTORIES true "${GVFG_STANDALONE_ROOT}/build/*")
+  if (_gvfg_build_dir AND
+      (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg.dll" OR
+       NOT EXISTS "${_gvfg_build_dir}/lib/gvfg.lib"))
+    file(GLOB _gvfg_build_candidates LIST_DIRECTORIES true "${_gvfg_build_dir}/*")
+
+    # Prefer a build produced by the same compiler and configuration as this
+    # viewer.  Taking the first directory can silently link a Release viewer
+    # against the much slower Debug GVFG preview helper.
+    set(_gvfg_preferred_suffix "-${CMAKE_BUILD_TYPE}")
+    if (MSVC)
+      set(_gvfg_preferred_compiler "MSVC")
+    else()
+      set(_gvfg_preferred_compiler "${CMAKE_CXX_COMPILER_ID}")
+    endif()
     foreach(_candidate IN LISTS _gvfg_build_candidates)
-      if (EXISTS "${_candidate}/bin/gvfg.dll" AND EXISTS "${_candidate}/lib/gvfg.lib")
+      get_filename_component(_candidate_name "${_candidate}" NAME)
+      if (_candidate_name MATCHES "${_gvfg_preferred_compiler}" AND
+          _candidate_name MATCHES "${_gvfg_preferred_suffix}$" AND
+          EXISTS "${_candidate}/bin/gvfg.dll" AND
+          EXISTS "${_candidate}/lib/gvfg.lib" AND
+          EXISTS "${_candidate}/bin/gvfg_preview.dll" AND
+          EXISTS "${_candidate}/lib/gvfg_preview.lib")
+        set(_gvfg_build_dir "${_candidate}")
+        break()
+      endif()
+    endforeach()
+
+    foreach(_candidate IN LISTS _gvfg_build_candidates)
+      if ((NOT EXISTS "${_gvfg_build_dir}/bin/gvfg.dll" OR
+           NOT EXISTS "${_gvfg_build_dir}/lib/gvfg.lib") AND
+          EXISTS "${_candidate}/bin/gvfg.dll" AND
+          EXISTS "${_candidate}/lib/gvfg.lib")
         set(_gvfg_build_dir "${_candidate}")
         break()
       endif()
@@ -59,7 +87,7 @@ if (WIN32 AND BUILD_GVFG_SDK)
   endif()
 
   if (NOT _gvfg_build_dir)
-    message(FATAL_ERROR "Could not find GVFG standalone build output. Set GVFG_STANDALONE_BUILD_DIR to a directory containing bin/gvfg.dll and lib/gvfg.lib.")
+    message(FATAL_ERROR "Could not find GVFG standalone build output under GVFG_STANDALONE_BUILD_DIR.")
   endif()
   if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg.lib")
     message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg.dll and lib/gvfg.lib: ${_gvfg_build_dir}")

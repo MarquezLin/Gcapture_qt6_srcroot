@@ -1,6 +1,7 @@
 #include "gvfg_source.h"
 
 #include <chrono>
+#include <cstring>
 
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
 #include "ffmpeg_video_recorder.h"
@@ -16,14 +17,10 @@ QString gvfgEventName(gvfg_event_type_t type)
 {
     switch (type)
     {
-    case GVFG_EVENT_PLUG_IN:
-        return QStringLiteral("PLUG_IN");
-    case GVFG_EVENT_PLUG_OUT:
-        return QStringLiteral("PLUG_OUT");
-    case GVFG_EVENT_CAPTURE_PAUSED:
-        return QStringLiteral("CAPTURE_PAUSED");
-    case GVFG_EVENT_CAPTURE_RESUMED:
-        return QStringLiteral("CAPTURE_RESUMED");
+    case GVFG_EVENT_SIGNAL_CONNECTED:
+        return QStringLiteral("SIGNAL_CONNECTED");
+    case GVFG_EVENT_SIGNAL_DISCONNECTED:
+        return QStringLiteral("SIGNAL_DISCONNECTED");
     default:
         return QStringLiteral("UNKNOWN");
     }
@@ -114,43 +111,14 @@ QImage frameToImage(const gvfg_frame_t &frame)
 }
 
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
-int gvfgPixelFormatFromName(const char *name)
-{
-    const QString fmt = QString::fromUtf8(name ? name : "").trimmed().toUpper();
-    if (fmt == QStringLiteral("YUY2"))
-        return GVFG_PIXFMT_YUY2;
-    if (fmt == QStringLiteral("UYVY"))
-        return GVFG_PIXFMT_UYVY;
-    if (fmt == QStringLiteral("NV12"))
-        return GVFG_PIXFMT_NV12;
-    if (fmt == QStringLiteral("P010"))
-        return GVFG_PIXFMT_P010;
-    if (fmt == QStringLiteral("Y210"))
-        return GVFG_PIXFMT_Y210;
-    if (fmt == QStringLiteral("BGRA8") || fmt == QStringLiteral("BGRA"))
-        return GVFG_PIXFMT_BGRA8;
-    if (fmt == QStringLiteral("BGRX32"))
-        return GVFG_PIXFMT_BGRX32;
-    if (fmt == QStringLiteral("RGB24"))
-        return GVFG_PIXFMT_RGB24;
-    return GVFG_PIXFMT_UNKNOWN;
-}
-
 gcap_pixfmt_t gcapPixelFormatForGvfg(int pixelFormat)
 {
     switch (pixelFormat)
     {
     case GVFG_PIXFMT_YUY2:
         return GCAP_FMT_YUY2;
-    case GVFG_PIXFMT_NV12:
-        return GCAP_FMT_NV12;
-    case GVFG_PIXFMT_P010:
-        return GCAP_FMT_P010;
     case GVFG_PIXFMT_Y210:
         return GCAP_FMT_Y210;
-    case GVFG_PIXFMT_BGRA8:
-    case GVFG_PIXFMT_BGRX32:
-        return GCAP_FMT_ARGB;
     default:
         return static_cast<gcap_pixfmt_t>(-1);
     }
@@ -184,39 +152,6 @@ bool makeFfmpegFrameView(const gvfg_frame_t &frame, int64_t pts, FfmpegVideoFram
         return true;
     }
     case GVFG_PIXFMT_Y210:
-    {
-        const int rowBytes = frame.width * 4;
-        if (!layoutPlaneHasRows(layout, 0, frame.height, rowBytes))
-            return false;
-        out.data[0] = static_cast<const uint8_t *>(layout.plane_data[0]);
-        out.stride[0] = layout.plane_stride[0];
-        return true;
-    }
-    case GVFG_PIXFMT_NV12:
-    {
-        if (!layoutPlaneHasRows(layout, 0, frame.height, frame.width) ||
-            !layoutPlaneHasRows(layout, 1, (frame.height + 1) / 2, frame.width))
-            return false;
-        out.data[0] = static_cast<const uint8_t *>(layout.plane_data[0]);
-        out.data[1] = static_cast<const uint8_t *>(layout.plane_data[1]);
-        out.stride[0] = layout.plane_stride[0];
-        out.stride[1] = layout.plane_stride[1];
-        return true;
-    }
-    case GVFG_PIXFMT_P010:
-    {
-        const int rowBytes = frame.width * 2;
-        if (!layoutPlaneHasRows(layout, 0, frame.height, rowBytes) ||
-            !layoutPlaneHasRows(layout, 1, (frame.height + 1) / 2, rowBytes))
-            return false;
-        out.data[0] = static_cast<const uint8_t *>(layout.plane_data[0]);
-        out.data[1] = static_cast<const uint8_t *>(layout.plane_data[1]);
-        out.stride[0] = layout.plane_stride[0];
-        out.stride[1] = layout.plane_stride[1];
-        return true;
-    }
-    case GVFG_PIXFMT_BGRA8:
-    case GVFG_PIXFMT_BGRX32:
     {
         const int rowBytes = frame.width * 4;
         if (!layoutPlaneHasRows(layout, 0, frame.height, rowBytes))
@@ -273,15 +208,16 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         return false;
     }
 
-    st = gvfg_open(handle_, std::max(0, deviceIndex));
+    st = gvfg_open_channel(handle_, std::max(0, deviceIndex), GVFG_CHANNEL_0);
     if (st != GVFG_OK)
     {
-        emit errorOccurred(QStringLiteral("gvfg_open failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
+        emit errorOccurred(QStringLiteral("gvfg_open_channel failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
         stop();
         return false;
     }
 
     gvfg_runtime_info_t preStartInfo{};
+    preStartInfo.struct_size = sizeof(preStartInfo);
     if (gvfg_get_runtime_info(handle_, &preStartInfo) == GVFG_OK)
         emit preStartRuntimeInfoReady(preStartInfo);
 
@@ -357,13 +293,14 @@ void GvfgSource::stop()
     }
 }
 
-bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error)
+bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, bool useHevc, QString *error)
 {
 #ifndef QT6_VIEWER_ENABLE_GVFG_RECORDING
     Q_UNUSED(path);
     Q_UNUSED(fpsNum);
     Q_UNUSED(fpsDen);
     Q_UNUSED(bitrateKbps);
+    Q_UNUSED(useHevc);
     if (error)
         *error = QStringLiteral("GVFG recording is not enabled in this build because FFmpeg headers/libs were not found.");
     return false;
@@ -376,6 +313,7 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
     }
 
     gvfg_runtime_info_t info{};
+    info.struct_size = sizeof(info);
     if (!handle_ || gvfg_get_runtime_info(handle_, &info) != GVFG_OK || !info.last_frame.valid)
     {
         if (error)
@@ -383,9 +321,25 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         return false;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex_);
+        if (recording_)
+        {
+            if (error)
+                *error = QStringLiteral("GVFG recording is already running.");
+            return false;
+        }
+    }
+
+    // Reap a worker that has already finished before publishing a new
+    // recording state. Joining after clearing stopRequested can revive an old
+    // waiter and race it with the new session.
+    if (recordingThread_.joinable())
+        recordingThread_.join();
+
     int width = info.last_frame.width;
     int height = info.last_frame.height;
-    int pixelFormat = recordingPixelFormat_;
+    int pixelFormat = GVFG_PIXFMT_UNKNOWN;
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
         if (recording_)
@@ -399,7 +353,7 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         pixelFormat = recordingPixelFormat_;
     }
     if (pixelFormat == GVFG_PIXFMT_UNKNOWN)
-        pixelFormat = gvfgPixelFormatFromName(info.last_frame.pixel_format);
+        pixelFormat = info.last_frame.pixel_format;
 
     const gcap_pixfmt_t recordFmt = gcapPixelFormatForGvfg(pixelFormat);
     if (recordFmt == static_cast<gcap_pixfmt_t>(-1))
@@ -415,34 +369,42 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         recordingConfig_.fpsNum = fpsNum > 0 ? fpsNum : 30;
         recordingConfig_.fpsDen = fpsDen > 0 ? fpsDen : 1;
         recordingConfig_.bitrateKbps = bitrateKbps > 0 ? bitrateKbps : ((recordFmt == GCAP_FMT_P010 || recordFmt == GCAP_FMT_Y210) ? 12000 : 8000);
+        recordingConfig_.useHevc = useHevc;
         recording_ = true;
         recordingOpenPending_ = true;
+        recordingStopRequested_ = false;
         recordingFrames_ = 0;
+        recordingDroppedFrames_ = 0;
+        recordingFirstFrameId_ = 0;
         recordingWidth_ = width;
         recordingHeight_ = height;
         recordingPixelFormat_ = pixelFormat;
-        recorder_.reset();
+        recordingQueue_.clear();
     }
+    recordingThread_ = std::thread([this]() { recordingLoop(); });
     return true;
 #endif
 }
 
 void GvfgSource::stopRecording()
 {
-#ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
-    std::unique_ptr<FfmpegVideoRecorder> recorderToClose;
-#endif
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
         recording_ = false;
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
-        recordingOpenPending_ = false;
-        recorderToClose = std::move(recorder_);
+        recordingStopRequested_ = true;
 #endif
     }
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
-    if (recorderToClose)
-        recorderToClose->close();
+    recordingCv_.notify_all();
+    if (recordingThread_.joinable())
+        recordingThread_.join();
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex_);
+        recordingOpenPending_ = false;
+        recordingStopRequested_ = false;
+        recordingQueue_.clear();
+    }
 #endif
 }
 
@@ -495,6 +457,7 @@ QImage GvfgSource::captureSnapshot(int timeoutMs, QString *error)
 gvfg_signal_status_t GvfgSource::signalStatus() const
 {
     gvfg_signal_status_t status{};
+    status.struct_size = sizeof(status);
     if (handle_)
         gvfg_get_signal_status(handle_, &status);
     return status;
@@ -503,6 +466,7 @@ gvfg_signal_status_t GvfgSource::signalStatus() const
 gvfg_runtime_info_t GvfgSource::runtimeInfo() const
 {
     gvfg_runtime_info_t info{};
+    info.struct_size = sizeof(info);
     if (handle_)
         gvfg_get_runtime_info(handle_, &info);
     return info;
@@ -514,6 +478,15 @@ gvfg_preview_info_t GvfgSource::previewInfo() const
     if (previewHandle_)
         gvfg_preview_get_info(previewHandle_, &info);
     return info;
+}
+
+gvfg_preview_stats_t GvfgSource::previewStats() const
+{
+    gvfg_preview_stats_t stats{};
+    stats.struct_size = sizeof(stats);
+    if (previewHandle_)
+        gvfg_preview_get_stats(previewHandle_, &stats);
+    return stats;
 }
 
 void GvfgSource::readLoop()
@@ -543,7 +516,19 @@ void GvfgSource::readLoop()
             }
 
             if (previewHandle_)
-                gvfg_preview_render_frame(previewHandle_, &frame);
+            {
+                gvfg_preview_frame_t previewFrame{};
+                previewFrame.struct_size = sizeof(previewFrame);
+                previewFrame.data = frame.data;
+                previewFrame.data_size = frame.data_size;
+                previewFrame.width = frame.width;
+                previewFrame.height = frame.height;
+                previewFrame.pixel_format = frame.pixel_format;
+                previewFrame.bit_depth = frame.bit_depth;
+                previewFrame.row_bytes = frame.width * ((frame.pixel_format == GVFG_PIXFMT_Y210) ? 4 : 2);
+                previewFrame.frame_id = frame.frame_id;
+                gvfg_preview_render_frame(previewHandle_, &previewFrame);
+            }
 
             bool snapshotRequested = false;
             {
@@ -586,87 +571,172 @@ void GvfgSource::readLoop()
 void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
 {
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
-    std::string error;
-    bool failed = false;
-    std::unique_ptr<FfmpegVideoRecorder> recorderToClose;
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
-        if (!recording_ || (!recorder_ && !recordingOpenPending_))
+        if (!recording_ || recordingStopRequested_)
             return;
+    }
 
-        if (frame.width != recordingWidth_ || frame.height != recordingHeight_ || frame.pixel_format != recordingPixelFormat_)
+    gvfg_frame_layout_t layout{};
+    if (!getFrameLayout(frame, layout) ||
+        !layoutPlaneHasRows(layout, 0, frame.height,
+                            frame.width * ((frame.pixel_format == GVFG_PIXFMT_Y210) ? 4 : 2)))
+    {
+        emit errorOccurred(QStringLiteral("GVFG recording stopped: invalid frame layout"));
+        stopRecording();
+        return;
+    }
+
+    QueuedRecordingFrame queued;
+    queued.width = frame.width;
+    queued.height = frame.height;
+    queued.pixelFormat = frame.pixel_format;
+    queued.stride = layout.plane_stride[0];
+    queued.data.resize(static_cast<size_t>(queued.stride) * static_cast<size_t>(queued.height));
+    std::memcpy(queued.data.data(), layout.plane_data[0], queued.data.size());
+
+    bool formatChanged = false;
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex_);
+        if (!recording_ || recordingStopRequested_)
+            return;
+        if (frame.width != recordingWidth_ || frame.height != recordingHeight_ ||
+            frame.pixel_format != recordingPixelFormat_)
         {
-            error = "GVFG frame format changed while recording";
-            failed = true;
+            recording_ = false;
+            recordingStopRequested_ = true;
+            recordingQueue_.clear();
+            recordingCv_.notify_all();
+            formatChanged = true;
         }
         else
         {
-            if (recordingOpenPending_)
+            if (recordingFirstFrameId_ == 0)
+                recordingFirstFrameId_ = frame.frame_id;
+            queued.pts = static_cast<int64_t>(frame.frame_id - recordingFirstFrameId_);
+
+            constexpr size_t kMaxQueuedFrames = 8;
+            if (recordingQueue_.size() >= kMaxQueuedFrames)
             {
-                const gcap_pixfmt_t recordFmt = gcapPixelFormatForGvfg(recordingPixelFormat_);
-                if (recordFmt == static_cast<gcap_pixfmt_t>(-1))
-                {
-                    error = "GVFG frame format is not supported by the FFmpeg recorder";
-                    failed = true;
-                }
-                else
-                {
-                    FfmpegVideoRecordConfig cfg{};
-                    cfg.path = recordingConfig_.path;
-                    cfg.width = recordingWidth_;
-                    cfg.height = recordingHeight_;
-                    cfg.fps_num = recordingConfig_.fpsNum;
-                    cfg.fps_den = recordingConfig_.fpsDen;
-                    cfg.bitrate_kbps = recordingConfig_.bitrateKbps;
-                    cfg.input_format = recordFmt;
-                    cfg.force_hevc_main10 = (recordFmt == GCAP_FMT_P010 || recordFmt == GCAP_FMT_Y210);
-
-                    auto recorder = std::make_unique<FfmpegVideoRecorder>();
-                    if (!recorder->open(cfg, &error))
-                    {
-                        failed = true;
-                    }
-                    else
-                    {
-                        recorder_ = std::move(recorder);
-                        recordingOpenPending_ = false;
-                    }
-                }
+                recordingQueue_.pop_front();
+                ++recordingDroppedFrames_;
             }
-
-            if (!failed)
-            {
-                FfmpegVideoFrameView view{};
-                if (!makeFfmpegFrameView(frame, static_cast<int64_t>(recordingFrames_), view))
-                {
-                    error = "GVFG frame format is not supported by the FFmpeg recorder";
-                    failed = true;
-                }
-                else if (!recorder_ || !recorder_->writeFrame(view, &error))
-                {
-                    failed = true;
-                }
-                else
-                {
-                    ++recordingFrames_;
-                }
-            }
-        }
-
-        if (failed)
-        {
-            recording_ = false;
-            recordingOpenPending_ = false;
-            recorderToClose = std::move(recorder_);
+            recordingQueue_.push_back(std::move(queued));
         }
     }
-
-    if (recorderToClose)
-        recorderToClose->close();
-
-    if (failed)
-        emit errorOccurred(QStringLiteral("GVFG recording stopped: %1").arg(QString::fromStdString(error)));
+    if (formatChanged)
+    {
+        emit errorOccurred(QStringLiteral("GVFG recording stopped: frame format changed while recording"));
+        return;
+    }
+    recordingCv_.notify_one();
 #else
     Q_UNUSED(frame);
+#endif
+}
+
+void GvfgSource::recordingLoop()
+{
+#ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
+    RecordingConfig config;
+    int width = 0;
+    int height = 0;
+    int pixelFormat = GVFG_PIXFMT_UNKNOWN;
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex_);
+        config = recordingConfig_;
+        width = recordingWidth_;
+        height = recordingHeight_;
+        pixelFormat = recordingPixelFormat_;
+    }
+
+    const gcap_pixfmt_t recordFmt = gcapPixelFormatForGvfg(pixelFormat);
+    FfmpegVideoRecordConfig cfg{};
+    cfg.path = config.path;
+    cfg.width = width;
+    cfg.height = height;
+    cfg.fps_num = config.fpsNum;
+    cfg.fps_den = config.fpsDen;
+    cfg.bitrate_kbps = config.bitrateKbps;
+    cfg.input_format = recordFmt;
+    cfg.force_hevc_main10 = config.useHevc;
+    cfg.force_h264 = !config.useHevc;
+
+    FfmpegVideoRecorder recorder;
+    std::string error;
+    if (recordFmt == static_cast<gcap_pixfmt_t>(-1) || !recorder.open(cfg, &error))
+    {
+        {
+            std::lock_guard<std::mutex> lock(recordingMutex_);
+            recording_ = false;
+            recordingOpenPending_ = false;
+            recordingStopRequested_ = true;
+            recordingQueue_.clear();
+        }
+        emit errorOccurred(QStringLiteral("GVFG recording stopped: %1").arg(QString::fromStdString(error)));
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex_);
+        recordingOpenPending_ = false;
+    }
+
+    while (true)
+    {
+        QueuedRecordingFrame queued;
+        {
+            std::unique_lock<std::mutex> lock(recordingMutex_);
+            recordingCv_.wait(lock, [this]() {
+                return recordingStopRequested_ || !recordingQueue_.empty();
+            });
+            if (recordingQueue_.empty())
+            {
+                if (recordingStopRequested_)
+                    break;
+                continue;
+            }
+            queued = std::move(recordingQueue_.front());
+            recordingQueue_.pop_front();
+        }
+
+        if (queued.pixelFormat == GVFG_PIXFMT_Y210)
+        {
+            // The FPGA DMA payload is Y0, Cr(V), Y1, Cb(U), while standard
+            // Y210 (and FFmpeg AV_PIX_FMT_Y210LE) expects Y0, Cb(U), Y1, Cr(V).
+            // Normalize in the recording worker so preview/capture stays fast.
+            for (int y = 0; y < queued.height; ++y)
+            {
+                auto *words = reinterpret_cast<uint16_t *>(
+                    queued.data.data() + static_cast<size_t>(y) * static_cast<size_t>(queued.stride));
+                const int wordCount = queued.width * 2;
+                for (int x = 0; x + 3 < wordCount; x += 4)
+                    std::swap(words[x + 1], words[x + 3]);
+            }
+        }
+
+        FfmpegVideoFrameView view{};
+        view.format = recordFmt;
+        view.width = queued.width;
+        view.height = queued.height;
+        view.data[0] = queued.data.data();
+        view.stride[0] = queued.stride;
+        view.pts = queued.pts;
+        if (!recorder.writeFrame(view, &error))
+        {
+            {
+                std::lock_guard<std::mutex> lock(recordingMutex_);
+                recording_ = false;
+                recordingStopRequested_ = true;
+                recordingQueue_.clear();
+            }
+            emit errorOccurred(QStringLiteral("GVFG recording stopped: %1").arg(QString::fromStdString(error)));
+            break;
+        }
+        {
+            std::lock_guard<std::mutex> lock(recordingMutex_);
+            ++recordingFrames_;
+        }
+    }
+    recorder.close();
 #endif
 }

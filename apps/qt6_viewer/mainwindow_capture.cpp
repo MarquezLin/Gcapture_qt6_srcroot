@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include "./ui_mainwindow.h"
+#include "ffmpeg_video_recorder.h"
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -8,6 +9,8 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QUrl>
+#include <array>
+#include <cmath>
 namespace
 {
 QString recordInputFormatName(gcap_pixfmt_t fmt)
@@ -55,19 +58,55 @@ QString buildRecordModeLabel(gcap_handle h, int backend)
 }
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+void gvfgRecordingRate(double measuredFps, int &fpsNum, int &fpsDen)
+{
+    struct StandardRate
+    {
+        int num;
+        int den;
+    };
+    static constexpr std::array<StandardRate, 10> rates{{
+        {24000, 1001}, {24, 1}, {25, 1}, {30000, 1001}, {30, 1},
+        {50, 1}, {60000, 1001}, {60, 1}, {120000, 1001}, {120, 1},
+    }};
+
+    if (!(measuredFps > 0.0) || !std::isfinite(measuredFps))
+    {
+        fpsNum = 30;
+        fpsDen = 1;
+        return;
+    }
+
+    const StandardRate *best = &rates.front();
+    double bestDifference = std::abs(measuredFps - static_cast<double>(best->num) / best->den);
+    for (const auto &rate : rates)
+    {
+        const double difference = std::abs(measuredFps - static_cast<double>(rate.num) / rate.den);
+        if (difference < bestDifference)
+        {
+            best = &rate;
+            bestDifference = difference;
+        }
+    }
+
+    if (bestDifference <= 1.0)
+    {
+        fpsNum = best->num;
+        fpsDen = best->den;
+    }
+    else
+    {
+        fpsNum = qMax(1, qRound(measuredFps * 1000.0));
+        fpsDen = 1000;
+    }
+}
+
 gcap_pixfmt_t gvfgRecordingFormatFromRuntime(const gvfg_runtime_info_t &rt, gcap_pixfmt_t fallback)
 {
-    const QString fmt = QString::fromUtf8(rt.last_frame.pixel_format).trimmed().toUpper();
-    if (fmt == QStringLiteral("YUY2"))
+    if (rt.last_frame.pixel_format == GVFG_PIXFMT_YUY2)
         return GCAP_FMT_YUY2;
-    if (fmt == QStringLiteral("NV12"))
-        return GCAP_FMT_NV12;
-    if (fmt == QStringLiteral("P010"))
-        return GCAP_FMT_P010;
-    if (fmt == QStringLiteral("Y210"))
+    if (rt.last_frame.pixel_format == GVFG_PIXFMT_Y210)
         return GCAP_FMT_Y210;
-    if (fmt == QStringLiteral("BGRA8") || fmt == QStringLiteral("BGRA") || fmt == QStringLiteral("BGRX32"))
-        return GCAP_FMT_ARGB;
     return fallback;
 }
 #endif
@@ -149,6 +188,8 @@ void MainWindow::stopRecordingSession(bool showSummary)
         gvfg_->stopRecording();
         recording_ = false;
         ui->btnRecord->setText(QStringLiteral("Record"));
+        if (ui->comboRecordCodec)
+            ui->comboRecordCodec->setEnabled(true);
 
         if (showSummary && !recordPath_.isEmpty() && recordStartTime_.isValid())
         {
@@ -410,8 +451,8 @@ void MainWindow::onStart()
         currentProfile_ = {};
         currentProfile_.mode = GCAP_PROFILE_DEVICE_DEFAULT;
         currentProfile_.format = GCAP_FMT_YUY2;
-        currentProfile_.fps_num = 30000;
-        currentProfile_.fps_den = 1001;
+        currentProfile_.fps_num = 0;
+        currentProfile_.fps_den = 0;
 
         const bool started = gvfg_->start(hwnd, deviceIndex_, selectedPreviewBitDepthMode());
         if (!started)
@@ -433,15 +474,13 @@ void MainWindow::onStart()
         if (sig.bit_depth >= 10)
             currentProfile_.format = GCAP_FMT_Y210;
 
-        const QString signalFps = sig.frame_rate_name[0]
-                                      ? QString::fromLatin1(sig.frame_rate_name)
-                                      : QStringLiteral("--");
-        MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 %2x%3 fps=%4 format=%5 bitdepth=%6")
+        MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 channel=%2 connected=%3 %4x%5 format=%6 bitdepth=%7")
                                 .arg(deviceIndex_)
+                                .arg(sig.channel)
+                                .arg(sig.connected)
                                 .arg(currentProfile_.width)
                                 .arg(currentProfile_.height)
-                                .arg(signalFps)
-                                .arg(QString::fromLatin1(sig.video_format))
+                                .arg(QString::fromLatin1(gvfg_pixel_format_name(sig.pixel_format)))
                                 .arg(sig.bit_depth));
         updateRuntimeStatusUi();
         refreshCaptureInfoFromSdkAndRuntime(false);
@@ -629,15 +668,25 @@ void MainWindow::onRecord()
 
         const QDateTime now = QDateTime::currentDateTime();
         const QString fullPath = buildRecordingPath(now);
-        const int fpsNum = currentProfile_.fps_num > 0 ? currentProfile_.fps_num : 30;
-        const int fpsDen = currentProfile_.fps_den > 0 ? currentProfile_.fps_den : 1;
         const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
+        int fpsNum = 30;
+        int fpsDen = 1;
+        gvfgRecordingRate(rt.capture_fps, fpsNum, fpsDen);
+        currentProfile_.fps_num = fpsNum;
+        currentProfile_.fps_den = fpsDen;
+        MainWindow::postLog(QStringLiteral("[GVFG][record] source_fps=%1 configured_fps=%2/%3")
+                                .arg(rt.capture_fps, 0, 'f', 3)
+                                .arg(fpsNum)
+                                .arg(fpsDen));
         const gcap_pixfmt_t recFmt = gvfgRecordingFormatFromRuntime(rt, currentProfile_.format);
-        const bool hevc = recFmt == GCAP_FMT_P010 || recFmt == GCAP_FMT_Y210;
-        const int bitrateKbps = hevc ? 12000 : 8000;
+        const bool hevc = ui->comboRecordCodec && ui->comboRecordCodec->currentIndex() == 1;
+        const int width = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
+        const int height = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
+        const gcap_pixfmt_t bitrateFmt = hevc ? recFmt : GCAP_FMT_YUY2;
+        const int bitrateKbps = gcap_ffmpeg_recommended_bitrate_kbps(width, height, fpsNum, fpsDen, bitrateFmt);
 
         QString error;
-        if (!gvfg_->startRecording(fullPath, fpsNum, fpsDen, bitrateKbps, &error))
+        if (!gvfg_->startRecording(fullPath, fpsNum, fpsDen, bitrateKbps, hevc, &error))
         {
             QMessageBox::warning(this, QStringLiteral("Record"),
                                  QStringLiteral("Start GVFG recording failed: %1").arg(error));
@@ -646,11 +695,13 @@ void MainWindow::onRecord()
 
         recording_ = true;
         ui->btnRecord->setText(QStringLiteral("Stop Rec"));
+        if (ui->comboRecordCodec)
+            ui->comboRecordCodec->setEnabled(false);
         recordStartTime_ = now;
         recordPath_ = fullPath;
         recordEncoderName_ = hevc
-                                 ? QStringLiteral("FFmpeg HEVC / H.265 via Media Foundation")
-                                 : QStringLiteral("FFmpeg H.264 / AVC via Media Foundation");
+                                 ? QStringLiteral("FFmpeg HEVC / H.265 Main10")
+                                 : QStringLiteral("FFmpeg H.264 / AVC Compatible");
 
         if (ui->statusbar)
         {

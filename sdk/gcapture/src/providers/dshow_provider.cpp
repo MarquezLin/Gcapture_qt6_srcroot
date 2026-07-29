@@ -19,7 +19,6 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
-#include <cstdlib>
 
 using Microsoft::WRL::ComPtr;
 
@@ -42,23 +41,6 @@ namespace
         char buf[1024] = {};
         sprintf_s(buf, "[DShow] %s hr=0x%08X (%s)", prefix, static_cast<unsigned>(hr), sys[0] ? sys : "n/a");
         gcap_log_debug(buf);
-    }
-
-    static int readEnvIntClamp(const char *name, int defaultValue, int minValue, int maxValue)
-    {
-        char buf[64] = {};
-        DWORD n = GetEnvironmentVariableA(name, buf, static_cast<DWORD>(sizeof(buf)));
-        if (n == 0 || n >= sizeof(buf))
-            return defaultValue;
-        char *end = nullptr;
-        long v = strtol(buf, &end, 10);
-        if (end == buf)
-            return defaultValue;
-        if (v < minValue)
-            v = minValue;
-        if (v > maxValue)
-            v = maxValue;
-        return static_cast<int>(v);
     }
 
     static bool mediaTypeToVideoInfo(const AM_MEDIA_TYPE *pmt, int &w, int &h, int &fpsNum, int &fpsDen)
@@ -3280,10 +3262,9 @@ gcap_status_t DShowProvider::startRecording(const char *pathUtf8)
     cfg.height = height_;
     cfg.fps_num = 30;
     cfg.fps_den = 1;
-    const int defaultBitrate = ffmpegUseHevc(recFmt) ? 12000 : 8000;
-    cfg.bitrate_kbps = readEnvIntClamp("GCAP_FFMPEG_BITRATE_KBPS", defaultBitrate, 500, 80000);
     cfg.input_format = recFmt;
     cfg.force_hevc_main10 = ffmpegUseHevc(recFmt);
+    cfg.bitrate_kbps = gcap_ffmpeg_recommended_bitrate_kbps(cfg.width, cfg.height, cfg.fps_num, cfg.fps_den, cfg.input_format);
 
     std::string err;
     if (!rec->open(cfg, &err))

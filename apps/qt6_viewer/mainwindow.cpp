@@ -116,46 +116,42 @@ namespace
     }
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    static QString formatGvfgStatusLogLine(const gvfg_runtime_info_t &rt)
+    static QString formatGvfgStatusLogLine(const gvfg_runtime_info_t &rt, const gvfg_signal_status_t &signal)
     {
-        const auto &signal = rt.input_signal;
         const auto &frame = rt.last_frame;
         return QStringLiteral("[GVFG][signal]\n"
-                              "  input: width=%1 height=%2 format=%3 fps=%4 bit_depth=%5 sdi_lock=%6 hdmi_lock=%7\n"
-                              "  frame: valid=%8 width=%9 height=%10 format=%11 bit_depth=%12\n"
-                              "  runtime: fps=%13 frames=%14")
+                              "  input: connected=%1 channel=%2 width=%3 height=%4 format=%5 bit_depth=%6\n"
+                              "  frame: valid=%7 width=%8 height=%9 format=%10 bit_depth=%11\n"
+                              "  runtime: fps=%12 frames=%13")
+            .arg(signal.connected)
+            .arg(signal.channel)
             .arg(signal.width)
             .arg(signal.height)
-            .arg(QString::fromLatin1(signal.video_format))
-            .arg(QString::fromLatin1(signal.frame_rate_name))
+            .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
             .arg(signal.bit_depth)
-            .arg(signal.sdi_locked)
-            .arg(signal.hdmi_locked)
             .arg(frame.valid)
             .arg(frame.width)
             .arg(frame.height)
-            .arg(QString::fromLatin1(frame.pixel_format))
+            .arg(QString::fromLatin1(gvfg_pixel_format_name(frame.pixel_format)))
             .arg(frame.bit_depth)
             .arg(rt.capture_fps > 0.0 ? QString::number(rt.capture_fps, 'f', 2) : QStringLiteral("--"))
             .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
     }
 
-    static QString formatGvfgStatusStateKey(const gvfg_runtime_info_t &rt)
+    static QString formatGvfgStatusStateKey(const gvfg_runtime_info_t &rt, const gvfg_signal_status_t &signal)
     {
-        const auto &signal = rt.input_signal;
         const auto &frame = rt.last_frame;
-        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13")
+        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12")
+            .arg(signal.connected)
+            .arg(signal.channel)
             .arg(signal.width)
             .arg(signal.height)
-            .arg(QString::fromLatin1(signal.video_format))
-            .arg(QString::fromLatin1(signal.frame_rate_name))
+            .arg(signal.pixel_format)
             .arg(signal.bit_depth)
-            .arg(signal.sdi_locked)
-            .arg(signal.hdmi_locked)
             .arg(frame.valid)
             .arg(frame.width)
             .arg(frame.height)
-            .arg(QString::fromLatin1(frame.pixel_format))
+            .arg(frame.pixel_format)
             .arg(frame.bit_depth)
             .arg(rt.delivered_frames);
     }
@@ -405,6 +401,10 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    resize(1180, 740);
+    setMinimumSize(980, 680);
+    ui->controlPanel->setMinimumWidth(320);
+    ui->controlPanel->setMaximumWidth(380);
     setWindowTitle(QStringLiteral("GIGABYTE Video Capture utility v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
@@ -418,15 +418,18 @@ MainWindow::MainWindow(QWidget *parent)
                     recording_ = false;
                     if (ui->btnRecord)
                         ui->btnRecord->setText(QStringLiteral("Record"));
+                    if (ui->comboRecordCodec)
+                        ui->comboRecordCodec->setEnabled(true);
                     if (ui->statusbar)
                         ui->statusbar->showMessage(message, 8000);
                     QMessageBox::warning(this, QStringLiteral("Record"), message);
                 } }, Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::preStartRuntimeInfoReady, this, [this](const gvfg_runtime_info_t &info)
             {
-                const QString rawStateKey = formatGvfgStatusStateKey(info);
+                const gvfg_signal_status_t signal = gvfg_->signalStatus();
+                const QString rawStateKey = formatGvfgStatusStateKey(info, signal);
                 MainWindow::postLog(QStringLiteral("[GVFG] signal before stream start"));
-                MainWindow::postLog(formatGvfgStatusLogLine(info));
+                MainWindow::postLog(formatGvfgStatusLogLine(info, signal));
                 lastGvfgRawStateKey_ = rawStateKey; });
 #endif
 
@@ -514,7 +517,9 @@ void MainWindow::updateBrandDashboard()
     if (usingGvfg_ && gvfg_)
     {
         const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
+        const gvfg_signal_status_t signal = gvfg_->signalStatus();
         const gvfg_preview_info_t pv = gvfg_->previewInfo();
+        const gvfg_preview_stats_t previewStats = gvfg_->previewStats();
         backendText = QStringLiteral("GVFG");
         previewActive = pv.active != 0;
         renderPathText = pv.active
@@ -525,20 +530,21 @@ void MainWindow::updateBrandDashboard()
                                    .arg(pv.bit_depth)
                              : tr("preview inactive");
         frameCounter = rt.delivered_frames;
-        dashboardFps = (rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps;
-        const auto &signal = rt.input_signal;
+        dashboardFps = (previewStats.present_fps > 0.0)
+                           ? previewStats.present_fps
+                           : ((rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps);
         const auto &frame = rt.last_frame;
         if (frame.valid && frame.width > 0 && frame.height > 0)
         {
             signalText = QStringLiteral("%1 x %2").arg(frame.width).arg(frame.height);
             if (frame.bit_depth > 0)
-                colorText = QStringLiteral("%1-bit %2").arg(frame.bit_depth).arg(QString::fromUtf8(frame.pixel_format));
+                colorText = QStringLiteral("%1-bit %2").arg(frame.bit_depth).arg(QString::fromLatin1(gvfg_pixel_format_name(frame.pixel_format)));
         }
         else if (signal.width > 0 && signal.height > 0)
         {
             signalText = QStringLiteral("%1 x %2").arg(signal.width).arg(signal.height);
             if (signal.bit_depth > 0)
-                colorText = QStringLiteral("%1-bit %2").arg(signal.bit_depth).arg(QString::fromLatin1(signal.video_format));
+                colorText = QStringLiteral("%1-bit %2").arg(signal.bit_depth).arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)));
         }
     }
 #endif
@@ -706,14 +712,14 @@ void MainWindow::updateRuntimeStatusUi()
         if (usingGvfg_ && gvfg_)
         {
             const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
+            const gvfg_signal_status_t signal = gvfg_->signalStatus();
             const gvfg_preview_info_t pv = gvfg_->previewInfo();
-            const QString rawStateKey = formatGvfgStatusStateKey(rt);
+            const QString rawStateKey = formatGvfgStatusStateKey(rt, signal);
             if (lastGvfgRawStateKey_ != rawStateKey)
             {
-                MainWindow::postLog(formatGvfgStatusLogLine(rt));
+                MainWindow::postLog(formatGvfgStatusLogLine(rt, signal));
                 lastGvfgRawStateKey_ = rawStateKey;
             }
-            const auto &signal = rt.input_signal;
             const auto &frame = rt.last_frame;
             const double runtimeFps = (rt.capture_fps > 0.0) ? rt.capture_fps : avgFps_;
             const QString renderPath = pv.active
@@ -726,20 +732,17 @@ void MainWindow::updateRuntimeStatusUi()
             const QString signalResolution = (signal.width > 0 && signal.height > 0)
                                                  ? QStringLiteral("%1x%2").arg(signal.width).arg(signal.height)
                                                  : QStringLiteral("--");
-            const QString signalFps = signal.frame_rate_name[0]
-                                          ? QStringLiteral("%1fps").arg(QString::fromLatin1(signal.frame_rate_name))
-                                          : QStringLiteral("--fps");
             const QString frameText = frame.valid
                                           ? QStringLiteral("%1x%2 %3 %4bit")
                                                 .arg(frame.width)
                                                 .arg(frame.height)
-                                                .arg(QString::fromUtf8(frame.pixel_format))
+                                                .arg(QString::fromLatin1(gvfg_pixel_format_name(frame.pixel_format)))
                                                 .arg(frame.bit_depth)
                                           : QStringLiteral("--");
             const QString sb = QStringLiteral("Backend: %1 | Signal %2 %3 | Read frame %4 | %5 | App runtime %6fps frames=%7")
                                    .arg(QStringLiteral("GVFG"))
                                    .arg(signalResolution)
-                                   .arg(signalFps)
+                                   .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
                                    .arg(frameText)
                                    .arg(renderPath)
                                    .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
@@ -912,7 +915,7 @@ void MainWindow::setupPreviewWindow()
     if (previewWindow_)
         return;
 
-    previewWindow_ = new previewwindow(ui->previewContainer);
+    previewWindow_ = new previewwindow(ui->previewPanel);
     previewWindow_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     ui->previewArt->hide();
     ui->previewContainerLayout->addWidget(previewWindow_);
@@ -1222,12 +1225,27 @@ void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
 
     const QSignalBlocker blocker(ui->comboPixelFormat);
     const int previousData = ui->comboPixelFormat->currentData().toInt();
+    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
 
-    ui->comboPixelFormat->setToolTip(tr("Requested capture format for the next Start. The actual negotiated format is shown in BackendFmt."));
     ui->comboPixelFormat->clear();
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (backend == kQtViewerGvfgBackend)
+    {
+        ui->comboPixelFormat->addItem(QStringLiteral("Format: Hardware Auto"), -1);
+        ui->comboPixelFormat->setToolTip(
+            tr("GVFG uses the pixel format delivered by the capture hardware. "
+               "The actual format is shown in Color Path and the status bar."));
+        ui->comboPixelFormat->setEnabled(false);
+        lastPixelFormatWarningKey_.clear();
+        return;
+    }
+#endif
+
+    ui->comboPixelFormat->setEnabled(true);
+    ui->comboPixelFormat->setToolTip(tr("Requested capture format for the next Start. The actual negotiated format is shown in BackendFmt."));
     ui->comboPixelFormat->addItem(QStringLiteral("Format: Auto"), -1);
 
-    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
     const auto supported = (deviceIndex_ >= 0)
                                ? enumerateSupportedPixelFormats(backend, deviceIndex_)
                                : std::vector<gcap_pixfmt_t>{};
