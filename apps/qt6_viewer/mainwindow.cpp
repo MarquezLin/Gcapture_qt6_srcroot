@@ -118,41 +118,28 @@ namespace
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     static QString formatGvfgStatusLogLine(const gvfg_runtime_info_t &rt, const gvfg_signal_status_t &signal)
     {
-        const auto &frame = rt.last_frame;
         return QStringLiteral("[GVFG][signal]\n"
                               "  input: connected=%1 channel=%2 width=%3 height=%4 format=%5 bit_depth=%6\n"
-                              "  frame: valid=%7 width=%8 height=%9 format=%10 bit_depth=%11\n"
-                              "  runtime: fps=%12 frames=%13")
+                              "  runtime: fps=%7 frames=%8")
             .arg(signal.connected)
             .arg(signal.channel)
             .arg(signal.width)
             .arg(signal.height)
             .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
             .arg(signal.bit_depth)
-            .arg(frame.valid)
-            .arg(frame.width)
-            .arg(frame.height)
-            .arg(QString::fromLatin1(gvfg_pixel_format_name(frame.pixel_format)))
-            .arg(frame.bit_depth)
             .arg(rt.capture_fps > 0.0 ? QString::number(rt.capture_fps, 'f', 2) : QStringLiteral("--"))
             .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
     }
 
     static QString formatGvfgStatusStateKey(const gvfg_runtime_info_t &rt, const gvfg_signal_status_t &signal)
     {
-        const auto &frame = rt.last_frame;
-        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12")
+        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7")
             .arg(signal.connected)
             .arg(signal.channel)
             .arg(signal.width)
             .arg(signal.height)
             .arg(signal.pixel_format)
             .arg(signal.bit_depth)
-            .arg(frame.valid)
-            .arg(frame.width)
-            .arg(frame.height)
-            .arg(frame.pixel_format)
-            .arg(frame.bit_depth)
             .arg(rt.delivered_frames);
     }
 #endif
@@ -533,14 +520,7 @@ void MainWindow::updateBrandDashboard()
         dashboardFps = (previewStats.present_fps > 0.0)
                            ? previewStats.present_fps
                            : ((rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps);
-        const auto &frame = rt.last_frame;
-        if (frame.valid && frame.width > 0 && frame.height > 0)
-        {
-            signalText = QStringLiteral("%1 x %2").arg(frame.width).arg(frame.height);
-            if (frame.bit_depth > 0)
-                colorText = QStringLiteral("%1-bit %2").arg(frame.bit_depth).arg(QString::fromLatin1(gvfg_pixel_format_name(frame.pixel_format)));
-        }
-        else if (signal.width > 0 && signal.height > 0)
+        if (signal.width > 0 && signal.height > 0)
         {
             signalText = QStringLiteral("%1 x %2").arg(signal.width).arg(signal.height);
             if (signal.bit_depth > 0)
@@ -720,7 +700,6 @@ void MainWindow::updateRuntimeStatusUi()
                 MainWindow::postLog(formatGvfgStatusLogLine(rt, signal));
                 lastGvfgRawStateKey_ = rawStateKey;
             }
-            const auto &frame = rt.last_frame;
             const double runtimeFps = (rt.capture_fps > 0.0) ? rt.capture_fps : avgFps_;
             const QString renderPath = pv.active
                                            ? QStringLiteral("gvfg_preview %1x%2 %3 %4bit")
@@ -732,12 +711,12 @@ void MainWindow::updateRuntimeStatusUi()
             const QString signalResolution = (signal.width > 0 && signal.height > 0)
                                                  ? QStringLiteral("%1x%2").arg(signal.width).arg(signal.height)
                                                  : QStringLiteral("--");
-            const QString frameText = frame.valid
+            const QString frameText = rt.delivered_frames > 0
                                           ? QStringLiteral("%1x%2 %3 %4bit")
-                                                .arg(frame.width)
-                                                .arg(frame.height)
-                                                .arg(QString::fromLatin1(gvfg_pixel_format_name(frame.pixel_format)))
-                                                .arg(frame.bit_depth)
+                                                .arg(signal.width)
+                                                .arg(signal.height)
+                                                .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
+                                                .arg(signal.bit_depth)
                                           : QStringLiteral("--");
             const QString sb = QStringLiteral("Backend: %1 | Signal %2 %3 | Read frame %4 | %5 | App runtime %6fps frames=%7")
                                    .arg(QStringLiteral("GVFG"))

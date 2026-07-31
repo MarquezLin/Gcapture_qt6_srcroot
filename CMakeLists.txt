@@ -56,7 +56,15 @@ if (WIN32 AND BUILD_GVFG_SDK)
     # Prefer a build produced by the same compiler and configuration as this
     # viewer.  Taking the first directory can silently link a Release viewer
     # against the much slower Debug GVFG preview helper.
-    set(_gvfg_preferred_suffix "-${CMAKE_BUILD_TYPE}")
+    # Visual Studio is a multi-config generator, so CMAKE_BUILD_TYPE is empty
+    # at configure time. Prefer the optimized standalone build in that case;
+    # otherwise the fallback below can silently pick an older Debug directory.
+    if (CMAKE_BUILD_TYPE)
+      set(_gvfg_preferred_config "${CMAKE_BUILD_TYPE}")
+    else()
+      set(_gvfg_preferred_config "Release")
+    endif()
+    set(_gvfg_preferred_suffix "-${_gvfg_preferred_config}")
     if (MSVC)
       set(_gvfg_preferred_compiler "MSVC")
     else()

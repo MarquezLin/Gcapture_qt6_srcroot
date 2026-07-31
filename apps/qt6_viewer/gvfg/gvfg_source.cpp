@@ -21,27 +21,24 @@ QString gvfgEventName(gvfg_event_type_t type)
         return QStringLiteral("SIGNAL_CONNECTED");
     case GVFG_EVENT_SIGNAL_DISCONNECTED:
         return QStringLiteral("SIGNAL_DISCONNECTED");
+    case GVFG_EVENT_STREAM_READY:
+        return QStringLiteral("STREAM_READY");
+    case GVFG_EVENT_FORMAT_CHANGE_BEGIN:
+        return QStringLiteral("FORMAT_CHANGE_BEGIN");
     default:
         return QStringLiteral("UNKNOWN");
     }
 }
 
-bool getFrameLayout(const gvfg_frame_t &frame, gvfg_frame_layout_t &layout)
+bool frameHasRows(const gvfg_frame_t &frame, int minRowBytes)
 {
-    layout = {};
-    layout.struct_size = sizeof(layout);
-    return frame.data && frame.width > 0 && frame.height > 0 && gvfg_get_frame_layout(&frame, &layout) == GVFG_OK;
-}
-
-bool layoutPlaneHasRows(const gvfg_frame_layout_t &layout, int plane, int rows, int minRowBytes)
-{
-    if (plane < 0 || plane >= layout.plane_count || rows <= 0 || minRowBytes <= 0)
+    if (!frame.data || frame.width <= 0 || frame.height <= 0 ||
+        frame.row_stride_bytes < minRowBytes || minRowBytes <= 0)
         return false;
-    if (!layout.plane_data[plane] || layout.plane_stride[plane] < minRowBytes)
-        return false;
-    const uint64_t required = static_cast<uint64_t>(layout.plane_stride[plane]) * static_cast<uint64_t>(rows - 1) +
+    const uint64_t required = static_cast<uint64_t>(frame.row_stride_bytes) *
+                                  static_cast<uint64_t>(frame.height - 1) +
                               static_cast<uint64_t>(minRowBytes);
-    return layout.plane_size[plane] >= required;
+    return frame.data_size >= required;
 }
 
 #ifdef QT6_VIEWER_ENABLE_GVFG_CONVERT
@@ -67,7 +64,6 @@ QImage convertFrameToImage(const gvfg_frame_t &frame)
     }
 
     gvfg_convert_frame_desc_t desc{};
-    desc.struct_size = sizeof(desc);
     desc.pixel_format = dstFormat;
 
     gvfg_convert_frame converted = nullptr;
@@ -79,15 +75,23 @@ QImage convertFrameToImage(const gvfg_frame_t &frame)
     st = gvfg_convert_frame_from_capture(&frame, converted);
     if (st == GVFG_OK)
     {
-        gvfg_frame_layout_t layout{};
-        layout.struct_size = sizeof(layout);
-        st = gvfg_convert_get_layout(converted, &layout);
-        if (st == GVFG_OK && layoutPlaneHasRows(layout, 0, frame.height, minRowBytes))
+        gvfg_convert_frame_desc_t convertedDesc{};
+        const void *data = nullptr;
+        uint64_t dataSize = 0;
+        st = gvfg_convert_get_frame_desc(converted, &convertedDesc);
+        if (st == GVFG_OK)
+            st = gvfg_convert_get_buffer(converted, &data, &dataSize);
+        const uint64_t required = convertedDesc.height > 0 && convertedDesc.row_bytes >= minRowBytes
+                                      ? static_cast<uint64_t>(convertedDesc.row_bytes) *
+                                                static_cast<uint64_t>(convertedDesc.height - 1) +
+                                            static_cast<uint64_t>(minRowBytes)
+                                      : 0;
+        if (st == GVFG_OK && data && required > 0 && dataSize >= required)
         {
-            const QImage wrapped(static_cast<const uchar *>(layout.plane_data[0]),
-                                 frame.width,
-                                 frame.height,
-                                 layout.plane_stride[0],
+            const QImage wrapped(static_cast<const uchar *>(data),
+                                 convertedDesc.width,
+                                 convertedDesc.height,
+                                 convertedDesc.row_bytes,
                                  imageFormat);
             image = wrapped.copy();
         }
@@ -130,10 +134,6 @@ bool makeFfmpegFrameView(const gvfg_frame_t &frame, int64_t pts, FfmpegVideoFram
     if (fmt == static_cast<gcap_pixfmt_t>(-1) || !frame.data || frame.width <= 0 || frame.height <= 0)
         return false;
 
-    gvfg_frame_layout_t layout{};
-    if (!getFrameLayout(frame, layout))
-        return false;
-
     out = {};
     out.format = fmt;
     out.width = frame.width;
@@ -145,19 +145,19 @@ bool makeFfmpegFrameView(const gvfg_frame_t &frame, int64_t pts, FfmpegVideoFram
     case GVFG_PIXFMT_YUY2:
     {
         const int rowBytes = frame.width * 2;
-        if (!layoutPlaneHasRows(layout, 0, frame.height, rowBytes))
+        if (!frameHasRows(frame, rowBytes))
             return false;
-        out.data[0] = static_cast<const uint8_t *>(layout.plane_data[0]);
-        out.stride[0] = layout.plane_stride[0];
+        out.data[0] = static_cast<const uint8_t *>(frame.data);
+        out.stride[0] = frame.row_stride_bytes;
         return true;
     }
     case GVFG_PIXFMT_Y210:
     {
         const int rowBytes = frame.width * 4;
-        if (!layoutPlaneHasRows(layout, 0, frame.height, rowBytes))
+        if (!frameHasRows(frame, rowBytes))
             return false;
-        out.data[0] = static_cast<const uint8_t *>(layout.plane_data[0]);
-        out.stride[0] = layout.plane_stride[0];
+        out.data[0] = static_cast<const uint8_t *>(frame.data);
+        out.stride[0] = frame.row_stride_bytes;
         return true;
     }
     default:
@@ -216,10 +216,7 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         return false;
     }
 
-    gvfg_runtime_info_t preStartInfo{};
-    preStartInfo.struct_size = sizeof(preStartInfo);
-    if (gvfg_get_runtime_info(handle_, &preStartInfo) == GVFG_OK)
-        emit preStartRuntimeInfoReady(preStartInfo);
+    emit preStartRuntimeInfoReady(runtimeInfo());
 
     st = gvfg_start(handle_);
     if (st != GVFG_OK)
@@ -291,6 +288,12 @@ void GvfgSource::stop()
         gvfg_destroy(handle_);
         handle_ = nullptr;
     }
+    {
+        std::lock_guard<std::mutex> lock(recordingMutex_);
+        recordingWidth_ = 0;
+        recordingHeight_ = 0;
+        recordingPixelFormat_ = GVFG_PIXFMT_UNKNOWN;
+    }
 }
 
 bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, bool useHevc, QString *error)
@@ -312,15 +315,6 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         return false;
     }
 
-    gvfg_runtime_info_t info{};
-    info.struct_size = sizeof(info);
-    if (!handle_ || gvfg_get_runtime_info(handle_, &info) != GVFG_OK || !info.last_frame.valid)
-    {
-        if (error)
-            *error = QStringLiteral("Wait for the first GVFG frame before starting recording.");
-        return false;
-    }
-
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
         if (recording_)
@@ -337,8 +331,8 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
     if (recordingThread_.joinable())
         recordingThread_.join();
 
-    int width = info.last_frame.width;
-    int height = info.last_frame.height;
+    int width = 0;
+    int height = 0;
     int pixelFormat = GVFG_PIXFMT_UNKNOWN;
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
@@ -348,12 +342,16 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
                 *error = QStringLiteral("GVFG recording is already running.");
             return false;
         }
-        width = recordingWidth_ > 0 ? recordingWidth_ : info.last_frame.width;
-        height = recordingHeight_ > 0 ? recordingHeight_ : info.last_frame.height;
+        width = recordingWidth_;
+        height = recordingHeight_;
         pixelFormat = recordingPixelFormat_;
     }
-    if (pixelFormat == GVFG_PIXFMT_UNKNOWN)
-        pixelFormat = info.last_frame.pixel_format;
+    if (width <= 0 || height <= 0 || pixelFormat == GVFG_PIXFMT_UNKNOWN)
+    {
+        if (error)
+            *error = QStringLiteral("Wait for the first GVFG frame before starting recording.");
+        return false;
+    }
 
     const gcap_pixfmt_t recordFmt = gcapPixelFormatForGvfg(pixelFormat);
     if (recordFmt == static_cast<gcap_pixfmt_t>(-1))
@@ -457,7 +455,6 @@ QImage GvfgSource::captureSnapshot(int timeoutMs, QString *error)
 gvfg_signal_status_t GvfgSource::signalStatus() const
 {
     gvfg_signal_status_t status{};
-    status.struct_size = sizeof(status);
     if (handle_)
         gvfg_get_signal_status(handle_, &status);
     return status;
@@ -466,7 +463,6 @@ gvfg_signal_status_t GvfgSource::signalStatus() const
 gvfg_runtime_info_t GvfgSource::runtimeInfo() const
 {
     gvfg_runtime_info_t info{};
-    info.struct_size = sizeof(info);
     if (handle_)
         gvfg_get_runtime_info(handle_, &info);
     return info;
@@ -483,7 +479,6 @@ gvfg_preview_info_t GvfgSource::previewInfo() const
 gvfg_preview_stats_t GvfgSource::previewStats() const
 {
     gvfg_preview_stats_t stats{};
-    stats.struct_size = sizeof(stats);
     if (previewHandle_)
         gvfg_preview_get_stats(previewHandle_, &stats);
     return stats;
@@ -493,12 +488,11 @@ void GvfgSource::readLoop()
 {
     while (!stopRequested_.load(std::memory_order_acquire))
     {
-        gvfg_event_t event{};
+        gvfg_event_type_t event = GVFG_EVENT_UNKNOWN;
         while (handle_ && gvfg_poll_event(handle_, &event, 0) == GVFG_OK)
         {
-            emit errorOccurred(QStringLiteral("GVFG event %1 ts=%2")
-                                   .arg(gvfgEventName(event.type))
-                                   .arg(static_cast<qulonglong>(event.timestamp_ns)));
+            emit errorOccurred(QStringLiteral("GVFG event %1")
+                                   .arg(gvfgEventName(event)));
         }
 
         gvfg_frame_t frame{};
@@ -518,14 +512,13 @@ void GvfgSource::readLoop()
             if (previewHandle_)
             {
                 gvfg_preview_frame_t previewFrame{};
-                previewFrame.struct_size = sizeof(previewFrame);
                 previewFrame.data = frame.data;
                 previewFrame.data_size = frame.data_size;
                 previewFrame.width = frame.width;
                 previewFrame.height = frame.height;
                 previewFrame.pixel_format = frame.pixel_format;
                 previewFrame.bit_depth = frame.bit_depth;
-                previewFrame.row_bytes = frame.width * ((frame.pixel_format == GVFG_PIXFMT_Y210) ? 4 : 2);
+                previewFrame.row_bytes = frame.row_stride_bytes;
                 previewFrame.frame_id = frame.frame_id;
                 gvfg_preview_render_frame(previewHandle_, &previewFrame);
             }
@@ -577,10 +570,7 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
             return;
     }
 
-    gvfg_frame_layout_t layout{};
-    if (!getFrameLayout(frame, layout) ||
-        !layoutPlaneHasRows(layout, 0, frame.height,
-                            frame.width * ((frame.pixel_format == GVFG_PIXFMT_Y210) ? 4 : 2)))
+    if (!frameHasRows(frame, frame.width * ((frame.pixel_format == GVFG_PIXFMT_Y210) ? 4 : 2)))
     {
         emit errorOccurred(QStringLiteral("GVFG recording stopped: invalid frame layout"));
         stopRecording();
@@ -591,9 +581,13 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
     queued.width = frame.width;
     queued.height = frame.height;
     queued.pixelFormat = frame.pixel_format;
-    queued.stride = layout.plane_stride[0];
-    queued.data.resize(static_cast<size_t>(queued.stride) * static_cast<size_t>(queued.height));
-    std::memcpy(queued.data.data(), layout.plane_data[0], queued.data.size());
+    queued.stride = frame.row_stride_bytes;
+    const size_t rowBytes = static_cast<size_t>(frame.width) *
+                            static_cast<size_t>(frame.pixel_format == GVFG_PIXFMT_Y210 ? 4 : 2);
+    queued.data.resize(static_cast<size_t>(queued.stride) *
+                           static_cast<size_t>(queued.height - 1) +
+                       rowBytes);
+    std::memcpy(queued.data.data(), frame.data, queued.data.size());
 
     bool formatChanged = false;
     {

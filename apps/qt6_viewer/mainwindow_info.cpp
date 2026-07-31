@@ -169,16 +169,8 @@ void MainWindow::updateCapabilityLabel()
 
         if (usingGvfg_ && gvfg_)
         {
-            const gvfg_runtime_info_t runtime = gvfg_->runtimeInfo();
             const gvfg_signal_status_t signal = gvfg_->signalStatus();
-            if (runtime.last_frame.valid &&
-                runtime.last_frame.pixel_format != GVFG_PIXFMT_UNKNOWN)
-            {
-                formatText = QString::fromLatin1(
-                    gvfg_pixel_format_name(runtime.last_frame.pixel_format));
-                bitDepth = runtime.last_frame.bit_depth;
-            }
-            else if (signal.pixel_format != GVFG_PIXFMT_UNKNOWN)
+            if (signal.pixel_format != GVFG_PIXFMT_UNKNOWN)
             {
                 formatText = QString::fromLatin1(
                     gvfg_pixel_format_name(signal.pixel_format));
@@ -318,7 +310,6 @@ void MainWindow::refreshCaptureRuntimeInfo()
         const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
         const gvfg_signal_status_t signal = gvfg_->signalStatus();
         const gvfg_preview_info_t pv = gvfg_->previewInfo();
-        const auto &frame = rt.last_frame;
 
         gcap_signal_status_t fpgaSignal{};
         fpgaSignal.width = signal.width;
@@ -331,12 +322,12 @@ void MainWindow::refreshCaptureRuntimeInfo()
         fpgaSignal.range = GCAP_RANGE_LIMITED;
 
         gcap_signal_status_t dmaBuffer{};
-        if (frame.valid)
+        if (rt.delivered_frames > 0)
         {
-            dmaBuffer.width = frame.width;
-            dmaBuffer.height = frame.height;
-            dmaBuffer.pixfmt = (frame.pixel_format == GVFG_PIXFMT_Y210) ? GCAP_FMT_Y210 : GCAP_FMT_YUY2;
-            dmaBuffer.bit_depth = frame.bit_depth;
+            dmaBuffer.width = signal.width;
+            dmaBuffer.height = signal.height;
+            dmaBuffer.pixfmt = (signal.pixel_format == GVFG_PIXFMT_Y210) ? GCAP_FMT_Y210 : GCAP_FMT_YUY2;
+            dmaBuffer.bit_depth = signal.bit_depth;
             dmaBuffer.csp = GCAP_CSP_BT709;
             dmaBuffer.range = GCAP_RANGE_LIMITED;
         }
@@ -347,8 +338,8 @@ void MainWindow::refreshCaptureRuntimeInfo()
         captureInfo_.backendName = QStringLiteral("GVFG");
         captureInfo_.frameSource = QStringLiteral("GVFG capture frame");
         captureInfo_.pathName = QStringLiteral("FPGA reported signal -> gvfg_read_frame");
-        captureInfo_.captureFormat = frame.valid
-                                         ? QString::fromLatin1(gvfg_pixel_format_name(frame.pixel_format))
+        captureInfo_.captureFormat = rt.delivered_frames > 0
+                                         ? QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format))
                                          : QStringLiteral("--");
         captureInfo_.renderFormat = pv.active
                                         ? QStringLiteral("gvfg_preview %1x%2 %3 %4bit")

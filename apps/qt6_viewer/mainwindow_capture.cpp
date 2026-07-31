@@ -101,11 +101,11 @@ void gvfgRecordingRate(double measuredFps, int &fpsNum, int &fpsDen)
     }
 }
 
-gcap_pixfmt_t gvfgRecordingFormatFromRuntime(const gvfg_runtime_info_t &rt, gcap_pixfmt_t fallback)
+gcap_pixfmt_t gvfgRecordingFormat(const gvfg_signal_status_t &signal, gcap_pixfmt_t fallback)
 {
-    if (rt.last_frame.pixel_format == GVFG_PIXFMT_YUY2)
+    if (signal.pixel_format == GVFG_PIXFMT_YUY2)
         return GCAP_FMT_YUY2;
-    if (rt.last_frame.pixel_format == GVFG_PIXFMT_Y210)
+    if (signal.pixel_format == GVFG_PIXFMT_Y210)
         return GCAP_FMT_Y210;
     return fallback;
 }
@@ -185,7 +185,7 @@ void MainWindow::stopRecordingSession(bool showSummary)
     if (usingGvfg_ && gvfg_)
     {
         const uint64_t framesWritten = gvfg_->recordingFrames();
-        const gvfg_runtime_info_t runtimeInfo = gvfg_->runtimeInfo();
+        const gvfg_signal_status_t signal = gvfg_->signalStatus();
         gvfg_->stopRecording();
         recording_ = false;
         ui->btnRecord->setText(QStringLiteral("Record"));
@@ -216,11 +216,11 @@ void MainWindow::stopRecordingSession(bool showSummary)
             const double seconds = ms / 1000.0;
             const double bitrateKbps = seconds > 0.0 ? (sizeBytes * 8.0 / 1000.0) / seconds : 0.0;
             const double captureFps = seconds > 0.0 ? double(framesWritten) / seconds : avgFps_;
-            const int srcW = runtimeInfo.last_frame.valid && runtimeInfo.last_frame.width > 0
-                                 ? runtimeInfo.last_frame.width
+            const int srcW = signal.width > 0
+                                 ? signal.width
                                  : (lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width);
-            const int srcH = runtimeInfo.last_frame.valid && runtimeInfo.last_frame.height > 0
-                                 ? runtimeInfo.last_frame.height
+            const int srcH = signal.height > 0
+                                 ? signal.height
                                  : (lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height);
 
             const QString info = QStringLiteral(
@@ -674,6 +674,7 @@ void MainWindow::onRecord()
         const QDateTime now = QDateTime::currentDateTime();
         const QString fullPath = buildRecordingPath(now);
         const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
+        const gvfg_signal_status_t signal = gvfg_->signalStatus();
         int fpsNum = 30;
         int fpsDen = 1;
         gvfgRecordingRate(rt.capture_fps, fpsNum, fpsDen);
@@ -683,13 +684,13 @@ void MainWindow::onRecord()
                                 .arg(rt.capture_fps, 0, 'f', 3)
                                 .arg(fpsNum)
                                 .arg(fpsDen));
-        const gcap_pixfmt_t recFmt = gvfgRecordingFormatFromRuntime(rt, currentProfile_.format);
+        const gcap_pixfmt_t recFmt = gvfgRecordingFormat(signal, currentProfile_.format);
         const bool hevc = ui->comboRecordCodec && ui->comboRecordCodec->currentIndex() == 1;
-        const int width = rt.last_frame.valid && rt.last_frame.width > 0
-                              ? rt.last_frame.width
+        const int width = signal.width > 0
+                              ? signal.width
                               : (lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width);
-        const int height = rt.last_frame.valid && rt.last_frame.height > 0
-                               ? rt.last_frame.height
+        const int height = signal.height > 0
+                               ? signal.height
                                : (lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height);
         currentProfile_.width = width;
         currentProfile_.height = height;
