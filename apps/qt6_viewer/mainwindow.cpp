@@ -23,6 +23,9 @@
 #include <QSignalBlocker>
 #include "edid_reader.h"
 #include "rawinspectordialog.h"
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS)
+#include "registerdialog.h"
+#endif
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFile>
@@ -269,6 +272,7 @@ MainWindow::MainWindow(QWidget *parent)
     setupRuntimeStatusTimer();
     setupDebugDock();
     setupProcAmpAction();
+    setupRegisterTools();
     setupBackendControls();
     setupPreviewBitDepthControls();
     initializeDeviceList();
@@ -1346,6 +1350,24 @@ void MainWindow::onOpenRawInspect()
     rawInspectorDlg_->raise();
     rawInspectorDlg_->activateWindow();
     MainWindow::postLog(QStringLiteral("[RAW Inspector] opened %1").arg(path));
+}
+
+void MainWindow::setupRegisterTools()
+{
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND) && defined(QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS)
+    if (!ui->actionGvfgRegisters ||
+        !QCoreApplication::arguments().contains(QStringLiteral("--gvfg-registers")))
+        return;
+
+    ui->actionGvfgRegisters->setVisible(true);
+    connect(ui->actionGvfgRegisters, &QAction::triggered, this, [this]()
+            {
+                RegisterDialog dialog(gvfg_, this);
+                connect(&dialog, &RegisterDialog::logMessage, this,
+                        [](const QString &message, bool isError)
+                        { MainWindow::postLog(message, isError); });
+                dialog.exec(); });
+#endif
 }
 
 void MainWindow::on_btnPreview_clicked()

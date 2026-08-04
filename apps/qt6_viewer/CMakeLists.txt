@@ -61,6 +61,9 @@ if (WIN32 AND BUILD_GVFG_SDK)
   list(APPEND VIEWER_SOURCES
     gvfg/gvfg_source.h
     gvfg/gvfg_source.cpp
+    registerdialog.h
+    registerdialog.cpp
+    registerdialog.ui
   )
   set(QT6_VIEWER_GVFG_RECORDING_SOURCE "${CMAKE_SOURCE_DIR}/sdk/gcapture/src/providers/ffmpeg_video_recorder.cpp")
   if (EXISTS "${QT6_VIEWER_GVFG_RECORDING_SOURCE}")
@@ -83,6 +86,7 @@ endif()
 if (WIN32 AND BUILD_GVFG_SDK)
   target_compile_definitions(qt6_viewer PRIVATE
     QT6_VIEWER_ENABLE_GVFG_BACKEND
+    QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS
   )
 endif()
 

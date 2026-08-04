@@ -1,5 +1,7 @@
 #include "gvfg_source.h"
 
+#include <gvfg_debug.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -486,6 +488,20 @@ gvfg_runtime_info_t GvfgSource::runtimeInfo() const
     if (handle_)
         gvfg_get_runtime_info(handle_, &info);
     return info;
+}
+
+gvfg_status_t GvfgSource::readRegister(uint32_t offset, uint32_t *outValue) const
+{
+    if (!handle_)
+        return GVFG_ESTATE;
+    return gvfg_debug_read_register(handle_, offset, outValue);
+}
+
+gvfg_status_t GvfgSource::writeRegister(uint32_t offset, uint32_t value) const
+{
+    if (!handle_)
+        return GVFG_ESTATE;
+    return gvfg_debug_write_register(handle_, offset, value);
 }
 
 gvfg_preview_info_t GvfgSource::previewInfo() const

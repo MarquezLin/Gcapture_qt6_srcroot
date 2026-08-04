@@ -60,6 +60,8 @@ public:
     gvfg_runtime_info_t runtimeInfo() const;
     gvfg_preview_info_t previewInfo() const;
     gvfg_preview_stats_t previewStats() const;
+    gvfg_status_t readRegister(uint32_t offset, uint32_t *outValue) const;
+    gvfg_status_t writeRegister(uint32_t offset, uint32_t value) const;
 
 signals:
     void frameReady(const QImage &image);

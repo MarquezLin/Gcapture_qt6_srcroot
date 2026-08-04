@@ -937,6 +937,7 @@ QPushButton#btnStop:pressed {
     <addaction name="actionInputInfo"/>
     <addaction name="actionDisplayInfo"/>
     <addaction name="actionProcAmp"/>
+    <addaction name="actionGvfgRegisters"/>
    </widget>
    <widget class="QMenu" name="menuOpen">
     <property name="title">
@@ -987,6 +988,14 @@ QPushButton#btnStop:pressed {
   <action name="actionProcAmp">
    <property name="text">
     <string>ProcAmp</string>
+   </property>
+  </action>
+  <action name="actionGvfgRegisters">
+   <property name="visible">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>GVFG Registers...</string>
    </property>
   </action>
   <action name="actionOpenRecordFolder">
