@@ -129,6 +129,12 @@ void MainWindow::resetRuntimeTracking()
     frameStallWarningActive_ = false;
     initialPreviewSizeApplied_ = false;
     lastFrameImage_ = QImage();
+    {
+        QMutexLocker lock(&rawSnapshotMutex_);
+        latestRawFrame_.clear();
+        latestRawWidth_ = latestRawHeight_ = latestRawStride_ = 0;
+        latestRawFormat_ = -1;
+    }
 }
 
 void MainWindow::clearPreviewSurface()

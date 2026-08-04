@@ -1,5 +1,6 @@
 #include "gvfg_source.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 
@@ -420,11 +421,17 @@ uint64_t GvfgSource::recordingFrames() const
 
 QImage GvfgSource::captureSnapshot(int timeoutMs, QString *error)
 {
+    return captureSnapshotData(timeoutMs, error).image;
+}
+
+GvfgSource::Snapshot GvfgSource::captureSnapshotData(int timeoutMs, QString *error)
+{
+    Snapshot result;
     if (!running_)
     {
         if (error)
             *error = QStringLiteral("GVFG capture is not running.");
-        return QImage();
+        return result;
     }
 
     {
@@ -432,6 +439,11 @@ QImage GvfgSource::captureSnapshot(int timeoutMs, QString *error)
         snapshotPending_ = true;
         snapshotComplete_ = false;
         snapshotImage_ = QImage();
+        snapshotRawData_.clear();
+        snapshotWidth_ = snapshotHeight_ = snapshotStrideBytes_ = 0;
+        snapshotPixelFormat_ = GVFG_PIXFMT_UNKNOWN;
+        snapshotBitDepth_ = 0;
+        snapshotFrameId_ = 0;
         snapshotError_.clear();
     }
 
@@ -444,12 +456,20 @@ QImage GvfgSource::captureSnapshot(int timeoutMs, QString *error)
         snapshotPending_ = false;
         if (error)
             *error = QStringLiteral("Timed out waiting for a GVFG frame to snapshot.");
-        return QImage();
+        return result;
     }
 
-    if (snapshotImage_.isNull() && error)
+    if ((snapshotImage_.isNull() || snapshotRawData_.isEmpty()) && error)
         *error = snapshotError_.isEmpty() ? QStringLiteral("GVFG snapshot conversion is not supported for the current frame format.") : snapshotError_;
-    return snapshotImage_;
+    result.image = snapshotImage_;
+    result.rawData = snapshotRawData_;
+    result.width = snapshotWidth_;
+    result.height = snapshotHeight_;
+    result.pixelFormat = snapshotPixelFormat_;
+    result.bitDepth = snapshotBitDepth_;
+    result.strideBytes = snapshotStrideBytes_;
+    result.frameId = snapshotFrameId_;
+    return result;
 }
 
 gvfg_signal_status_t GvfgSource::signalStatus() const
@@ -535,12 +555,42 @@ void GvfgSource::readLoop()
             if (snapshotRequested)
             {
                 const QImage image = frameToImage(frame);
+                QByteArray rawData;
+                const int minRowBytes = frame.width *
+                    (frame.pixel_format == GVFG_PIXFMT_Y210 ? 4 : 2);
+                if (frameHasRows(frame, minRowBytes))
+                {
+                    rawData.resize(frame.row_stride_bytes * frame.height);
+                    rawData.fill('\0');
+                    const char *source = static_cast<const char *>(frame.data);
+                    for (int y = 0; y < frame.height; ++y)
+                    {
+                        const size_t sourceOffset =
+                            static_cast<size_t>(y) * static_cast<size_t>(frame.row_stride_bytes);
+                        const size_t available = frame.data_size > sourceOffset
+                            ? static_cast<size_t>(frame.data_size) - sourceOffset
+                            : 0;
+                        const size_t copyBytes =
+                            std::min(static_cast<size_t>(frame.row_stride_bytes), available);
+                        std::memcpy(rawData.data() + qsizetype(y) * frame.row_stride_bytes,
+                                    source + sourceOffset, copyBytes);
+                    }
+                }
                 {
                     std::lock_guard<std::mutex> lock(snapshotMutex_);
                     snapshotImage_ = image;
-                    snapshotError_ = image.isNull()
-                                         ? QStringLiteral("GVFG snapshot conversion is not supported for the current frame format.")
-                                         : QString();
+                    snapshotRawData_ = rawData;
+                    snapshotWidth_ = frame.width;
+                    snapshotHeight_ = frame.height;
+                    snapshotPixelFormat_ = frame.pixel_format;
+                    snapshotBitDepth_ = frame.bit_depth;
+                    snapshotStrideBytes_ = frame.row_stride_bytes;
+                    snapshotFrameId_ = frame.frame_id;
+                    snapshotError_ = rawData.isEmpty()
+                                         ? QStringLiteral("GVFG snapshot frame has an invalid RAW layout.")
+                                         : (image.isNull()
+                                                ? QStringLiteral("GVFG snapshot preview conversion is not supported for the current frame format.")
+                                                : QString());
                     snapshotComplete_ = true;
                 }
                 snapshotCv_.notify_all();

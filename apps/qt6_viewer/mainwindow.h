@@ -12,6 +12,7 @@
 #include <QByteArray>
 #include <QFrame>
 #include <QMargins>
+#include <QMutex>
 #include <gcapture.h>
 #include <cstdint>
 #include "inputinfodialog.h"
@@ -20,7 +21,6 @@
 #include "info/capture_device_info.h"
 #include "info/display_output_info.h"
 #include "previewwindow.h"
-#include "tiff_analyzer.h"
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
 #include "gvfg/gvfg_source.h"
@@ -59,11 +59,10 @@ private slots:
     void onOpenLogFolder();
     void onOpenRecordFolder();
     void onOpenSnapshot();
-    void onOpenGigabyteRaw();
     void onShowInputInfo();
     void onShowDisplayInfo();
     void onSnapshot();
-    void onOpenTiffAnalyze();
+    void onOpenRawInspect();
 
     void on_btnPreview_clicked();
 
@@ -112,9 +111,7 @@ private:
     CaptureDeviceInfo captureInfo_;
     DisplayOutputInfo displayInfo_;
     previewwindow *previewWindow_ = nullptr;
-    previewwindow *rawPreviewWindow_ = nullptr;
-    class TiffAnalysisDialog *tiffAnalysisDlg_ = nullptr;
-    TiffBitDepthReport lastTiffReport_{};
+    class RawInspectorDialog *rawInspectorDlg_ = nullptr;
 
     qint64 lastPropsQueryMs_ = 0;
     int cachedDeviceCapsBackend_ = -1;
@@ -127,6 +124,12 @@ private:
     uint64_t lastPacketCallbackPtsNs_ = 0;
     uint64_t framePacketLogCount_ = 0;
     uint64_t framePacketSessionId_ = 0;
+    QMutex rawSnapshotMutex_;
+    QByteArray latestRawFrame_;
+    int latestRawWidth_ = 0;
+    int latestRawHeight_ = 0;
+    int latestRawStride_ = 0;
+    int latestRawFormat_ = -1;
     uint64_t lastWatchdogFrameCounter_ = 0;
     int frameStallTicks_ = 0;
     bool frameStallWarningActive_ = false;
@@ -140,7 +143,7 @@ private:
     QString lastRuntimeStatusText_;
     QString lastGvfgRawStateKey_;
     bool suppressAuxDialogRefresh_ = false;
-    bool openingTiffDialog_ = false;
+    bool openingRawInspector_ = false;
     QString lastPixelFormatWarningKey_;
     bool initialPreviewSizeApplied_ = false;
     void updateRuntimeStatusUi();
@@ -194,6 +197,7 @@ private:
     QString buildSnapshotBasePath() const;
     bool saveSnapshotImage(QString *outPath, const QString &fullPath = QString());
     bool saveSceneExports(const QString &basePath, gcap_snapshot_export_result_t *result);
+    QString saveLatestSourceRaw(const QString &basePath);
 
 signals:
     void sigFrame(const QImage &);

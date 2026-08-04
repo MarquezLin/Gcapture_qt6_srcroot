@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QByteArray>
 #include <QImage>
 #include <QString>
 #include <QStringList>
@@ -27,6 +28,18 @@ class GvfgSource : public QObject
     Q_OBJECT
 
 public:
+    struct Snapshot
+    {
+        QImage image;
+        QByteArray rawData;
+        int width = 0;
+        int height = 0;
+        int pixelFormat = GVFG_PIXFMT_UNKNOWN;
+        int bitDepth = 0;
+        int strideBytes = 0;
+        uint64_t frameId = 0;
+    };
+
     explicit GvfgSource(QObject *parent = nullptr);
     ~GvfgSource() override;
 
@@ -41,6 +54,7 @@ public:
     bool isRecording() const;
     uint64_t recordingFrames() const;
     QImage captureSnapshot(int timeoutMs, QString *error);
+    Snapshot captureSnapshotData(int timeoutMs, QString *error);
 
     gvfg_signal_status_t signalStatus() const;
     gvfg_runtime_info_t runtimeInfo() const;
@@ -69,6 +83,13 @@ private:
     bool snapshotPending_ = false;
     bool snapshotComplete_ = false;
     QImage snapshotImage_;
+    QByteArray snapshotRawData_;
+    int snapshotWidth_ = 0;
+    int snapshotHeight_ = 0;
+    int snapshotPixelFormat_ = GVFG_PIXFMT_UNKNOWN;
+    int snapshotBitDepth_ = 0;
+    int snapshotStrideBytes_ = 0;
+    uint64_t snapshotFrameId_ = 0;
     QString snapshotError_;
     bool recording_ = false;
     uint64_t recordingFrames_ = 0;

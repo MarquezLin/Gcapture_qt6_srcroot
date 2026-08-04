@@ -35,10 +35,12 @@ set(VIEWER_SOURCES
   info/display_output_info.cpp
   info/capture_device_info.h
   info/capture_device_info.cpp
-  tiff_analyzer.h
-  tiff_analyzer.cpp
-  tiffanalysisdialog.h
-  tiffanalysisdialog.cpp
+  rawframe.h
+  rawframe.cpp
+  rawpreviewwidget.h
+  rawpreviewwidget.cpp
+  rawinspectordialog.h
+  rawinspectordialog.cpp
 )
 
 set(VIEWER_DESIGN_ASSETS
@@ -72,7 +74,6 @@ if (QT_VERSION_MAJOR GREATER_EQUAL 6)
   qt_add_executable(qt6_viewer MANUAL_FINALIZATION ${VIEWER_SOURCES}
     resources.qrc
     app.rc
-    tiffpreviewwidget.h tiffpreviewwidget.cpp
     previewwindow.h previewwindow.cpp previewwindow.ui
   )
 else()
@@ -118,7 +119,7 @@ target_link_libraries(qt6_viewer PRIVATE
   Qt${QT_VERSION_MAJOR}::Widgets
   gcapture
   gdisplay
-  dxgi d3d11 d3dcompiler dwmapi
+  dxgi d3d11 d3dcompiler dwmapi windowscodecs ole32
 )
 
 # ---- NVAPI: shared root variable from top-level ----

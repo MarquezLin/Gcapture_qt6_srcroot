@@ -553,7 +553,7 @@ QPushButton#btnStop:pressed {
             </widget>
            </item>
            <item row="4" column="0" colspan="2">
-            <widget class="QPushButton" name="btnOpenTiff">
+             <widget class="QPushButton" name="btnOpenRawInspector">
              <property name="enabled">
               <bool>true</bool>
              </property>
@@ -564,7 +564,7 @@ QPushButton#btnStop:pressed {
               </size>
              </property>
              <property name="text">
-              <string>Open TIFF Analyzer</string>
+              <string>Open RAW Pixel Inspector</string>
              </property>
              <property name="icon">
               <iconset resource="resources.qrc">
@@ -945,27 +945,18 @@ QPushButton#btnStop:pressed {
     <addaction name="actionOpenRecordFolder"/>
     <addaction name="actionOpenLogFolder"/>
     <addaction name="actionOpenSnapshot"/>
-    <addaction name="actionOpenGigabyteRaw"/>
-    <addaction name="actionOpenTiffAnalyzer"/>
+    <addaction name="actionOpenRawInspector"/>
    </widget>
    <addaction name="menuView"/>
    <addaction name="menuOpen"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
-  <action name="actionOpenTiffAnalyzer">
+  <action name="actionOpenRawInspector">
    <property name="enabled">
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Open TIFF Analyzer...</string>
-   </property>
-  </action>
-  <action name="actionOpenGigabyteRaw">
-   <property name="enabled">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Open GIGABYTE RAW...</string>
+      <string>Open RAW Pixel Inspector...</string>
    </property>
   </action>
   <action name="actionDebugLog">
