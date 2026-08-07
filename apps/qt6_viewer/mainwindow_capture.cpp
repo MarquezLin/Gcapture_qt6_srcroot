@@ -101,14 +101,6 @@ void gvfgRecordingRate(double measuredFps, int &fpsNum, int &fpsDen)
     }
 }
 
-gcap_pixfmt_t gvfgRecordingFormat(const gvfg_signal_status_t &signal, gcap_pixfmt_t fallback)
-{
-    if (signal.pixel_format == GVFG_PIXFMT_YUY2)
-        return GCAP_FMT_YUY2;
-    if (signal.pixel_format == GVFG_PIXFMT_Y210)
-        return GCAP_FMT_Y210;
-    return fallback;
-}
 #endif
 }
 
@@ -195,8 +187,6 @@ void MainWindow::stopRecordingSession(bool showSummary)
         gvfg_->stopRecording();
         recording_ = false;
         ui->btnRecord->setText(QStringLiteral("Record"));
-        if (ui->comboRecordCodec)
-            ui->comboRecordCodec->setEnabled(true);
 
         if (showSummary && !recordPath_.isEmpty() && recordStartTime_.isValid())
         {
@@ -690,8 +680,8 @@ void MainWindow::onRecord()
                                 .arg(rt.capture_fps, 0, 'f', 3)
                                 .arg(fpsNum)
                                 .arg(fpsDen));
-        const gcap_pixfmt_t recFmt = gvfgRecordingFormat(signal, currentProfile_.format);
-        const bool hevc = ui->comboRecordCodec && ui->comboRecordCodec->currentIndex() == 1;
+        // GVFG frames are converted by the SDK to 8-bit NV12 before entering
+        // the recorder, including 10-bit Y210 sources, so this path is always H.264.
         const int width = signal.width > 0
                               ? signal.width
                               : (lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width);
@@ -700,11 +690,11 @@ void MainWindow::onRecord()
                                : (lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height);
         currentProfile_.width = width;
         currentProfile_.height = height;
-        const gcap_pixfmt_t bitrateFmt = hevc ? recFmt : GCAP_FMT_YUY2;
-        const int bitrateKbps = gcap_ffmpeg_recommended_bitrate_kbps(width, height, fpsNum, fpsDen, bitrateFmt);
+        const int bitrateKbps = gcap_ffmpeg_recommended_bitrate_kbps(
+            width, height, fpsNum, fpsDen, GCAP_FMT_NV12);
 
         QString error;
-        if (!gvfg_->startRecording(fullPath, fpsNum, fpsDen, bitrateKbps, hevc, &error))
+        if (!gvfg_->startRecording(fullPath, fpsNum, fpsDen, bitrateKbps, &error))
         {
             QMessageBox::warning(this, QStringLiteral("Record"),
                                  QStringLiteral("Start GVFG recording failed: %1").arg(error));
@@ -713,13 +703,9 @@ void MainWindow::onRecord()
 
         recording_ = true;
         ui->btnRecord->setText(QStringLiteral("Stop Rec"));
-        if (ui->comboRecordCodec)
-            ui->comboRecordCodec->setEnabled(false);
         recordStartTime_ = now;
         recordPath_ = fullPath;
-        recordEncoderName_ = hevc
-                                 ? QStringLiteral("FFmpeg HEVC / H.265 Main10")
-                                 : QStringLiteral("FFmpeg H.264 / AVC Compatible");
+        recordEncoderName_ = QStringLiteral("FFmpeg H.264 / AVC Compatible");
 
         if (ui->statusbar)
         {

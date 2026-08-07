@@ -10,10 +10,6 @@
 #include "ffmpeg_video_recorder.h"
 #endif
 
-#ifdef QT6_VIEWER_ENABLE_GVFG_CONVERT
-#include <gvfg_convert.h>
-#endif
-
 namespace
 {
 QString gvfgEventName(gvfg_event_type_t type)
@@ -44,130 +40,32 @@ bool frameHasRows(const gvfg_frame_t &frame, int minRowBytes)
     return frame.data_size >= required;
 }
 
-#ifdef QT6_VIEWER_ENABLE_GVFG_CONVERT
 QImage convertFrameToImage(const gvfg_frame_t &frame)
 {
-    int dstFormat = 0;
-    QImage::Format imageFormat = QImage::Format_Invalid;
-    int minRowBytes = 0;
-    switch (frame.pixel_format)
-    {
-    case GVFG_PIXFMT_YUY2:
-        dstFormat = GVFG_CONVERT_FMT_BGRA8;
-        imageFormat = QImage::Format_ARGB32;
-        minRowBytes = frame.width * 4;
-        break;
-    case GVFG_PIXFMT_Y210:
-        dstFormat = GVFG_CONVERT_FMT_RGBA64;
-        imageFormat = QImage::Format_RGBA64;
-        minRowBytes = frame.width * 8;
-        break;
-    default:
-        return QImage();
-    }
-
-    gvfg_convert_frame_desc_t desc{};
-    desc.pixel_format = dstFormat;
-
-    gvfg_convert_frame converted = nullptr;
-    gvfg_status_t st = gvfg_convert_create_frame(&desc, &converted);
-    if (st != GVFG_OK || !converted)
+    if (frame.pixel_format != GVFG_PIXFMT_YVYU &&
+        frame.pixel_format != GVFG_PIXFMT_Y210)
         return QImage();
 
-    QImage image;
-    st = gvfg_convert_frame_from_capture(&frame, converted);
-    if (st == GVFG_OK)
-    {
-        gvfg_convert_frame_desc_t convertedDesc{};
-        const void *data = nullptr;
-        uint64_t dataSize = 0;
-        st = gvfg_convert_get_frame_desc(converted, &convertedDesc);
-        if (st == GVFG_OK)
-            st = gvfg_convert_get_buffer(converted, &data, &dataSize);
-        const uint64_t required = convertedDesc.height > 0 && convertedDesc.row_bytes >= minRowBytes
-                                      ? static_cast<uint64_t>(convertedDesc.row_bytes) *
-                                                static_cast<uint64_t>(convertedDesc.height - 1) +
-                                            static_cast<uint64_t>(minRowBytes)
-                                      : 0;
-        if (st == GVFG_OK && data && required > 0 && dataSize >= required)
-        {
-            const QImage wrapped(static_cast<const uchar *>(data),
-                                 convertedDesc.width,
-                                 convertedDesc.height,
-                                 convertedDesc.row_bytes,
-                                 imageFormat);
-            image = wrapped.copy();
-        }
-    }
+    QImage image(frame.width, frame.height, QImage::Format_ARGB32);
+    if (image.isNull())
+        return QImage();
 
-    gvfg_convert_destroy_frame(converted);
-    return image;
+    return gvfg_gpu_convert_to_bgra8(&frame,
+                                     image.bits(),
+                                     static_cast<uint64_t>(image.sizeInBytes()),
+                                     image.bytesPerLine()) == GVFG_OK
+               ? image
+               : QImage();
 }
-#endif
 
 QImage frameToImage(const gvfg_frame_t &frame)
 {
     if (!frame.data || frame.width <= 0 || frame.height <= 0)
         return QImage();
 
-#ifdef QT6_VIEWER_ENABLE_GVFG_CONVERT
     return convertFrameToImage(frame);
-#else
-    return QImage();
-#endif
 }
 
-#ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
-gcap_pixfmt_t gcapPixelFormatForGvfg(int pixelFormat)
-{
-    switch (pixelFormat)
-    {
-    case GVFG_PIXFMT_YUY2:
-        return GCAP_FMT_YUY2;
-    case GVFG_PIXFMT_Y210:
-        return GCAP_FMT_Y210;
-    default:
-        return static_cast<gcap_pixfmt_t>(-1);
-    }
-}
-
-bool makeFfmpegFrameView(const gvfg_frame_t &frame, int64_t pts, FfmpegVideoFrameView &out)
-{
-    const gcap_pixfmt_t fmt = gcapPixelFormatForGvfg(frame.pixel_format);
-    if (fmt == static_cast<gcap_pixfmt_t>(-1) || !frame.data || frame.width <= 0 || frame.height <= 0)
-        return false;
-
-    out = {};
-    out.format = fmt;
-    out.width = frame.width;
-    out.height = frame.height;
-    out.pts = pts;
-
-    switch (frame.pixel_format)
-    {
-    case GVFG_PIXFMT_YUY2:
-    {
-        const int rowBytes = frame.width * 2;
-        if (!frameHasRows(frame, rowBytes))
-            return false;
-        out.data[0] = static_cast<const uint8_t *>(frame.data);
-        out.stride[0] = frame.row_stride_bytes;
-        return true;
-    }
-    case GVFG_PIXFMT_Y210:
-    {
-        const int rowBytes = frame.width * 4;
-        if (!frameHasRows(frame, rowBytes))
-            return false;
-        out.data[0] = static_cast<const uint8_t *>(frame.data);
-        out.stride[0] = frame.row_stride_bytes;
-        return true;
-    }
-    default:
-        return false;
-    }
-}
-#endif
 }
 
 GvfgSource::GvfgSource(QObject *parent)
@@ -299,14 +197,13 @@ void GvfgSource::stop()
     }
 }
 
-bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, bool useHevc, QString *error)
+bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error)
 {
 #ifndef QT6_VIEWER_ENABLE_GVFG_RECORDING
     Q_UNUSED(path);
     Q_UNUSED(fpsNum);
     Q_UNUSED(fpsDen);
     Q_UNUSED(bitrateKbps);
-    Q_UNUSED(useHevc);
     if (error)
         *error = QStringLiteral("GVFG recording is not enabled in this build because FFmpeg headers/libs were not found.");
     return false;
@@ -356,8 +253,7 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         return false;
     }
 
-    const gcap_pixfmt_t recordFmt = gcapPixelFormatForGvfg(pixelFormat);
-    if (recordFmt == static_cast<gcap_pixfmt_t>(-1))
+    if (pixelFormat != GVFG_PIXFMT_YVYU && pixelFormat != GVFG_PIXFMT_Y210)
     {
         if (error)
             *error = QStringLiteral("GVFG frame format is not supported by the FFmpeg recorder.");
@@ -369,8 +265,7 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         recordingConfig_.path = path.toStdString();
         recordingConfig_.fpsNum = fpsNum > 0 ? fpsNum : 30;
         recordingConfig_.fpsDen = fpsDen > 0 ? fpsDen : 1;
-        recordingConfig_.bitrateKbps = bitrateKbps > 0 ? bitrateKbps : ((recordFmt == GCAP_FMT_P010 || recordFmt == GCAP_FMT_Y210) ? 12000 : 8000);
-        recordingConfig_.useHevc = useHevc;
+        recordingConfig_.bitrateKbps = bitrateKbps > 0 ? bitrateKbps : 8000;
         recording_ = true;
         recordingOpenPending_ = true;
         recordingStopRequested_ = false;
@@ -636,7 +531,8 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
             return;
     }
 
-    if (!frameHasRows(frame, frame.width * ((frame.pixel_format == GVFG_PIXFMT_Y210) ? 4 : 2)))
+    if (!frameHasRows(frame, frame.width * ((frame.pixel_format == GVFG_PIXFMT_Y210) ? 4 : 2)) ||
+        (frame.width & 1) != 0 || (frame.height & 1) != 0)
     {
         emit errorOccurred(QStringLiteral("GVFG recording stopped: invalid frame layout"));
         stopRecording();
@@ -646,14 +542,18 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
     QueuedRecordingFrame queued;
     queued.width = frame.width;
     queued.height = frame.height;
-    queued.pixelFormat = frame.pixel_format;
-    queued.stride = frame.row_stride_bytes;
-    const size_t rowBytes = static_cast<size_t>(frame.width) *
-                            static_cast<size_t>(frame.pixel_format == GVFG_PIXFMT_Y210 ? 4 : 2);
+    queued.stride = frame.width;
     queued.data.resize(static_cast<size_t>(queued.stride) *
-                           static_cast<size_t>(queued.height - 1) +
-                       rowBytes);
-    std::memcpy(queued.data.data(), frame.data, queued.data.size());
+                       static_cast<size_t>(queued.height + queued.height / 2));
+    const gvfg_status_t convertStatus = gvfg_gpu_convert_to_nv12(
+        &frame, queued.data.data(), static_cast<uint64_t>(queued.data.size()), queued.stride);
+    if (convertStatus != GVFG_OK)
+    {
+        emit errorOccurred(QStringLiteral("GVFG recording stopped: NV12 conversion failed: %1")
+                               .arg(QString::fromUtf8(gvfg_strerror(convertStatus))));
+        stopRecording();
+        return;
+    }
 
     bool formatChanged = false;
     {
@@ -701,16 +601,13 @@ void GvfgSource::recordingLoop()
     RecordingConfig config;
     int width = 0;
     int height = 0;
-    int pixelFormat = GVFG_PIXFMT_UNKNOWN;
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
         config = recordingConfig_;
         width = recordingWidth_;
         height = recordingHeight_;
-        pixelFormat = recordingPixelFormat_;
     }
 
-    const gcap_pixfmt_t recordFmt = gcapPixelFormatForGvfg(pixelFormat);
     FfmpegVideoRecordConfig cfg{};
     cfg.path = config.path;
     cfg.width = width;
@@ -718,13 +615,12 @@ void GvfgSource::recordingLoop()
     cfg.fps_num = config.fpsNum;
     cfg.fps_den = config.fpsDen;
     cfg.bitrate_kbps = config.bitrateKbps;
-    cfg.input_format = recordFmt;
-    cfg.force_hevc_main10 = config.useHevc;
-    cfg.force_h264 = !config.useHevc;
+    cfg.input_format = GCAP_FMT_NV12;
+    cfg.force_h264 = true;
 
     FfmpegVideoRecorder recorder;
     std::string error;
-    if (recordFmt == static_cast<gcap_pixfmt_t>(-1) || !recorder.open(cfg, &error))
+    if (!recorder.open(cfg, &error))
     {
         {
             std::lock_guard<std::mutex> lock(recordingMutex_);
@@ -759,27 +655,15 @@ void GvfgSource::recordingLoop()
             recordingQueue_.pop_front();
         }
 
-        if (queued.pixelFormat == GVFG_PIXFMT_Y210)
-        {
-            // The FPGA DMA payload is Y0, Cr(V), Y1, Cb(U), while standard
-            // Y210 (and FFmpeg AV_PIX_FMT_Y210LE) expects Y0, Cb(U), Y1, Cr(V).
-            // Normalize in the recording worker so preview/capture stays fast.
-            for (int y = 0; y < queued.height; ++y)
-            {
-                auto *words = reinterpret_cast<uint16_t *>(
-                    queued.data.data() + static_cast<size_t>(y) * static_cast<size_t>(queued.stride));
-                const int wordCount = queued.width * 2;
-                for (int x = 0; x + 3 < wordCount; x += 4)
-                    std::swap(words[x + 1], words[x + 3]);
-            }
-        }
-
         FfmpegVideoFrameView view{};
-        view.format = recordFmt;
+        view.format = GCAP_FMT_NV12;
         view.width = queued.width;
         view.height = queued.height;
         view.data[0] = queued.data.data();
+        view.data[1] = queued.data.data() +
+                       static_cast<size_t>(queued.stride) * static_cast<size_t>(queued.height);
         view.stride[0] = queued.stride;
+        view.stride[1] = queued.stride;
         view.pts = queued.pts;
         if (!recorder.writeFrame(view, &error))
         {

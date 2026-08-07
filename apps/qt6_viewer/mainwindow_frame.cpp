@@ -397,13 +397,13 @@ void MainWindow::onSnapshot()
                                     QStringLiteral("Y210"), snapshot.frameId))
                 saved << standardPath << standardPath + QStringLiteral(".json");
         }
-        else if (snapshot.pixelFormat == GVFG_PIXFMT_YUY2)
+        else if (snapshot.pixelFormat == GVFG_PIXFMT_YVYU)
         {
-            const QString yuy2Path = basePath + QStringLiteral("_source_yuy2.raw");
-            if (writeRawAndMetadata(yuy2Path, snapshot.rawData, snapshot.width,
+            const QString yvyuPath = basePath + QStringLiteral("_source_yvyu.raw");
+            if (writeRawAndMetadata(yvyuPath, snapshot.rawData, snapshot.width,
                                     snapshot.height, snapshot.strideBytes,
-                                    QStringLiteral("YUY2"), snapshot.frameId))
-                saved << yuy2Path << yuy2Path + QStringLiteral(".json");
+                                    QStringLiteral("YVYU"), snapshot.frameId))
+                saved << yvyuPath << yvyuPath + QStringLiteral(".json");
         }
 
         lastFrameImage_ = snapshot.image;

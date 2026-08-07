@@ -7,7 +7,7 @@
 
 enum class RawPixelFormat
 {
-    Yuy2,
+    Yvyu,
     Y210,
     Bgra8,
     Rgba8,
@@ -50,7 +50,7 @@ public:
     int width = 0;
     int height = 0;
     int strideBytes = 0;
-    RawPixelFormat format = RawPixelFormat::Yuy2;
+    RawPixelFormat format = RawPixelFormat::Yvyu;
 };
 
 #endif

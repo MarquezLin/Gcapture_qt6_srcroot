@@ -501,40 +501,6 @@ QPushButton#btnStop:pressed {
              </property>
             </widget>
            </item>
-           <item row="2" column="0" colspan="2">
-            <layout class="QHBoxLayout" name="recordCodecLayout">
-             <property name="spacing">
-              <number>8</number>
-             </property>
-             <item>
-              <widget class="QLabel" name="labelRecordCodec">
-               <property name="text">
-                <string>Record codec</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QComboBox" name="comboRecordCodec">
-               <property name="sizePolicy">
-                <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-                 <horstretch>1</horstretch>
-                 <verstretch>0</verstretch>
-                </sizepolicy>
-               </property>
-               <item>
-                <property name="text">
-                 <string>H.264 Compatible</string>
-                </property>
-               </item>
-               <item>
-                <property name="text">
-                 <string>HEVC Main10</string>
-                </property>
-               </item>
-              </widget>
-             </item>
-            </layout>
-           </item>
            <item row="3" column="0" colspan="2">
             <widget class="QPushButton" name="btnShowEdid">
              <property name="minimumSize">

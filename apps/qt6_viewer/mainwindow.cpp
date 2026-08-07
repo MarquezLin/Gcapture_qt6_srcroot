@@ -254,8 +254,6 @@ MainWindow::MainWindow(QWidget *parent)
                     recording_ = false;
                     if (ui->btnRecord)
                         ui->btnRecord->setText(QStringLiteral("Record"));
-                    if (ui->comboRecordCodec)
-                        ui->comboRecordCodec->setEnabled(true);
                     if (ui->statusbar)
                         ui->statusbar->showMessage(message, 8000);
                     QMessageBox::warning(this, QStringLiteral("Record"), message);

@@ -49,7 +49,7 @@ public:
     bool setPreview(void *previewHwnd, int previewBitDepthMode);
     void stop();
     bool isRunning() const { return running_; }
-    bool startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, bool useHevc, QString *error);
+    bool startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error);
     void stopRecording();
     bool isRecording() const;
     uint64_t recordingFrames() const;
@@ -106,7 +106,6 @@ private:
         int fpsNum = 30;
         int fpsDen = 1;
         int bitrateKbps = 8000;
-        bool useHevc = false;
     };
 
     bool recordingOpenPending_ = false;
@@ -118,7 +117,6 @@ private:
         std::vector<uint8_t> data;
         int width = 0;
         int height = 0;
-        int pixelFormat = GVFG_PIXFMT_UNKNOWN;
         int stride = 0;
         int64_t pts = 0;
     };
