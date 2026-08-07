@@ -118,19 +118,6 @@ if (WIN32 AND BUILD_GVFG_SDK)
     INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_preview/include;${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
   )
 
-  if (EXISTS "${_gvfg_build_dir}/bin/gvfg_convert.dll" AND
-      EXISTS "${_gvfg_build_dir}/lib/gvfg_convert.lib" AND
-      EXISTS "${GVFG_STANDALONE_ROOT}/helpers/gvfg_convert/include/gvfg_convert.h")
-    add_library(gvfg_convert SHARED IMPORTED GLOBAL)
-    set_target_properties(gvfg_convert PROPERTIES
-      IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg_convert.dll"
-      IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg_convert.lib"
-      INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_convert/include;${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
-    )
-  else()
-    message(WARNING "GVFG convert helper not found; qt6_viewer will use local snapshot conversion fallback.")
-  endif()
-
   message(STATUS "Using external GVFG SDK: ${_gvfg_build_dir}")
 endif()
 

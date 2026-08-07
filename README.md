@@ -48,13 +48,8 @@ GVFG_Standalone/
   build/<config>/lib/gvfg_preview.lib
 ```
 
-Optional convert helper support is enabled when these files exist:
-
-```text
-helpers/gvfg_convert/include/gvfg_convert.h
-build/<config>/bin/gvfg_convert.dll
-build/<config>/lib/gvfg_convert.lib
-```
+GPU frame-to-buffer conversion is exported directly by `gvfg.dll` through
+`gvfg_gpu_convert_to_buffer()` in `gvfg_capture.h`.
 
 Relevant CMake options:
 
@@ -77,7 +72,6 @@ If `GVFG_STANDALONE_BUILD_DIR` is not set, CMake scans
 - `gdisplay.dll`
 - `gvfg.dll`
 - `gvfg_preview.dll`
-- `gvfg_convert.dll` when present
 - FFmpeg runtime DLLs when present
 
 Then it runs `windeployqt` and creates a release zip.
