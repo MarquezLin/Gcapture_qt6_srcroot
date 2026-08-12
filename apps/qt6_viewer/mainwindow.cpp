@@ -122,7 +122,7 @@ namespace
     {
         return QStringLiteral("[GVFG][signal]\n"
                               "  input: connected=%1 channel=%2 width=%3 height=%4 format=%5 bit_depth=%6\n"
-                              "  runtime: fps=%7 frames=%8")
+                              "  runtime: fps=%7 frames=%8 lost=%9")
             .arg(signal.connected)
             .arg(signal.channel)
             .arg(signal.width)
@@ -130,19 +130,21 @@ namespace
             .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
             .arg(signal.bit_depth)
             .arg(rt.capture_fps > 0.0 ? QString::number(rt.capture_fps, 'f', 2) : QStringLiteral("--"))
-            .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
+            .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)))
+            .arg(QString::number(static_cast<qulonglong>(rt.lost_frames)));
     }
 
     static QString formatGvfgStatusStateKey(const gvfg_runtime_info_t &rt, const gvfg_signal_status_t &signal)
     {
-        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7")
+        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8")
             .arg(signal.connected)
             .arg(signal.channel)
             .arg(signal.width)
             .arg(signal.height)
             .arg(signal.pixel_format)
             .arg(signal.bit_depth)
-            .arg(rt.delivered_frames);
+            .arg(rt.delivered_frames)
+            .arg(rt.lost_frames);
     }
 #endif
 

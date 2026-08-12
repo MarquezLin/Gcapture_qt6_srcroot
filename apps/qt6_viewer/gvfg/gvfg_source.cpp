@@ -24,6 +24,8 @@ QString gvfgEventName(gvfg_event_type_t type)
         return QStringLiteral("STREAM_READY");
     case GVFG_EVENT_FORMAT_CHANGE_BEGIN:
         return QStringLiteral("FORMAT_CHANGE_BEGIN");
+    case GVFG_EVENT_FRAME_LOSS:
+        return QStringLiteral("FRAME_LOSS");
     default:
         return QStringLiteral("UNKNOWN");
     }
@@ -419,11 +421,23 @@ void GvfgSource::readLoop()
 {
     while (!stopRequested_.load(std::memory_order_acquire))
     {
-        gvfg_event_type_t event = GVFG_EVENT_UNKNOWN;
+        gvfg_event_t event{};
+        event.struct_size = sizeof(event);
         while (handle_ && gvfg_poll_event(handle_, &event, 0) == GVFG_OK)
         {
-            emit errorOccurred(QStringLiteral("GVFG event %1")
-                                   .arg(gvfgEventName(event)));
+            const auto eventType = static_cast<gvfg_event_type_t>(event.type);
+            if (eventType == GVFG_EVENT_FRAME_LOSS)
+            {
+                emit errorOccurred(QStringLiteral("GVFG frame loss: %1 frame(s)")
+                                       .arg(static_cast<qulonglong>(event.count)));
+            }
+            else
+            {
+                emit errorOccurred(QStringLiteral("GVFG event %1")
+                                       .arg(gvfgEventName(eventType)));
+            }
+            event = {};
+            event.struct_size = sizeof(event);
         }
 
         gvfg_frame_t frame{};
