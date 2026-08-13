@@ -93,7 +93,7 @@ int RawFrame::minimumStride(int width, RawPixelFormat format)
 {
     switch (format)
     {
-    case RawPixelFormat::Yvyu: return ((width + 1) / 2) * 4;
+    case RawPixelFormat::Yuy2: return ((width + 1) / 2) * 4;
     case RawPixelFormat::Y210: return ((width + 1) / 2) * 8;
     case RawPixelFormat::Bgra8:
     case RawPixelFormat::Rgba8:
@@ -106,7 +106,7 @@ QString RawFrame::formatName(RawPixelFormat format)
 {
     switch (format)
     {
-    case RawPixelFormat::Yvyu: return QStringLiteral("YVYU");
+    case RawPixelFormat::Yuy2: return QStringLiteral("YUY2");
     case RawPixelFormat::Y210: return QStringLiteral("Y210");
     case RawPixelFormat::Bgra8: return QStringLiteral("BGRA8");
     case RawPixelFormat::Rgba8: return QStringLiteral("RGBA8");
@@ -126,15 +126,15 @@ RawPixelSample RawFrame::pixel(int x, int y) const
     s.y = y;
     const char *row = bytes.constData() + qint64(y) * strideBytes;
 
-    if (format == RawPixelFormat::Yvyu)
+    if (format == RawPixelFormat::Yuy2)
     {
         const int pairX = x & ~1;
         s.byteOffset = quint64(y) * strideBytes + quint64(pairX / 2) * 4;
         const uchar *p = reinterpret_cast<const uchar *>(row + (pairX / 2) * 4);
         s.yValue = p[(x & 1) ? 2 : 0];
-        // GVFG DMA YVYU byte order: Y0, V, Y1, U.
-        s.uValue = p[3];
-        s.vValue = p[1];
+        // Standard YUY2 byte order: Y0, U, Y1, V.
+        s.uValue = p[1];
+        s.vValue = p[3];
         s.packedValue = quint32(p[0]) | (quint32(p[1]) << 8) |
                         (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
     }
@@ -190,7 +190,7 @@ QImage RawFrame::makePreview() const
         for (int x = 0; x < width; ++x)
         {
             const RawPixelSample s = pixel(x, y);
-            if (format == RawPixelFormat::Yvyu)
+            if (format == RawPixelFormat::Yuy2)
                 dst[x] = yuvToRgb(s.yValue, s.uValue, s.vValue, 8);
             else if (format == RawPixelFormat::Y210)
                 dst[x] = yuvToRgb(s.yValue, s.uValue, s.vValue, 10);
@@ -211,7 +211,7 @@ QString RawFrame::cellText(int x, int y, bool hex) const
     const RawPixelSample s = pixel(x, y);
     if (!s.valid)
         return {};
-    if (format == RawPixelFormat::Yvyu || format == RawPixelFormat::Y210)
+    if (format == RawPixelFormat::Yuy2 || format == RawPixelFormat::Y210)
         return QStringLiteral("Y %1\nU %2\nV %3")
             .arg(number(s.yValue, hex)).arg(number(s.uValue, hex)).arg(number(s.vValue, hex));
     return QStringLiteral("R %1\nG %2\nB %3\nA %4")
@@ -227,7 +227,7 @@ QString RawFrame::pixelText(int x, int y, bool hex) const
     QString text = QStringLiteral("Pixel x=%1 y=%2  Format=%3  Offset=%4  ")
                        .arg(x).arg(y).arg(formatName(format))
                        .arg(number(quint32(s.byteOffset), true, 8));
-    if (format == RawPixelFormat::Yvyu)
+    if (format == RawPixelFormat::Yuy2)
         return text + QStringLiteral("Y=%1 U=%2 V=%3  PairPackedLE=%4")
             .arg(number(s.yValue, hex)).arg(number(s.uValue, hex)).arg(number(s.vValue, hex))
             .arg(number(s.packedValue, true, 8));

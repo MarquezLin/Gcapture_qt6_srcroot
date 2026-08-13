@@ -2,11 +2,16 @@ cmake_minimum_required(VERSION 3.16)
 
 project(win_capture_sdk VERSION 1.0.0 LANGUAGES CXX)
 
+# Remove obsolete user-facing cache switches from existing build directories.
+# These features and versions are now governed by this project configuration.
+unset(BUILD_GVFG_SDK CACHE)
+unset(QT6_VIEWER_ENABLE_GVFG_RECORDING CACHE)
+unset(GCAP_ENFORCE_LGPL_FFMPEG CACHE)
+unset(GCAPTURE_SDK_VERSION CACHE)
+unset(QT6_VIEWER_VERSION CACHE)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-set(GCAPTURE_SDK_VERSION "1.0.0" CACHE STRING "gcapture SDK version")
-set(QT6_VIEWER_VERSION "1.0.0" CACHE STRING "Qt viewer application version")
 
 # Qt auto tools (moc/uic/rcc) - safe to enable globally
 set(CMAKE_AUTOMOC ON)
@@ -28,13 +33,6 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 set(_DEFAULT_GVFG_STANDALONE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../GVFG_Standalone")
-if (EXISTS "${_DEFAULT_GVFG_STANDALONE_ROOT}/sdk/gvfg/include/gvfg_capture.h")
-  set(_DEFAULT_BUILD_GVFG_SDK ON)
-else()
-  set(_DEFAULT_BUILD_GVFG_SDK OFF)
-endif()
-
-option(BUILD_GVFG_SDK "Enable external GVFG SDK viewer integration" ${_DEFAULT_BUILD_GVFG_SDK})
 set(GVFG_STANDALONE_ROOT "${_DEFAULT_GVFG_STANDALONE_ROOT}" CACHE PATH "GVFG standalone SDK source root")
 set(GVFG_STANDALONE_BUILD_DIR "${GVFG_STANDALONE_ROOT}/build" CACHE PATH "GVFG standalone SDK build root or directory containing bin/gvfg.dll and lib/gvfg.lib")
 
@@ -42,7 +40,7 @@ set(GVFG_STANDALONE_BUILD_DIR "${GVFG_STANDALONE_ROOT}/build" CACHE PATH "GVFG s
 add_subdirectory(sdk/gcapture)
 add_subdirectory(sdk/gdisplay)
 
-if (WIN32 AND BUILD_GVFG_SDK)
+if (WIN32)
   if (NOT EXISTS "${GVFG_STANDALONE_ROOT}/sdk/gvfg/include/gvfg_capture.h")
     message(FATAL_ERROR "GVFG_STANDALONE_ROOT does not contain sdk/gvfg/include/gvfg_capture.h: ${GVFG_STANDALONE_ROOT}")
   endif()

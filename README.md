@@ -51,15 +51,14 @@ GVFG_Standalone/
 GPU frame-to-buffer conversion is exported directly by `gvfg.dll` through
 `gvfg_gpu_convert_to_buffer()` in `gvfg_capture.h`.
 
-Relevant CMake options:
+GVFG integration is required for Windows builds. Relevant CMake paths:
 
 ```text
-BUILD_GVFG_SDK=ON
 GVFG_STANDALONE_ROOT=<path-to-GVFG_Standalone>
 GVFG_STANDALONE_BUILD_DIR=<path-containing-bin-and-lib>
 ```
 
-If `GVFG_STANDALONE_BUILD_DIR` is not set, CMake scans
+If the direct `GVFG_STANDALONE_BUILD_DIR` does not contain the required files, CMake scans
 `GVFG_STANDALONE_ROOT/build/*` and uses the first directory containing
 `bin/gvfg.dll` and `lib/gvfg.lib`.
 

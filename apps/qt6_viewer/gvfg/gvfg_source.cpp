@@ -44,7 +44,7 @@ bool frameHasRows(const gvfg_frame_t &frame, int minRowBytes)
 
 QImage convertFrameToImage(const gvfg_frame_t &frame)
 {
-    if (frame.pixel_format != GVFG_PIXFMT_YVYU &&
+    if (frame.pixel_format != GVFG_PIXFMT_YUY2 &&
         frame.pixel_format != GVFG_PIXFMT_Y210)
         return QImage();
 
@@ -253,7 +253,7 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         return false;
     }
 
-    if (pixelFormat != GVFG_PIXFMT_YVYU && pixelFormat != GVFG_PIXFMT_Y210)
+    if (pixelFormat != GVFG_PIXFMT_YUY2 && pixelFormat != GVFG_PIXFMT_Y210)
     {
         if (error)
             *error = QStringLiteral("GVFG frame format is not supported by the FFmpeg recorder.");

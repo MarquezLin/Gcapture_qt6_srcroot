@@ -20,7 +20,7 @@ Before shipping:
 2. Confirm the `configuration:` line does not include `--enable-gpl` or `--enable-nonfree`.
 3. Include FFmpeg notices, LGPL license text, source availability, and the exact
    FFmpeg build/source information with the customer package.
-4. Build or configure with `GCAP_ENFORCE_LGPL_FFMPEG=ON` when preparing a release.
+4. Configure normally. CMake always rejects missing, uninspectable, GPL, or nonfree FFmpeg builds.
 
 `pack_qt6_viewer.bat` also checks the local FFmpeg build and stops packaging when
 GPL or nonfree flags are detected.

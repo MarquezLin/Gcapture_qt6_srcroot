@@ -28,7 +28,7 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
 
     auto *settings = new QHBoxLayout;
     formatCombo_ = new QComboBox(this);
-    formatCombo_->addItem(QStringLiteral("YVYU (8-bit 4:2:2, Y0 V Y1 U)"), int(RawPixelFormat::Yvyu));
+    formatCombo_->addItem(QStringLiteral("YUY2 (8-bit 4:2:2, Y0 U Y1 V)"), int(RawPixelFormat::Yuy2));
     formatCombo_->addItem(QStringLiteral("Y210 (10-bit 4:2:2)"), int(RawPixelFormat::Y210));
     formatCombo_->addItem(QStringLiteral("BGRA8"), int(RawPixelFormat::Bgra8));
     formatCombo_->addItem(QStringLiteral("RGBA8"), int(RawPixelFormat::Rgba8));
@@ -96,7 +96,7 @@ bool RawInspectorDialog::openFile(const QString &path)
 void RawInspectorDialog::inferFromFileName(const QString &path)
 {
     const QString name = QFileInfo(path).fileName().toLower();
-    RawPixelFormat format = RawPixelFormat::Yvyu;
+    RawPixelFormat format = RawPixelFormat::Yuy2;
     if (name.contains(QStringLiteral("y210")))
         format = RawPixelFormat::Y210;
     else if (name.contains(QStringLiteral("abgr2101010")) || name.contains(QStringLiteral("r10g10b10a2")))
@@ -115,8 +115,7 @@ void RawInspectorDialog::inferFromFileName(const QString &path)
         const QJsonObject json = QJsonDocument::fromJson(sidecar.readAll()).object();
         const QString metadataFormat = json.value(QStringLiteral("pixelFormat")).toString().toLower();
         if (metadataFormat == QStringLiteral("y210")) format = RawPixelFormat::Y210;
-        else if (metadataFormat == QStringLiteral("yvyu") ||
-                 metadataFormat == QStringLiteral("yuy2")) format = RawPixelFormat::Yvyu;
+        else if (metadataFormat == QStringLiteral("yuy2")) format = RawPixelFormat::Yuy2;
         else if (metadataFormat == QStringLiteral("bgra8")) format = RawPixelFormat::Bgra8;
         else if (metadataFormat == QStringLiteral("rgba8")) format = RawPixelFormat::Rgba8;
         else if (metadataFormat.contains(QStringLiteral("2101010"))) format = RawPixelFormat::Abgr2101010;
@@ -134,7 +133,7 @@ void RawInspectorDialog::inferFromFileName(const QString &path)
     }
 
     const qint64 size = QFileInfo(path).size();
-    const int bpp = (format == RawPixelFormat::Yvyu) ? 2 : 4;
+    const int bpp = (format == RawPixelFormat::Yuy2) ? 2 : 4;
     const QList<QSize> common = {{3840, 2160}, {2560, 1440}, {1920, 1080}, {1280, 720}, {720, 480}};
     for (const QSize &s : common)
     {

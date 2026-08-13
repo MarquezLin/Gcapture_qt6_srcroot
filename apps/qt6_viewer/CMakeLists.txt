@@ -1,18 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
 
-if (NOT DEFINED QT6_VIEWER_VERSION)
-  set(QT6_VIEWER_VERSION "1.0.0" CACHE STRING "Qt viewer application version")
-endif()
-
-project(qt6_viewer VERSION ${QT6_VIEWER_VERSION} LANGUAGES CXX)
+set(_QT6_VIEWER_VERSION "${PROJECT_VERSION}")
+project(qt6_viewer VERSION ${_QT6_VIEWER_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
-
-option(QT6_VIEWER_ENABLE_GVFG_RECORDING "Enable GVFG FFmpeg recording support in qt6_viewer when FFmpeg is available" ON)
 
 set(VIEWER_SOURCES
   main.cpp
@@ -57,7 +52,7 @@ set(VIEWER_DESIGN_ASSETS
 
 list(APPEND VIEWER_SOURCES ${VIEWER_DESIGN_ASSETS})
 
-if (WIN32 AND BUILD_GVFG_SDK)
+if (WIN32)
   list(APPEND VIEWER_SOURCES
     gvfg/gvfg_source.h
     gvfg/gvfg_source.cpp
@@ -83,7 +78,7 @@ else()
   add_executable(qt6_viewer ${VIEWER_SOURCES})
 endif()
 
-if (WIN32 AND BUILD_GVFG_SDK)
+if (WIN32)
   target_compile_definitions(qt6_viewer PRIVATE
     QT6_VIEWER_ENABLE_GVFG_BACKEND
     QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS
@@ -99,7 +94,7 @@ target_include_directories(qt6_viewer PRIVATE
   ${CMAKE_SOURCE_DIR}/sdk/gcapture/include
 )
 
-if (WIN32 AND BUILD_GVFG_SDK)
+if (WIN32)
   target_link_libraries(qt6_viewer PRIVATE gvfg)
   if (TARGET gvfg_preview)
     target_link_libraries(qt6_viewer PRIVATE gvfg_preview)
@@ -110,7 +105,7 @@ if (WIN32 AND BUILD_GVFG_SDK)
 endif()
 
 target_compile_definitions(qt6_viewer PRIVATE
-  QT6_VIEWER_VERSION="${QT6_VIEWER_VERSION}"
+  QT6_VIEWER_VERSION="${PROJECT_VERSION}"
 )
 
 # Link
@@ -129,8 +124,8 @@ if (EXISTS "${NVAPI_ROOT}/include" AND EXISTS "${NVAPI_ROOT}/lib/x64/nvapi64.lib
   target_compile_definitions(qt6_viewer PRIVATE GCAP_ENABLE_NVAPI)
 endif()
 
-# Optional FFmpeg recorder support for GVFG's pull-based frame path.
-if (WIN32 AND BUILD_GVFG_SDK AND QT6_VIEWER_ENABLE_GVFG_RECORDING AND FFMPEG_ROOT)
+# Required FFmpeg recorder support for GVFG's pull-based frame path.
+if (WIN32)
   find_path(QT6_VIEWER_FFMPEG_INCLUDE_DIR libavformat/avformat.h PATHS "${FFMPEG_ROOT}/include" NO_DEFAULT_PATH)
   find_library(QT6_VIEWER_FFMPEG_AVFORMAT_LIB avformat PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
   find_library(QT6_VIEWER_FFMPEG_AVCODEC_LIB avcodec PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
@@ -147,10 +142,8 @@ if (WIN32 AND BUILD_GVFG_SDK AND QT6_VIEWER_ENABLE_GVFG_RECORDING AND FFMPEG_ROO
     )
     message(STATUS "qt6_viewer: GVFG FFmpeg recording enabled: ${FFMPEG_ROOT}")
   else()
-    message(WARNING "qt6_viewer: FFmpeg not found; GVFG recording button will report unsupported.")
+    message(FATAL_ERROR "qt6_viewer: Required FFmpeg headers/libs were not found under FFMPEG_ROOT: ${FFMPEG_ROOT}")
   endif()
-elseif (WIN32 AND BUILD_GVFG_SDK AND NOT QT6_VIEWER_ENABLE_GVFG_RECORDING)
-  message(STATUS "qt6_viewer: GVFG FFmpeg recording disabled by QT6_VIEWER_ENABLE_GVFG_RECORDING=OFF.")
 endif()
 
 if (MSVC)
@@ -172,7 +165,7 @@ add_custom_command(TARGET qt6_viewer POST_BUILD
 )
 
 # Copy GVFG SDK DLL next to qt6_viewer.exe
-if (WIN32 AND BUILD_GVFG_SDK)
+if (WIN32)
   add_custom_command(TARGET qt6_viewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       $<TARGET_FILE:gvfg>
@@ -202,14 +195,26 @@ if (WIN32)
   endif()
 endif()
 
-# Optional: copy external edid-decode.exe next to qt6_viewer.exe
-option(EDID_DECODE_EXE "Path to a prebuilt edid-decode.exe" "")
-if (EDID_DECODE_EXE)
+# Copy edid-decode.exe next to qt6_viewer.exe. This is a file path, not a
+# boolean option; using option() here stores BOOL=OFF in CMakeCache and skips
+# the required runtime helper after a clean configure/build.
+set(_QT6_VIEWER_DEFAULT_EDID_DECODE_EXE
+  "${CMAKE_SOURCE_DIR}/third_party/edid-decode/vs/x64/Release/edid-decode.exe")
+if (NOT DEFINED EDID_DECODE_EXE OR NOT EDID_DECODE_EXE)
+  set(EDID_DECODE_EXE "${_QT6_VIEWER_DEFAULT_EDID_DECODE_EXE}" CACHE FILEPATH
+      "Path to a prebuilt edid-decode.exe" FORCE)
+else()
+  set(EDID_DECODE_EXE "${EDID_DECODE_EXE}" CACHE FILEPATH
+      "Path to a prebuilt edid-decode.exe")
+endif()
+if (EXISTS "${EDID_DECODE_EXE}")
   add_custom_command(TARGET qt6_viewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${EDID_DECODE_EXE}"
       $<TARGET_FILE_DIR:qt6_viewer>
   )
+else()
+  message(WARNING "edid-decode executable not found: ${EDID_DECODE_EXE}")
 endif()
 
 # Bundle / subsystem settings (Windows GUI)

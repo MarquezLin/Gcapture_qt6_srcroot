@@ -348,7 +348,6 @@ void MainWindow::updateBrandDashboard()
         const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
         const gvfg_signal_status_t signal = gvfg_->signalStatus();
         const gvfg_preview_info_t pv = gvfg_->previewInfo();
-        const gvfg_preview_stats_t previewStats = gvfg_->previewStats();
         backendText = QStringLiteral("GVFG");
         previewActive = pv.active != 0;
         renderPathText = pv.active
@@ -359,9 +358,7 @@ void MainWindow::updateBrandDashboard()
                                    .arg(pv.bit_depth)
                              : tr("preview inactive");
         frameCounter = rt.delivered_frames;
-        dashboardFps = (previewStats.present_fps > 0.0)
-                           ? previewStats.present_fps
-                           : ((rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps);
+        dashboardFps = (rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps;
         if (signal.width > 0 && signal.height > 0)
         {
             signalText = QStringLiteral("%1 x %2").arg(signal.width).arg(signal.height);
@@ -1274,6 +1271,9 @@ void MainWindow::logStartupInfo()
 {
     MainWindow::postLog(QStringLiteral("Viewer version: %1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
     MainWindow::postLog(QStringLiteral("gcapture SDK version: %1").arg(QString::fromUtf8(gcap_version_string())));
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    MainWindow::postLog(QStringLiteral("GVFG SDK version: %1").arg(QString::fromLatin1(gvfg_get_version())));
+#endif
 
     const QString logPath = qApp ? qApp->property("logPath").toString() : QString();
     if (!logPath.isEmpty())

@@ -1,14 +1,10 @@
-if (NOT DEFINED GCAPTURE_SDK_VERSION)
-  set(GCAPTURE_SDK_VERSION "1.0.0" CACHE STRING "gcapture SDK version")
-endif()
-
-project(gcapture VERSION ${GCAPTURE_SDK_VERSION} LANGUAGES CXX)
+set(_GCAPTURE_VERSION "${PROJECT_VERSION}")
+project(gcapture VERSION ${_GCAPTURE_VERSION} LANGUAGES CXX)
 
 add_library(gcapture SHARED
     src/core/capture_manager.cpp
     src/core/frame_converter.cpp
     src/core/logging.cpp
-    src/core/tiff_analysis.cpp
     src/core/c_api.cpp
     src/pipeline/shared_scene_pipeline.cpp
     src/providers/winmf_provider.cpp
@@ -37,13 +33,11 @@ target_include_directories(gcapture
 )
 
 target_compile_definitions(gcapture PRIVATE
-    GCAPTURE_SDK_VERSION="${GCAPTURE_SDK_VERSION}"
+    GCAPTURE_SDK_VERSION="${PROJECT_VERSION}"
 )
 
-# Optional FFmpeg recorder support for DShow recording.
-# Set FFMPEG_ROOT to a folder containing include/ and lib/.
+# Required LGPL FFmpeg recorder support for DShow recording.
 set(FFMPEG_ROOT "${CMAKE_SOURCE_DIR}/third_party/ffmpeg" CACHE PATH "FFmpeg root directory")
-option(GCAP_ENFORCE_LGPL_FFMPEG "Fail configure when FFmpeg was built with GPL or nonfree options" OFF)
 if (NOT FFMPEG_ROOT AND DEFINED ENV{FFMPEG_ROOT})
   set(FFMPEG_ROOT "$ENV{FFMPEG_ROOT}")
 endif()
@@ -58,27 +52,27 @@ if (FFMPEG_ROOT)
     target_include_directories(gcapture PRIVATE "${FFMPEG_INCLUDE_DIR}")
     target_link_libraries(gcapture PRIVATE ${FFMPEG_AVFORMAT_LIB} ${FFMPEG_AVCODEC_LIB} ${FFMPEG_AVUTIL_LIB} ${FFMPEG_SWSCALE_LIB})
     message(STATUS "gcapture: FFmpeg recorder enabled: ${FFMPEG_ROOT}")
-    if (EXISTS "${FFMPEG_ROOT}/bin/ffmpeg.exe")
-      execute_process(
-        COMMAND "${FFMPEG_ROOT}/bin/ffmpeg.exe" -version
-        OUTPUT_VARIABLE GCAP_FFMPEG_VERSION_TEXT
-        ERROR_QUIET
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-      )
-      if (GCAP_FFMPEG_VERSION_TEXT MATCHES "--enable-gpl|--enable-nonfree")
-        set(GCAP_FFMPEG_LICENSE_MSG "gcapture: FFmpeg at ${FFMPEG_ROOT} was built with GPL/nonfree options. Use an LGPL shared FFmpeg build for customer release.")
-        if (GCAP_ENFORCE_LGPL_FFMPEG)
-          message(FATAL_ERROR "${GCAP_FFMPEG_LICENSE_MSG}")
-        else()
-          message(WARNING "${GCAP_FFMPEG_LICENSE_MSG}")
-        endif()
-      endif()
+    if (NOT EXISTS "${FFMPEG_ROOT}/bin/ffmpeg.exe")
+      message(FATAL_ERROR "gcapture: Cannot verify FFmpeg licensing because ${FFMPEG_ROOT}/bin/ffmpeg.exe is missing.")
+    endif()
+    execute_process(
+      COMMAND "${FFMPEG_ROOT}/bin/ffmpeg.exe" -version
+      RESULT_VARIABLE GCAP_FFMPEG_VERSION_RESULT
+      OUTPUT_VARIABLE GCAP_FFMPEG_VERSION_TEXT
+      ERROR_VARIABLE GCAP_FFMPEG_VERSION_ERROR
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if (NOT GCAP_FFMPEG_VERSION_RESULT EQUAL 0)
+      message(FATAL_ERROR "gcapture: Failed to inspect FFmpeg licensing: ${GCAP_FFMPEG_VERSION_ERROR}")
+    endif()
+    if (GCAP_FFMPEG_VERSION_TEXT MATCHES "--enable-gpl|--enable-nonfree")
+      message(FATAL_ERROR "gcapture: FFmpeg at ${FFMPEG_ROOT} was built with GPL/nonfree options. An LGPL shared FFmpeg build is required.")
     endif()
   else()
-    message(WARNING "gcapture: FFMPEG_ROOT is set, but FFmpeg headers/libs including libswscale were not found. DShow FFmpeg recording will return Not supported.")
+    message(FATAL_ERROR "gcapture: Required FFmpeg headers/libs including libswscale were not found under FFMPEG_ROOT: ${FFMPEG_ROOT}")
   endif()
 else()
-  message(STATUS "gcapture: FFmpeg recorder disabled. Set FFMPEG_ROOT to enable DShow FFmpeg MP4 recording.")
+  message(FATAL_ERROR "gcapture: FFMPEG_ROOT is required.")
 endif()
 
 if (WIN32)
