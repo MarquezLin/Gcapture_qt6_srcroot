@@ -311,68 +311,6 @@ extern "C"
     } gcap_recording_stats_t;
 
 
-    /**
-     * Ramp-pattern validation status for gcap_tiff_analysis_t.
-     *
-     * Important: ramp validation is only meaningful for generated monotonic ramp test
-     * images. A real camera/HDMI frame usually returns GCAP_TIFF_RAMP_NOT_APPLICABLE;
-     * that does not mean the TIFF is 8-bit or invalid. Use likely_ten_bit_content,
-     * min/max, unique_value_count, and effective_bit_depth as the general bit-depth
-     * evidence for arbitrary images.
-     */
-    typedef enum
-    {
-        GCAP_TIFF_RAMP_NOT_CHECKED = 0,
-        GCAP_TIFF_RAMP_NOT_APPLICABLE = 1,
-        GCAP_TIFF_RAMP_DETECTED_VALID = 2,
-        GCAP_TIFF_RAMP_DETECTED_INVALID = 3
-    } gcap_tiff_ramp_status_t;
-
-    /** TIFF bit-depth / optional ramp-pattern analysis result. Fixed-size C struct for SDK clients. */
-    typedef struct
-    {
-        int ok;                         /** 1 = analysis succeeded, 0 = failed. */
-        char path[512];                 /** Input TIFF path, UTF-8 when available. */
-        char error[512];                /** Failure reason, UTF-8. Empty on success. */
-
-        int width;
-        int height;
-        int channels;
-        int bits_per_sample;
-        int samples_per_pixel;
-        int stored_bit_depth;
-        int effective_bit_depth;
-
-        char pixel_format_name[96];
-        char photometric[64];
-
-        uint64_t min_value;
-        uint64_t max_value;
-        uint64_t unique_value_count;
-
-        int likely_ten_bit_ramp;              /** Backward-compatible alias: 1 only when ramp_status == GCAP_TIFF_RAMP_DETECTED_VALID. */
-        int strict_ten_bit_ramp;              /** Strict monotonic ramp and likely 10-bit content. */
-        int visual_ten_bit_ramp_candidate;    /** A monotonic visual ramp pattern was detected, regardless of bit-depth validity. */
-        int likely_ten_bit_content;           /** General bit-depth evidence for arbitrary images; does not require a ramp pattern. */
-        int values_look_shifted_10bit;
-        int values_look_8bit_expanded;
-        int ramp_status;                      /** gcap_tiff_ramp_status_t. Non-ramp images should be NOT_APPLICABLE, not failed. */
-
-        char ramp_reason[512];
-        char strict_ramp_reason[512];
-        char visual_ramp_reason[512];
-        char ramp_note[512];                  /** Human-readable explanation of ramp_status. */
-
-        int sampled_row_y;
-        char sampled_row_source[96];
-        char sampled_row_logical10_rule[192];
-        char sampled_row_raw16_csv[4096];
-        char sampled_row_logical10_csv[4096];
-
-        int preview_stride_bytes;        /** RGBA64 preview stride. Use gcap_read_tiff_preview_rgba64() to read data. */
-        size_t preview_size_bytes;       /** Required RGBA64 preview buffer size. */
-    } gcap_tiff_analysis_t;
-
     typedef enum
     {
         GCAP_DEINT_AUTO = 0,
@@ -792,35 +730,6 @@ extern "C"
      */
     GCAP_API gcap_status_t gcap_frame_to_bgra8(const gcap_frame_packet_t *src, void *dst, int dst_stride);
 
-
-    /**
-     * Analyze a TIFF file written by SDK snapshot export or any WIC-readable TIFF.
-     *
-     * The analysis uses Windows Imaging Component on Windows and reports stored
-     * bit depth, effective bit depth heuristics, min/max/unique values, and
-     * optional ramp-pattern validation. Ramp validation is only meaningful for
-     * generated monotonic ramp test images; normal camera/HDMI content commonly
-     * reports GCAP_TIFF_RAMP_NOT_APPLICABLE. That is not a failure and does not
-     * imply 8-bit content. Use likely_ten_bit_content and the value statistics
-     * as the general bit-depth evidence for arbitrary images.
-     *
-     * It does not allocate memory for the caller.
-     */
-    GCAP_API gcap_status_t gcap_analyze_tiff(const char *path_utf8, gcap_tiff_analysis_t *out);
-
-    /**
-     * Decode the first TIFF frame into RGBA64 little-endian pixels for preview.
-     *
-     * Pass dst = NULL or dst_size = 0 to query required_size/width/height/stride.
-     * The destination buffer must be at least required_size bytes.
-     */
-    GCAP_API gcap_status_t gcap_read_tiff_preview_rgba64(const char *path_utf8,
-                                                         void *dst,
-                                                         size_t dst_size,
-                                                         int *width,
-                                                         int *height,
-                                                         int *stride_bytes,
-                                                         size_t *required_size);
 
     /** Return human-readable status string. Never returns null. */
     GCAP_API const char *gcap_strerror(gcap_status_t);
