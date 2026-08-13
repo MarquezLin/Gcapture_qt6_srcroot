@@ -136,14 +136,16 @@ namespace
 
     static QString formatGvfgStatusStateKey(const gvfg_runtime_info_t &rt, const gvfg_signal_status_t &signal)
     {
-        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8")
+        // FPS and delivered_frames change continuously and are displayed in
+        // the status bar. Keep them out of the log de-duplication key so the
+        // log records only signal/format changes and newly detected loss.
+        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7")
             .arg(signal.connected)
             .arg(signal.channel)
             .arg(signal.width)
             .arg(signal.height)
             .arg(signal.pixel_format)
             .arg(signal.bit_depth)
-            .arg(rt.delivered_frames)
             .arg(rt.lost_frames);
     }
 #endif
@@ -248,6 +250,9 @@ MainWindow::MainWindow(QWidget *parent)
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     gvfg_ = new GvfgSource(this);
     connect(gvfg_, &GvfgSource::frameReady, this, &MainWindow::sigFrame, Qt::QueuedConnection);
+    connect(gvfg_, &GvfgSource::eventOccurred, this, [](const QString &message)
+            { MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message)); },
+            Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::errorOccurred, this, [this](const QString &message)
             {
                 MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message), true);
@@ -260,13 +265,6 @@ MainWindow::MainWindow(QWidget *parent)
                         ui->statusbar->showMessage(message, 8000);
                     QMessageBox::warning(this, QStringLiteral("Record"), message);
                 } }, Qt::QueuedConnection);
-    connect(gvfg_, &GvfgSource::preStartRuntimeInfoReady, this, [this](const gvfg_runtime_info_t &info)
-            {
-                const gvfg_signal_status_t signal = gvfg_->signalStatus();
-                const QString rawStateKey = formatGvfgStatusStateKey(info, signal);
-                MainWindow::postLog(QStringLiteral("[GVFG] signal before stream start"));
-                MainWindow::postLog(formatGvfgStatusLogLine(info, signal));
-                lastGvfgRawStateKey_ = rawStateKey; });
 #endif
 
     setupRuntimeStatusTimer();
@@ -451,9 +449,6 @@ void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
     auto *self = static_cast<MainWindow *>(u);
     if (!self || !f || !f->data[0] || f->width <= 0 || f->height <= 0)
         return;
-    if (self->usePacketCallback_)
-        return;
-
     // Copy the frame before crossing from the callback thread to the UI thread.
     QImage img((const uchar *)f->data[0], f->width, f->height, f->stride[0], QImage::Format_ARGB32);
     const QImage safeImg = img.copy();
@@ -478,30 +473,31 @@ void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
         return;
 
     const gcap_frame_packet_t pktCopy = *pkt;
-    if (pkt->data[0] && pkt->stride[0] > 0 && pkt->height > 0 &&
-        (pkt->format == GCAP_FMT_YUY2 || pkt->format == GCAP_FMT_Y210 ||
-         pkt->format == GCAP_FMT_ARGB))
+    if (pkt->data[0] && pkt->stride[0] > 0 && pkt->height > 0)
     {
         QMutexLocker lock(&self->rawSnapshotMutex_);
-        self->latestRawFrame_ = QByteArray(static_cast<const char *>(pkt->data[0]),
-                                           pkt->stride[0] * pkt->height);
-        self->latestRawWidth_ = pkt->width;
-        self->latestRawHeight_ = pkt->height;
-        self->latestRawStride_ = pkt->stride[0];
-        self->latestRawFormat_ = pkt->format;
+        if (self->rawSnapshotPending_ &&
+            (pkt->format == GCAP_FMT_YUY2 || pkt->format == GCAP_FMT_Y210 ||
+             pkt->format == GCAP_FMT_ARGB))
+        {
+            self->latestRawFrame_.resize(pkt->stride[0] * pkt->height);
+            std::memcpy(self->latestRawFrame_.data(), pkt->data[0],
+                        static_cast<size_t>(self->latestRawFrame_.size()));
+            self->latestRawWidth_ = pkt->width;
+            self->latestRawHeight_ = pkt->height;
+            self->latestRawStride_ = pkt->stride[0];
+            self->latestRawFormat_ = pkt->format;
+            self->rawSnapshotPending_ = false;
+            self->rawSnapshotCv_.wakeAll();
+        }
     }
-    QImage img;
-    if (self->usePacketCallback_)
-        img = framePacketToQImage(pktCopy);
 
     QMetaObject::invokeMethod(
         self,
-        [self, pktCopy, img]()
+        [self, pktCopy]()
         {
             self->updateFrameSourceState(pktCopy.pts_ns, pktCopy.width, pktCopy.height, self->lastPacketCallbackPtsNs_);
             self->logFramePacketIfNeeded(pktCopy);
-            if (self->usePacketCallback_ && !img.isNull())
-                self->dispatchFrameImage(img);
         },
         Qt::QueuedConnection);
 }
@@ -551,7 +547,11 @@ void MainWindow::updateRuntimeStatusUi()
             const gvfg_signal_status_t signal = gvfg_->signalStatus();
             const gvfg_preview_info_t pv = gvfg_->previewInfo();
             const QString rawStateKey = formatGvfgStatusStateKey(rt, signal);
-            if (lastGvfgRawStateKey_ != rawStateKey)
+            const bool waitingForFirstFrame = rt.delivered_frames == 0 &&
+                                              !signal.connected &&
+                                              signal.width == 0 &&
+                                              signal.height == 0;
+            if (!waitingForFirstFrame && lastGvfgRawStateKey_ != rawStateKey)
             {
                 MainWindow::postLog(formatGvfgStatusLogLine(rt, signal));
                 lastGvfgRawStateKey_ = rawStateKey;
@@ -574,14 +574,15 @@ void MainWindow::updateRuntimeStatusUi()
                                                 .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
                                                 .arg(signal.bit_depth)
                                           : QStringLiteral("--");
-            const QString sb = QStringLiteral("Backend: %1 | Signal %2 %3 | Read frame %4 | %5 | App runtime %6fps frames=%7")
+            const QString sb = QStringLiteral("Backend: %1 | Signal %2 %3 | Read frame %4 | %5 | App runtime %6fps frames=%7 lost=%8")
                                    .arg(QStringLiteral("GVFG"))
                                    .arg(signalResolution)
                                    .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
                                    .arg(frameText)
                                    .arg(renderPath)
                                    .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
-                                   .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
+                                   .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)))
+                                   .arg(QString::number(static_cast<qulonglong>(rt.lost_frames)));
             if (lastRuntimeStatusText_ != sb)
             {
                 ui->statusbar->showMessage(sb);
@@ -886,8 +887,6 @@ void MainWindow::setupProcAmpAction()
                                     gcap_set_procamp(h_, &p);
                             });
                 }
-
-                usePacketCallback_ = false;
 
                 bool supported = false;
                 if (h_)

@@ -424,6 +424,15 @@ void MainWindow::onSnapshot()
     }
 
     const QString basePath = buildSnapshotBasePath();
+    if (rawPacketCallbackEnabled_)
+    {
+        rawSnapshotMutex_.lock();
+        latestRawFrame_.clear();
+        rawSnapshotPending_ = true;
+        rawSnapshotCv_.wait(&rawSnapshotMutex_, 1000);
+        rawSnapshotPending_ = false;
+        rawSnapshotMutex_.unlock();
+    }
     const QString sourceRawPath = saveLatestSourceRaw(basePath);
     gcap_snapshot_export_result_t result{};
     const bool sceneOk = saveSceneExports(basePath, &result);

@@ -65,8 +65,8 @@ public:
 
 signals:
     void frameReady(const QImage &image);
+    void eventOccurred(const QString &message);
     void errorOccurred(const QString &message);
-    void preStartRuntimeInfoReady(const gvfg_runtime_info_t &info);
 
 private:
     void readLoop();

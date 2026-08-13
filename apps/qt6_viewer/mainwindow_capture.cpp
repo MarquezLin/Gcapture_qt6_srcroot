@@ -126,6 +126,8 @@ void MainWindow::resetRuntimeTracking()
         latestRawFrame_.clear();
         latestRawWidth_ = latestRawHeight_ = latestRawStride_ = 0;
         latestRawFormat_ = -1;
+        rawSnapshotPending_ = false;
+        rawSnapshotCv_.wakeAll();
     }
 }
 
@@ -432,13 +434,7 @@ void MainWindow::onStart()
     void *hwnd = previewWindow_ ? previewWindow_->previewHwnd() : nullptr;
 
     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
-    usePacketCallback_ = false;
-    packetLogOnly_ = (backend == 2);
-
-    appendDebugLog(QStringLiteral("[MainWindow] backend=%1 usePacketCallback=%2 packetLogOnly=%3")
-                       .arg(backend)
-                       .arg(usePacketCallback_ ? "true" : "false")
-                       .arg(packetLogOnly_ ? "true" : "false"));
+    rawPacketCallbackEnabled_ = (backend == 2);
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     if (backend == kQtViewerGvfgBackend)
@@ -475,14 +471,9 @@ void MainWindow::onStart()
         if (sig.bit_depth >= 10)
             currentProfile_.format = GCAP_FMT_Y210;
 
-        MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 channel=%2 connected=%3 %4x%5 format=%6 bitdepth=%7")
+        MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 channel=%2; waiting for first frame")
                                 .arg(deviceIndex_)
-                                .arg(sig.channel)
-                                .arg(sig.connected)
-                                .arg(currentProfile_.width)
-                                .arg(currentProfile_.height)
-                                .arg(QString::fromLatin1(gvfg_pixel_format_name(sig.pixel_format)))
-                                .arg(sig.bit_depth));
+                                .arg(GVFG_CHANNEL_0));
         updateRuntimeStatusUi();
         refreshCaptureInfoFromSdkAndRuntime(false);
         refreshDisplayInfoFromCurrentState();
@@ -510,7 +501,7 @@ void MainWindow::onStart()
     }
 
     st = gcap_set_callbacks(h_, &MainWindow::s_vcb, &MainWindow::s_ecb, this);
-    if (st == GCAP_OK && (usePacketCallback_ || packetLogOnly_))
+    if (st == GCAP_OK && rawPacketCallbackEnabled_)
     {
         st = gcap_set_frame_packet_callback(h_, &MainWindow::s_pcb, this);
         if (st == GCAP_OK)
@@ -523,7 +514,7 @@ void MainWindow::onStart()
     if (st != GCAP_OK)
     {
         showCaptureErrorAndClose(QStringLiteral("set callbacks"), st,
-                                 (usePacketCallback_ || packetLogOnly_) ? "gcap_set_frame_packet_callback" : "gcap_set_callbacks");
+                                 rawPacketCallbackEnabled_ ? "gcap_set_frame_packet_callback" : "gcap_set_callbacks");
         return;
     }
 

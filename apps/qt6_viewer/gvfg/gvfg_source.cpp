@@ -119,8 +119,6 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         return false;
     }
 
-    emit preStartRuntimeInfoReady(runtimeInfo());
-
     st = gvfg_start(handle_);
     if (st != GVFG_OK)
     {
@@ -433,7 +431,7 @@ void GvfgSource::readLoop()
             }
             else
             {
-                emit errorOccurred(QStringLiteral("GVFG event %1")
+                emit eventOccurred(QStringLiteral("GVFG event %1")
                                        .arg(gvfgEventName(eventType)));
             }
             event = {};

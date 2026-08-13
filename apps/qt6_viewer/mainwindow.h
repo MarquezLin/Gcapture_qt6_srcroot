@@ -13,6 +13,7 @@
 #include <QFrame>
 #include <QMargins>
 #include <QMutex>
+#include <QWaitCondition>
 #include <gcapture.h>
 #include <cstdint>
 #include "inputinfodialog.h"
@@ -118,13 +119,14 @@ private:
     int cachedDeviceCapsIndex_ = -1;
     QStringList cachedSupportedFormats_;
     QStringList cachedPropertyPages_;
-    bool usePacketCallback_ = false;
-    bool packetLogOnly_ = false;
+    bool rawPacketCallbackEnabled_ = false;
     uint64_t lastVideoCallbackPtsNs_ = 0;
     uint64_t lastPacketCallbackPtsNs_ = 0;
     uint64_t framePacketLogCount_ = 0;
     uint64_t framePacketSessionId_ = 0;
     QMutex rawSnapshotMutex_;
+    QWaitCondition rawSnapshotCv_;
+    bool rawSnapshotPending_ = false;
     QByteArray latestRawFrame_;
     int latestRawWidth_ = 0;
     int latestRawHeight_ = 0;
