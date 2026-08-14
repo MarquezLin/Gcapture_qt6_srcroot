@@ -265,6 +265,13 @@ MainWindow::MainWindow(QWidget *parent)
                         ui->statusbar->showMessage(message, 8000);
                     QMessageBox::warning(this, QStringLiteral("Record"), message);
                 } }, Qt::QueuedConnection);
+    connect(gvfg_, &GvfgSource::signalStatusChanged, this, [this](bool connected)
+            {
+                const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
+                if (backend == kQtViewerGvfgBackend && !usingGvfg_ && ui->btnStart)
+                    ui->btnStart->setEnabled(connected);
+                updateRuntimeStatusUi();
+            });
 #endif
 
     setupRuntimeStatusTimer();
@@ -293,7 +300,7 @@ MainWindow::~MainWindow()
 {
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     if (gvfg_)
-        gvfg_->stop();
+        gvfg_->close();
 #endif
     if (g_mainWindow == this)
     {
@@ -822,6 +829,11 @@ void MainWindow::setupRuntimeStatusTimer()
     runtimeStatusTimer_->setInterval(500);
     connect(runtimeStatusTimer_, &QTimer::timeout, this, [this]()
             {
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+                refreshGvfgMonitoring();
+                if (gvfg_)
+                    gvfg_->pollEvents();
+#endif
                 updateRuntimeStatusUi();
                 refreshCaptureInfoFromSdkAndRuntime(true);
                 refreshDisplayInfoFromCurrentState();
@@ -1063,11 +1075,12 @@ void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     if (backend == kQtViewerGvfgBackend)
     {
-        ui->comboPixelFormat->addItem(QStringLiteral("Format: Hardware Auto"), -1);
-        ui->comboPixelFormat->setToolTip(
-            tr("GVFG uses the pixel format delivered by the capture hardware. "
-               "The actual format is shown in Color Path and the status bar."));
-        ui->comboPixelFormat->setEnabled(false);
+        ui->comboPixelFormat->addItem(QStringLiteral("YUY2 (8-bit 4:2:2)"), static_cast<int>(GVFG_PIXFMT_YUY2));
+        ui->comboPixelFormat->addItem(QStringLiteral("Y210 (10-bit 4:2:2)"), static_cast<int>(GVFG_PIXFMT_Y210));
+        const int restoreIndex = ui->comboPixelFormat->findData(previousData);
+        ui->comboPixelFormat->setCurrentIndex(restoreIndex >= 0 ? restoreIndex : 0);
+        ui->comboPixelFormat->setToolTip(tr("GVFG output format controlled through the SDK API (register 0x80)."));
+        ui->comboPixelFormat->setEnabled(true);
         lastPixelFormatWarningKey_.clear();
         return;
     }
@@ -1162,7 +1175,29 @@ void MainWindow::initializeDeviceList()
                             .arg(ui->comboDevice->currentText()));
 
     refreshPixelFormatOptions(true);
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    refreshGvfgMonitoring();
+#endif
 }
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+void MainWindow::refreshGvfgMonitoring()
+{
+    if (!gvfg_ || usingGvfg_)
+        return;
+    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
+    if (backend != kQtViewerGvfgBackend || deviceIndex_ < 0)
+    {
+        if (gvfg_->isOpen())
+            gvfg_->close();
+        return;
+    }
+    if (!gvfg_->isOpen() || gvfg_->openedDeviceIndex() != deviceIndex_)
+        gvfg_->open(deviceIndex_);
+    if (ui->btnStart)
+        ui->btnStart->setEnabled(gvfg_->isOpen() && gvfg_->signalStatus().connected != 0);
+}
+#endif
 
 void MainWindow::setupConnections()
 {
@@ -1184,6 +1219,9 @@ void MainWindow::setupConnections()
                     deviceIndex_ = ok ? selectedDeviceIndex : -1;
                     invalidateDeviceCapabilityCache();
                     refreshPixelFormatOptions(true);
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+                    refreshGvfgMonitoring();
+#endif
                     refreshCaptureInfoFromSdkAndRuntime(false);
                     if (infoDlg_ && infoDlg_->isVisible())
                     {
@@ -1230,6 +1268,19 @@ void MainWindow::setupConnections()
                         }
                     } });
     }
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (ui->comboPixelFormat)
+        connect(ui->comboPixelFormat, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
+                {
+                    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
+                    if (backend != kQtViewerGvfgBackend || !gvfg_)
+                        return;
+                    refreshGvfgMonitoring();
+                    if (gvfg_->isOpen())
+                        gvfg_->setVideoFormat(static_cast<gvfg_pixel_format_t>(ui->comboPixelFormat->currentData().toInt()));
+                });
+#endif
 
     if (ui->comboPreviewBitDepth)
     {

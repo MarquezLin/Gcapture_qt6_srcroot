@@ -77,7 +77,7 @@ GvfgSource::GvfgSource(QObject *parent)
 
 GvfgSource::~GvfgSource()
 {
-    stop();
+    close();
 }
 
 QStringList GvfgSource::enumerateDevices()
@@ -93,9 +93,12 @@ QStringList GvfgSource::enumerateDevices()
     return names;
 }
 
-bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMode)
+bool GvfgSource::open(int deviceIndex)
 {
-    stop();
+    const int requestedIndex = std::max(0, deviceIndex);
+    if (handle_ && openedDeviceIndex_ == requestedIndex)
+        return true;
+    close();
 
     gvfg_status_t st = gvfg_create(&handle_);
     if (st != GVFG_OK || !handle_)
@@ -105,25 +108,56 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         return false;
     }
 
-    if (!setPreview(previewHwnd, previewBitDepthMode))
-    {
-        stop();
-        return false;
-    }
-
-    st = gvfg_open_channel(handle_, std::max(0, deviceIndex), GVFG_CHANNEL_0);
+    st = gvfg_open_channel(handle_, requestedIndex, GVFG_CHANNEL_0);
     if (st != GVFG_OK)
     {
         emit errorOccurred(QStringLiteral("gvfg_open_channel failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
-        stop();
+        close();
         return false;
     }
 
-    st = gvfg_start(handle_);
+    openedDeviceIndex_ = requestedIndex;
+    gvfg_signal_status_t status{};
+    if (gvfg_get_signal_status(handle_, &status) == GVFG_OK)
+    {
+        std::lock_guard<std::mutex> lock(signalMutex_);
+        cachedSignal_ = status;
+    }
+    emit signalStatusChanged(status.connected != 0);
+    return true;
+}
+
+void GvfgSource::close()
+{
+    stop();
+    if (handle_)
+    {
+        gvfg_destroy(handle_);
+        handle_ = nullptr;
+    }
+    openedDeviceIndex_ = -1;
+    std::lock_guard<std::mutex> lock(signalMutex_);
+    cachedSignal_ = {};
+}
+
+bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMode)
+{
+    stop();
+    if (!open(deviceIndex))
+        return false;
+    if (!setPreview(previewHwnd, previewBitDepthMode))
+        return false;
+    if (!signalStatus().connected)
+    {
+        emit errorOccurred(QStringLiteral("GVFG start blocked: no locked input signal."));
+        return false;
+    }
+
+    const gvfg_status_t st = gvfg_start(handle_);
     if (st != GVFG_OK)
     {
         emit errorOccurred(QStringLiteral("gvfg_start failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
-        stop();
+        setPreview(nullptr, previewBitDepthMode);
         return false;
     }
 
@@ -184,11 +218,7 @@ void GvfgSource::stop()
         previewHandle_ = nullptr;
     }
     if (handle_)
-    {
         gvfg_stop(handle_);
-        gvfg_destroy(handle_);
-        handle_ = nullptr;
-    }
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
         recordingWidth_ = 0;
@@ -371,10 +401,55 @@ GvfgSource::Snapshot GvfgSource::captureSnapshotData(int timeoutMs, QString *err
 
 gvfg_signal_status_t GvfgSource::signalStatus() const
 {
-    gvfg_signal_status_t status{};
-    if (handle_)
-        gvfg_get_signal_status(handle_, &status);
-    return status;
+    std::lock_guard<std::mutex> lock(signalMutex_);
+    return cachedSignal_;
+}
+
+bool GvfgSource::setVideoFormat(gvfg_pixel_format_t format)
+{
+    if (!handle_)
+        return false;
+    const gvfg_status_t st = gvfg_set_video_format(handle_, format);
+    if (st != GVFG_OK)
+    {
+        emit errorOccurred(QStringLiteral("gvfg_set_video_format failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
+        return false;
+    }
+    return true;
+}
+
+void GvfgSource::pollEvents()
+{
+    if (!handle_)
+        return;
+    gvfg_event_t event{};
+    event.struct_size = sizeof(event);
+    while (gvfg_poll_event(handle_, &event, 0) == GVFG_OK)
+    {
+        const auto type = static_cast<gvfg_event_type_t>(event.type);
+        if (type == GVFG_EVENT_FRAME_LOSS)
+            emit errorOccurred(QStringLiteral("GVFG frame loss: %1 frame(s)").arg(static_cast<qulonglong>(event.count)));
+        else
+            emit eventOccurred(QStringLiteral("GVFG event %1").arg(gvfgEventName(type)));
+        if (type == GVFG_EVENT_SIGNAL_CONNECTED || type == GVFG_EVENT_SIGNAL_DISCONNECTED ||
+            type == GVFG_EVENT_FORMAT_CHANGE_BEGIN || type == GVFG_EVENT_STREAM_READY)
+        {
+            gvfg_signal_status_t status{};
+            if (gvfg_get_signal_status(handle_, &status) == GVFG_OK)
+            {
+                bool changed;
+                {
+                    std::lock_guard<std::mutex> lock(signalMutex_);
+                    changed = cachedSignal_.connected != status.connected;
+                    cachedSignal_ = status;
+                }
+                if (changed)
+                    emit signalStatusChanged(status.connected != 0);
+            }
+        }
+        event = {};
+        event.struct_size = sizeof(event);
+    }
 }
 
 gvfg_runtime_info_t GvfgSource::runtimeInfo() const
@@ -419,25 +494,6 @@ void GvfgSource::readLoop()
 {
     while (!stopRequested_.load(std::memory_order_acquire))
     {
-        gvfg_event_t event{};
-        event.struct_size = sizeof(event);
-        while (handle_ && gvfg_poll_event(handle_, &event, 0) == GVFG_OK)
-        {
-            const auto eventType = static_cast<gvfg_event_type_t>(event.type);
-            if (eventType == GVFG_EVENT_FRAME_LOSS)
-            {
-                emit errorOccurred(QStringLiteral("GVFG frame loss: %1 frame(s)")
-                                       .arg(static_cast<qulonglong>(event.count)));
-            }
-            else
-            {
-                emit eventOccurred(QStringLiteral("GVFG event %1")
-                                       .arg(gvfgEventName(eventType)));
-            }
-            event = {};
-            event.struct_size = sizeof(event);
-        }
-
         gvfg_frame_t frame{};
         const gvfg_status_t st = handle_ ? gvfg_read_frame(handle_, &frame, 200) : GVFG_ESTATE;
         if (st == GVFG_OK)

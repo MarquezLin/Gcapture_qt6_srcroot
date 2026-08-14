@@ -445,6 +445,19 @@ void MainWindow::onStart()
             return;
         }
 
+        refreshGvfgMonitoring();
+        if (!gvfg_->isOpen() || !gvfg_->signalStatus().connected)
+        {
+            QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("No locked input signal. Start is unavailable."));
+            if (ui->btnStart)
+                ui->btnStart->setEnabled(false);
+            return;
+        }
+        const auto requestedFormat = static_cast<gvfg_pixel_format_t>(
+            ui->comboPixelFormat ? ui->comboPixelFormat->currentData().toInt() : static_cast<int>(GVFG_PIXFMT_YUY2));
+        if (!gvfg_->setVideoFormat(requestedFormat))
+            return;
+
         currentProfile_ = {};
         currentProfile_.mode = GCAP_PROFILE_DEVICE_DEFAULT;
         currentProfile_.format = GCAP_FMT_YUY2;

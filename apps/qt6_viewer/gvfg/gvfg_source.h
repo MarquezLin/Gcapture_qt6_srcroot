@@ -45,9 +45,15 @@ public:
 
     static QStringList enumerateDevices();
 
+    bool open(int deviceIndex);
+    void close();
     bool start(void *previewHwnd, int deviceIndex, int previewBitDepthMode);
     bool setPreview(void *previewHwnd, int previewBitDepthMode);
     void stop();
+    bool isOpen() const { return handle_ != nullptr; }
+    int openedDeviceIndex() const { return openedDeviceIndex_; }
+    bool setVideoFormat(gvfg_pixel_format_t format);
+    void pollEvents();
     bool isRunning() const { return running_; }
     bool startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error);
     void stopRecording();
@@ -67,6 +73,7 @@ signals:
     void frameReady(const QImage &image);
     void eventOccurred(const QString &message);
     void errorOccurred(const QString &message);
+    void signalStatusChanged(bool connected);
 
 private:
     void readLoop();
@@ -76,6 +83,9 @@ private:
 #endif
 
     gvfg_handle handle_ = nullptr;
+    int openedDeviceIndex_ = -1;
+    mutable std::mutex signalMutex_;
+    gvfg_signal_status_t cachedSignal_{};
     gvfg_preview_handle previewHandle_ = nullptr;
     std::thread readThread_;
     std::atomic_bool stopRequested_{false};

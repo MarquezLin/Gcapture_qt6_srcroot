@@ -182,6 +182,9 @@ private:
     void notifyPixelFormatEnumerationFailure(int backend);
     void initializeDeviceList();
     void setupConnections();
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    void refreshGvfgMonitoring();
+#endif
     void logStartupInfo();
     void resetRuntimeTracking();
     void clearPreviewSurface();
