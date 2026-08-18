@@ -407,7 +407,7 @@ gvfg_signal_status_t GvfgSource::signalStatus() const
 
 bool GvfgSource::setVideoFormat(gvfg_pixel_format_t format)
 {
-    if (!handle_)
+    if (!handle_ || running_)
         return false;
     const gvfg_status_t st = gvfg_set_video_format(handle_, format);
     if (st != GVFG_OK)
@@ -416,6 +416,12 @@ bool GvfgSource::setVideoFormat(gvfg_pixel_format_t format)
         return false;
     }
     return true;
+}
+
+void GvfgSource::clearPreview()
+{
+    if (previewHandle_)
+        gvfg_preview_clear(previewHandle_);
 }
 
 void GvfgSource::pollEvents()

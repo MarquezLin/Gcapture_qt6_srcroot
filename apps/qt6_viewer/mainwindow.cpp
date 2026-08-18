@@ -267,6 +267,11 @@ MainWindow::MainWindow(QWidget *parent)
                 } }, Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::signalStatusChanged, this, [this](bool connected)
             {
+                if (!connected && usingGvfg_)
+                {
+                    gvfg_->clearPreview();
+                    clearPreviewSurface();
+                }
                 const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
                 if (backend == kQtViewerGvfgBackend && !usingGvfg_ && ui->btnStart)
                     ui->btnStart->setEnabled(connected);
@@ -537,6 +542,14 @@ void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)
 
 void MainWindow::updateRuntimeStatusUi()
 {
+    bool gvfgStreamActive = false;
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    const int selectedBackend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
+    gvfgStreamActive = selectedBackend == kQtViewerGvfgBackend && usingGvfg_;
+#endif
+    if (ui->comboPixelFormat)
+        ui->comboPixelFormat->setEnabled(!gvfgStreamActive);
+
     updateBrandDashboard();
 
     if (!ui->statusbar)
@@ -1069,6 +1082,10 @@ void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
     const QSignalBlocker blocker(ui->comboPixelFormat);
     const int previousData = ui->comboPixelFormat->currentData().toInt();
     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
+    bool gvfgStreamActive = false;
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    gvfgStreamActive = backend == kQtViewerGvfgBackend && usingGvfg_;
+#endif
 
     ui->comboPixelFormat->clear();
 
@@ -1080,7 +1097,7 @@ void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
         const int restoreIndex = ui->comboPixelFormat->findData(previousData);
         ui->comboPixelFormat->setCurrentIndex(restoreIndex >= 0 ? restoreIndex : 0);
         ui->comboPixelFormat->setToolTip(tr("GVFG output format controlled through the SDK API (register 0x80)."));
-        ui->comboPixelFormat->setEnabled(true);
+        ui->comboPixelFormat->setEnabled(!gvfgStreamActive);
         lastPixelFormatWarningKey_.clear();
         return;
     }
@@ -1274,7 +1291,7 @@ void MainWindow::setupConnections()
         connect(ui->comboPixelFormat, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
                 {
                     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
-                    if (backend != kQtViewerGvfgBackend || !gvfg_)
+                    if (backend != kQtViewerGvfgBackend || !gvfg_ || usingGvfg_)
                         return;
                     refreshGvfgMonitoring();
                     if (gvfg_->isOpen())

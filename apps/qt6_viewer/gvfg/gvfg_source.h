@@ -53,6 +53,7 @@ public:
     bool isOpen() const { return handle_ != nullptr; }
     int openedDeviceIndex() const { return openedDeviceIndex_; }
     bool setVideoFormat(gvfg_pixel_format_t format);
+    void clearPreview();
     void pollEvents();
     bool isRunning() const { return running_; }
     bool startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error);
