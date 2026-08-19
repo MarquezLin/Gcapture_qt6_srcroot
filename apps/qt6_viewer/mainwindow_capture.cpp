@@ -464,7 +464,8 @@ void MainWindow::onStart()
         currentProfile_.fps_num = 0;
         currentProfile_.fps_den = 0;
 
-        const bool started = gvfg_->start(hwnd, deviceIndex_, selectedPreviewBitDepthMode());
+        const bool zeroCopyEnabled = ui->checkZeroCopy && ui->checkZeroCopy->isChecked();
+        const bool started = gvfg_->start(hwnd, deviceIndex_, selectedPreviewBitDepthMode(), zeroCopyEnabled);
         if (!started)
         {
             usingGvfg_ = false;
@@ -475,6 +476,8 @@ void MainWindow::onStart()
         }
 
         usingGvfg_ = true;
+        if (ui->checkZeroCopy)
+            ui->checkZeroCopy->setEnabled(false);
         const gvfg_signal_status_t sig = gvfg_->signalStatus();
         if (sig.width > 0)
             currentProfile_.width = sig.width;

@@ -5,6 +5,7 @@
 #include <QVBoxLayout>
 #include <QPushButton>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QWindow>
@@ -375,7 +376,9 @@ void MainWindow::updateBrandDashboard()
         {
             signalText = QStringLiteral("%1 x %2").arg(signal.width).arg(signal.height);
             if (signal.bit_depth > 0)
-                colorText = QStringLiteral("%1-bit %2").arg(signal.bit_depth).arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)));
+                colorText = QStringLiteral("%1 · %2-bit")
+                                .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
+                                .arg(signal.bit_depth);
         }
     }
 #endif
@@ -543,12 +546,33 @@ void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)
 void MainWindow::updateRuntimeStatusUi()
 {
     bool gvfgStreamActive = false;
+    bool gvfgSelected = false;
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     const int selectedBackend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
+    gvfgSelected = selectedBackend == kQtViewerGvfgBackend;
     gvfgStreamActive = selectedBackend == kQtViewerGvfgBackend && usingGvfg_;
 #endif
     if (ui->comboPixelFormat)
         ui->comboPixelFormat->setEnabled(!gvfgStreamActive);
+    // GVFG preview always uses gvfg_preview's native render path. The generic
+    // DirectShow preview bit-depth selector is intentionally not applied there.
+    if (ui->labelBitDepth)
+        ui->labelBitDepth->setVisible(!gvfgSelected);
+    if (ui->comboPreviewBitDepth)
+        ui->comboPreviewBitDepth->setVisible(!gvfgSelected);
+    if (ui->labelinfo1)
+        ui->labelinfo1->setVisible(!gvfgSelected && !previewFullscreen_);
+    if (ui->metricLabel3)
+        ui->metricLabel3->setText(gvfgSelected ? tr("Format") : tr("Color Path"));
+    if (ui->checkZeroCopy)
+    {
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+        ui->checkZeroCopy->setVisible(gvfgSelected);
+        ui->checkZeroCopy->setEnabled(gvfgSelected && !usingGvfg_);
+#else
+        ui->checkZeroCopy->setVisible(false);
+#endif
+    }
 
     updateBrandDashboard();
 
@@ -562,7 +586,6 @@ void MainWindow::updateRuntimeStatusUi()
         {
             const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
             const gvfg_signal_status_t signal = gvfg_->signalStatus();
-            const gvfg_preview_info_t pv = gvfg_->previewInfo();
             const QString rawStateKey = formatGvfgStatusStateKey(rt, signal);
             const bool waitingForFirstFrame = rt.delivered_frames == 0 &&
                                               !signal.connected &&
@@ -574,32 +597,14 @@ void MainWindow::updateRuntimeStatusUi()
                 lastGvfgRawStateKey_ = rawStateKey;
             }
             const double runtimeFps = (rt.capture_fps > 0.0) ? rt.capture_fps : avgFps_;
-            const QString renderPath = pv.active
-                                           ? QStringLiteral("gvfg_preview %1x%2 %3 %4bit")
-                                                 .arg(pv.width)
-                                                 .arg(pv.height)
-                                                 .arg(QString::fromUtf8(pv.pixel_format))
-                                                 .arg(pv.bit_depth)
-                                           : QStringLiteral("App-owned render");
-            const QString signalResolution = (signal.width > 0 && signal.height > 0)
-                                                 ? QStringLiteral("%1x%2").arg(signal.width).arg(signal.height)
-                                                 : QStringLiteral("--");
-            const QString frameText = rt.delivered_frames > 0
-                                          ? QStringLiteral("%1x%2 %3 %4bit")
-                                                .arg(signal.width)
-                                                .arg(signal.height)
-                                                .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
-                                                .arg(signal.bit_depth)
-                                          : QStringLiteral("--");
-            const QString sb = QStringLiteral("Backend: %1 | Signal %2 %3 | Read frame %4 | %5 | App runtime %6fps frames=%7 lost=%8")
-                                   .arg(QStringLiteral("GVFG"))
-                                   .arg(signalResolution)
-                                   .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
-                                   .arg(frameText)
-                                   .arg(renderPath)
+            const QString transferMode = ui->checkZeroCopy && ui->checkZeroCopy->isChecked()
+                                             ? QStringLiteral("Zero-copy")
+                                             : QStringLiteral("Copy");
+            const QString sb = QStringLiteral("GVFG | %1 fps | frames=%2 | lost=%3 | %4")
                                    .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
                                    .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)))
-                                   .arg(QString::number(static_cast<qulonglong>(rt.lost_frames)));
+                                   .arg(QString::number(static_cast<qulonglong>(rt.lost_frames)))
+                                   .arg(transferMode);
             if (lastRuntimeStatusText_ != sb)
             {
                 ui->statusbar->showMessage(sb);
@@ -954,6 +959,8 @@ void MainWindow::setupBackendControls()
 
     const int dsIndex = ui->comboBackend->findData(2);
     ui->comboBackend->setCurrentIndex(dsIndex >= 0 ? dsIndex : 0);
+    if (ui->checkZeroCopy)
+        ui->checkZeroCopy->setVisible(false);
 
     refreshPixelFormatOptions(false);
 }
@@ -1209,8 +1216,10 @@ void MainWindow::refreshGvfgMonitoring()
             gvfg_->close();
         return;
     }
-    if (!gvfg_->isOpen() || gvfg_->openedDeviceIndex() != deviceIndex_)
-        gvfg_->open(deviceIndex_);
+    const bool zeroCopyEnabled = ui->checkZeroCopy && ui->checkZeroCopy->isChecked();
+    if (!gvfg_->isOpen() || gvfg_->openedDeviceIndex() != deviceIndex_ ||
+        gvfg_->zeroCopyEnabled() != zeroCopyEnabled)
+        gvfg_->open(deviceIndex_, zeroCopyEnabled);
     if (ui->btnStart)
         ui->btnStart->setEnabled(gvfg_->isOpen() && gvfg_->signalStatus().connected != 0);
 }
@@ -1261,6 +1270,11 @@ void MainWindow::setupConnections()
 #endif
                     if (ui->comboDevice)
                         ui->comboDevice->setEnabled(true);
+                    if (ui->checkZeroCopy)
+                    {
+                        ui->checkZeroCopy->setVisible(isGvfgBackend);
+                        ui->checkZeroCopy->setEnabled(isGvfgBackend && !usingGvfg_);
+                    }
 
                     // Re-enumerate devices when backend changes. Device index is only
                     // meaningful within the backend that produced the list.
@@ -1283,10 +1297,22 @@ void MainWindow::setupConnections()
                             infoDlg_->setInfoText(lastInfoText_);
                             infoDlg_->setPropertyPages(captureInfo_.propertyPages);
                         }
-                    } });
+                    }
+                    updateRuntimeStatusUi();
+                });
     }
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (ui->checkZeroCopy)
+        connect(ui->checkZeroCopy, &QCheckBox::toggled, this, [this](bool)
+                {
+                    if (usingGvfg_)
+                        return;
+                    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
+                    if (backend == kQtViewerGvfgBackend)
+                        refreshGvfgMonitoring();
+                });
+
     if (ui->comboPixelFormat)
         connect(ui->comboPixelFormat, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
                 {

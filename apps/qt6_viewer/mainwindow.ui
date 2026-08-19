@@ -416,6 +416,16 @@ QPushButton#btnStop:pressed {
              </property>
             </widget>
            </item>
+           <item row="4" column="1">
+            <widget class="QCheckBox" name="checkZeroCopy">
+             <property name="toolTip">
+              <string>GVFG only. The device is reopened when this mode changes.</string>
+             </property>
+             <property name="text">
+              <string>Zero-copy</string>
+             </property>
+            </widget>
+           </item>
           </layout>
          </item>
          <item>
@@ -519,9 +529,9 @@ QPushButton#btnStop:pressed {
             </widget>
            </item>
            <item row="4" column="0" colspan="2">
-             <widget class="QPushButton" name="btnOpenRawInspector">
+            <widget class="QPushButton" name="btnOpenRawInspector">
              <property name="enabled">
-              <bool>true</bool>
+              <bool>false</bool>
              </property>
              <property name="minimumSize">
               <size>
@@ -923,7 +933,7 @@ QPushButton#btnStop:pressed {
     <bool>true</bool>
    </property>
    <property name="text">
-      <string>Open RAW Pixel Inspector...</string>
+    <string>Open RAW Pixel Inspector...</string>
    </property>
   </action>
   <action name="actionDebugLog">
@@ -957,11 +967,11 @@ QPushButton#btnStop:pressed {
    </property>
   </action>
   <action name="actionGvfgRegisters">
-   <property name="visible">
-    <bool>false</bool>
-   </property>
    <property name="text">
     <string>GVFG Registers...</string>
+   </property>
+   <property name="visible">
+    <bool>false</bool>
    </property>
   </action>
   <action name="actionOpenRecordFolder">

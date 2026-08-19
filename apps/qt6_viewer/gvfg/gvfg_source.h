@@ -45,13 +45,14 @@ public:
 
     static QStringList enumerateDevices();
 
-    bool open(int deviceIndex);
+    bool open(int deviceIndex, bool zeroCopyEnabled);
     void close();
-    bool start(void *previewHwnd, int deviceIndex, int previewBitDepthMode);
+    bool start(void *previewHwnd, int deviceIndex, int previewBitDepthMode, bool zeroCopyEnabled);
     bool setPreview(void *previewHwnd, int previewBitDepthMode);
     void stop();
     bool isOpen() const { return handle_ != nullptr; }
     int openedDeviceIndex() const { return openedDeviceIndex_; }
+    bool zeroCopyEnabled() const { return zeroCopyEnabled_; }
     bool setVideoFormat(gvfg_pixel_format_t format);
     void clearPreview();
     void pollEvents();
@@ -85,6 +86,7 @@ private:
 
     gvfg_handle handle_ = nullptr;
     int openedDeviceIndex_ = -1;
+    bool zeroCopyEnabled_ = false;
     mutable std::mutex signalMutex_;
     gvfg_signal_status_t cachedSignal_{};
     gvfg_preview_handle previewHandle_ = nullptr;

@@ -93,10 +93,10 @@ QStringList GvfgSource::enumerateDevices()
     return names;
 }
 
-bool GvfgSource::open(int deviceIndex)
+bool GvfgSource::open(int deviceIndex, bool zeroCopyEnabled)
 {
     const int requestedIndex = std::max(0, deviceIndex);
-    if (handle_ && openedDeviceIndex_ == requestedIndex)
+    if (handle_ && openedDeviceIndex_ == requestedIndex && zeroCopyEnabled_ == zeroCopyEnabled)
         return true;
     close();
 
@@ -105,6 +105,15 @@ bool GvfgSource::open(int deviceIndex)
     {
         emit errorOccurred(QStringLiteral("gvfg_create failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
         handle_ = nullptr;
+        return false;
+    }
+
+    st = gvfg_set_zero_copy_enabled(handle_, zeroCopyEnabled ? 1 : 0);
+    if (st != GVFG_OK)
+    {
+        emit errorOccurred(QStringLiteral("gvfg_set_zero_copy_enabled failed: %1")
+                               .arg(QString::fromUtf8(gvfg_strerror(st))));
+        close();
         return false;
     }
 
@@ -117,6 +126,7 @@ bool GvfgSource::open(int deviceIndex)
     }
 
     openedDeviceIndex_ = requestedIndex;
+    zeroCopyEnabled_ = zeroCopyEnabled;
     gvfg_signal_status_t status{};
     if (gvfg_get_signal_status(handle_, &status) == GVFG_OK)
     {
@@ -136,14 +146,15 @@ void GvfgSource::close()
         handle_ = nullptr;
     }
     openedDeviceIndex_ = -1;
+    zeroCopyEnabled_ = false;
     std::lock_guard<std::mutex> lock(signalMutex_);
     cachedSignal_ = {};
 }
 
-bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMode)
+bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMode, bool zeroCopyEnabled)
 {
     stop();
-    if (!open(deviceIndex))
+    if (!open(deviceIndex, zeroCopyEnabled))
         return false;
     if (!setPreview(previewHwnd, previewBitDepthMode))
         return false;
@@ -582,7 +593,13 @@ void GvfgSource::readLoop()
             }
 
             writeRecordingFrame(frame);
-            gvfg_release_frame(handle_, &frame);
+            const gvfg_status_t releaseStatus = gvfg_release_frame(handle_, &frame);
+            if (releaseStatus != GVFG_OK)
+            {
+                emit errorOccurred(QStringLiteral("gvfg_release_frame failed: %1")
+                                       .arg(QString::fromUtf8(gvfg_strerror(releaseStatus))));
+                break;
+            }
             continue;
         }
 
