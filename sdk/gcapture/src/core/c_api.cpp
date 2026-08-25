@@ -39,8 +39,10 @@ static std::string w2utf8(const wchar_t *ws)
     int len = WideCharToMultiByte(CP_UTF8, 0, ws, -1, nullptr, 0, nullptr, nullptr);
     if (len <= 0)
         return {};
-    std::string out((size_t)len - 1, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, ws, -1, out.data(), len, nullptr, nullptr);
+    std::string out(static_cast<size_t>(len), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, ws, -1, out.data(), len, nullptr, nullptr) <= 0)
+        return {};
+    out.pop_back();
     return out;
 }
 
@@ -51,8 +53,10 @@ static std::wstring utf8_to_wide_path(const char *s)
     const int len = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
     if (len <= 0)
         return {};
-    std::wstring out(static_cast<size_t>(len - 1), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s, -1, out.data(), len);
+    std::wstring out(static_cast<size_t>(len), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, 0, s, -1, out.data(), len) <= 0)
+        return {};
+    out.pop_back();
     return out;
 }
 

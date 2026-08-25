@@ -64,8 +64,10 @@ namespace
         const int needed = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
         if (needed <= 1)
             return std::wstring();
-        std::wstring out(static_cast<size_t>(needed - 1), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, s, -1, &out[0], needed);
+        std::wstring out(static_cast<size_t>(needed), L'\0');
+        if (MultiByteToWideChar(CP_UTF8, 0, s, -1, out.data(), needed) <= 0)
+            return std::wstring();
+        out.pop_back();
         return out;
     }
 
@@ -82,8 +84,10 @@ namespace
         const int needed = WideCharToMultiByte(CP_UTF8, 0, ws, -1, NULL, 0, NULL, NULL);
         if (needed <= 1)
             return std::string();
-        std::string out(static_cast<size_t>(needed - 1), '\0');
-        WideCharToMultiByte(CP_UTF8, 0, ws, -1, &out[0], needed, NULL, NULL);
+        std::string out(static_cast<size_t>(needed), '\0');
+        if (WideCharToMultiByte(CP_UTF8, 0, ws, -1, out.data(), needed, NULL, NULL) <= 0)
+            return std::string();
+        out.pop_back();
         return out;
     }
 

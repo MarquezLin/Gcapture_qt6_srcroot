@@ -74,8 +74,11 @@ static std::string hr_msg(HRESULT hr)
     std::string out;
     if (len > 0)
     {
-        out.resize(static_cast<size_t>(len - 1));
-        WideCharToMultiByte(CP_UTF8, 0, wmsg, -1, out.data(), len, nullptr, nullptr);
+        out.resize(static_cast<size_t>(len));
+        if (WideCharToMultiByte(CP_UTF8, 0, wmsg, -1, out.data(), len, nullptr, nullptr) > 0)
+            out.pop_back();
+        else
+            out.clear();
     }
 
     LocalFree(wmsg);
@@ -271,11 +274,13 @@ static std::string wide_to_utf8(const std::wstring &ws)
     if (len <= 0)
         return {};
 
-    std::string out((size_t)len - 1, '\0');
-    WideCharToMultiByte(CP_UTF8, 0,
-                        ws.c_str(), -1,
-                        out.data(), len,
-                        nullptr, nullptr);
+    std::string out(static_cast<size_t>(len), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0,
+                            ws.c_str(), -1,
+                            out.data(), len,
+                            nullptr, nullptr) <= 0)
+        return {};
+    out.pop_back();
     return out;
 }
 
@@ -853,8 +858,10 @@ static std::wstring utf8_to_wstring(const char *s)
     int len = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
     if (len <= 0)
         return std::wstring();
-    std::wstring ws(len - 1, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s, -1, &ws[0], len);
+    std::wstring ws(static_cast<size_t>(len), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, 0, s, -1, ws.data(), len) <= 0)
+        return std::wstring();
+    ws.pop_back();
     return ws;
 }
 

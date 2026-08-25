@@ -27,8 +27,10 @@ namespace
         const int needed = WideCharToMultiByte(CP_UTF8, 0, ws, -1, nullptr, 0, nullptr, nullptr);
         if (needed <= 0)
             return {};
-        std::string out(static_cast<size_t>(needed - 1), '\0');
-        WideCharToMultiByte(CP_UTF8, 0, ws, -1, out.data(), needed, nullptr, nullptr);
+        std::string out(static_cast<size_t>(needed), '\0');
+        if (WideCharToMultiByte(CP_UTF8, 0, ws, -1, out.data(), needed, nullptr, nullptr) <= 0)
+            return {};
+        out.pop_back();
         return out;
     }
 #endif

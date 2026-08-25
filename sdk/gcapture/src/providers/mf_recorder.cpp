@@ -50,8 +50,11 @@ static std::string hr_msg(HRESULT hr)
     std::string out;
     if (len > 0)
     {
-        out.resize(static_cast<size_t>(len - 1));
-        WideCharToMultiByte(CP_UTF8, 0, wmsg, -1, out.data(), len, nullptr, nullptr);
+        out.resize(static_cast<size_t>(len));
+        if (WideCharToMultiByte(CP_UTF8, 0, wmsg, -1, out.data(), len, nullptr, nullptr) > 0)
+            out.pop_back();
+        else
+            out.clear();
     }
 
     LocalFree(wmsg);
