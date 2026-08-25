@@ -677,7 +677,7 @@ bool WinMFProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     if (gpu && !gpu_name_w_.empty())
     {
         const std::string gpuName = wide_to_utf8(gpu_name_w_);
-        strcpy_s(out.preview_adapter_name, gpuName.c_str());
+        strncpy_s(out.preview_adapter_name, gpuName.c_str(), _TRUNCATE);
     }
     fill_runtime_signal_text_mf(out, cur_subtype_);
     return true;

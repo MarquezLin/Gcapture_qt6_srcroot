@@ -145,7 +145,7 @@ namespace
         WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1,
                             name, static_cast<int>(sizeof(name)), nullptr, nullptr);
         if (name[0])
-            strcpy_s(out.preview_adapter_name, name);
+            strncpy_s(out.preview_adapter_name, name, _TRUNCATE);
         out.preview_adapter_index = dxgiAdapterIndexForLuid(desc.AdapterLuid);
     }
 
@@ -891,9 +891,9 @@ bool DShowProvider::getRuntimeInfo(gcap_runtime_info_t &out)
     if (subtype_ != MEDIASUBTYPE_NULL)
         strcpy_s(out.negotiated_desc, subtypeName(subtype_));
     if (!selectableCapsInline_.empty())
-        strcpy_s(out.selectable_caps_inline, selectableCapsInline_.c_str());
+        strncpy_s(out.selectable_caps_inline, selectableCapsInline_.c_str(), _TRUNCATE);
     if (!selectableCapsTooltip_.empty())
-        strcpy_s(out.selectable_caps_tooltip, selectableCapsTooltip_.c_str());
+        strncpy_s(out.selectable_caps_tooltip, selectableCapsTooltip_.c_str(), _TRUNCATE);
     return true;
 }
 
