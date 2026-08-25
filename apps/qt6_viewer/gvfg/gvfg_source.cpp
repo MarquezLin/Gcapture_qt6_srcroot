@@ -128,7 +128,7 @@ bool GvfgSource::open(int deviceIndex, bool zeroCopyEnabled)
     openedDeviceIndex_ = requestedIndex;
     zeroCopyEnabled_ = zeroCopyEnabled;
     gvfg_signal_status_t status{};
-    if (gvfg_get_signal_status(handle_, &status) == GVFG_OK)
+    if (gvfg_get_channel_signal_status(handle_, GVFG_CHANNEL_0, &status) == GVFG_OK)
     {
         std::lock_guard<std::mutex> lock(signalMutex_);
         cachedSignal_ = status;
@@ -164,7 +164,7 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         return false;
     }
 
-    const gvfg_status_t st = gvfg_start(handle_);
+    const gvfg_status_t st = gvfg_start_channel(handle_, GVFG_CHANNEL_0);
     if (st != GVFG_OK)
     {
         emit errorOccurred(QStringLiteral("gvfg_start failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
@@ -420,7 +420,7 @@ bool GvfgSource::setVideoFormat(gvfg_pixel_format_t format)
 {
     if (!handle_ || running_)
         return false;
-    const gvfg_status_t st = gvfg_set_video_format(handle_, format);
+    const gvfg_status_t st = gvfg_set_channel_video_format(handle_, GVFG_CHANNEL_0, format);
     if (st != GVFG_OK)
     {
         emit errorOccurred(QStringLiteral("gvfg_set_video_format failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
@@ -441,7 +441,7 @@ void GvfgSource::pollEvents()
         return;
     gvfg_event_t event{};
     event.struct_size = sizeof(event);
-    while (gvfg_poll_event(handle_, &event, 0) == GVFG_OK)
+    while (gvfg_poll_channel_event(handle_, GVFG_CHANNEL_0, &event, 0) == GVFG_OK)
     {
         const auto type = static_cast<gvfg_event_type_t>(event.type);
         if (type == GVFG_EVENT_FRAME_LOSS)
@@ -452,7 +452,7 @@ void GvfgSource::pollEvents()
             type == GVFG_EVENT_FORMAT_CHANGE_BEGIN || type == GVFG_EVENT_STREAM_READY)
         {
             gvfg_signal_status_t status{};
-            if (gvfg_get_signal_status(handle_, &status) == GVFG_OK)
+            if (gvfg_get_channel_signal_status(handle_, GVFG_CHANNEL_0, &status) == GVFG_OK)
             {
                 bool changed;
                 {
@@ -473,7 +473,7 @@ gvfg_runtime_info_t GvfgSource::runtimeInfo() const
 {
     gvfg_runtime_info_t info{};
     if (handle_)
-        gvfg_get_runtime_info(handle_, &info);
+        gvfg_get_channel_runtime_info(handle_, GVFG_CHANNEL_0, &info);
     return info;
 }
 
@@ -512,7 +512,7 @@ void GvfgSource::readLoop()
     while (!stopRequested_.load(std::memory_order_acquire))
     {
         gvfg_frame_t frame{};
-        const gvfg_status_t st = handle_ ? gvfg_read_frame(handle_, &frame, 200) : GVFG_ESTATE;
+        const gvfg_status_t st = handle_ ? gvfg_read_channel_frame(handle_, GVFG_CHANNEL_0, &frame, 200) : GVFG_ESTATE;
         if (st == GVFG_OK)
         {
             {
@@ -593,7 +593,7 @@ void GvfgSource::readLoop()
             }
 
             writeRecordingFrame(frame);
-            const gvfg_status_t releaseStatus = gvfg_release_frame(handle_, &frame);
+            const gvfg_status_t releaseStatus = gvfg_release_channel_frame(handle_, GVFG_CHANNEL_0, &frame);
             if (releaseStatus != GVFG_OK)
             {
                 emit errorOccurred(QStringLiteral("gvfg_release_frame failed: %1")

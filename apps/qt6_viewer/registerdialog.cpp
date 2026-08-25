@@ -39,7 +39,7 @@ void RegisterDialog::refreshDevices()
         QString name = QString::fromUtf8(devices[i].name);
         if (name.isEmpty())
             name = tr("GVFG Capture %1").arg(i);
-        ui_->deviceCombo->addItem(name, devices[i].index);
+        ui_->deviceCombo->addItem(name, i);
     }
 
     const int restoreIndex = ui_->deviceCombo->findData(previousIndex);
