@@ -110,6 +110,8 @@ void MainWindow::resetRuntimeTracking()
 {
     avgFps_ = 0.0;
     lastFramePtsNs_ = 0;
+    firstFrameId_ = 0;
+    deliveredFrameCount_ = 0;
     lastFrameWidth_ = 0;
     lastFrameHeight_ = 0;
     lastVideoCallbackPtsNs_ = 0;

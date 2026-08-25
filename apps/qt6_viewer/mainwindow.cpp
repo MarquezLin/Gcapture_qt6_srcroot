@@ -359,7 +359,7 @@ void MainWindow::updateBrandDashboard()
                              : (active ? tr("Active") : tr("Waiting"));
     double dashboardFps = avgFps_;
     QString colorText = selectedPreviewBitDepthText();
-    uint64_t frameCounter = lastFramePtsNs_;
+    uint64_t frameCounter = deliveredFrameCount_;
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     if (usingGvfg_ && gvfg_)
@@ -471,14 +471,15 @@ void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
     QImage img((const uchar *)f->data[0], f->width, f->height, f->stride[0], QImage::Format_ARGB32);
     const QImage safeImg = img.copy();
     const uint64_t ptsNs = f->pts_ns;
+    const uint64_t frameId = f->frame_id;
     const int width = f->width;
     const int height = f->height;
 
     QMetaObject::invokeMethod(
         self,
-        [self, ptsNs, width, height, safeImg]()
+        [self, ptsNs, frameId, width, height, safeImg]()
         {
-            self->updateFrameSourceState(ptsNs, width, height, self->lastVideoCallbackPtsNs_);
+            self->updateFrameSourceState(ptsNs, frameId, width, height, self->lastVideoCallbackPtsNs_);
             self->dispatchFrameImage(safeImg);
         },
         Qt::QueuedConnection);
@@ -514,7 +515,7 @@ void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
         self,
         [self, pktCopy]()
         {
-            self->updateFrameSourceState(pktCopy.pts_ns, pktCopy.width, pktCopy.height, self->lastPacketCallbackPtsNs_);
+            self->updateFrameSourceState(pktCopy.pts_ns, pktCopy.frame_id, pktCopy.width, pktCopy.height, self->lastPacketCallbackPtsNs_);
             self->logFramePacketIfNeeded(pktCopy);
         },
         Qt::QueuedConnection);

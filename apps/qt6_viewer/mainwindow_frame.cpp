@@ -180,9 +180,20 @@ void MainWindow::applyInitialPreviewSizeFromSource(int width, int height)
                             .arg(previewWindow_->height()));
 }
 
-void MainWindow::updateFrameSourceState(uint64_t ptsNs, int width, int height, uint64_t &lastPtsTracker)
+void MainWindow::updateFrameSourceState(uint64_t ptsNs, uint64_t frameId, int width, int height, uint64_t &lastPtsTracker)
 {
     lastFramePtsNs_ = ptsNs;
+    if (frameId != 0)
+    {
+        if (firstFrameId_ == 0)
+            firstFrameId_ = frameId;
+        if (frameId >= firstFrameId_)
+            deliveredFrameCount_ = std::max(deliveredFrameCount_, frameId - firstFrameId_ + 1);
+    }
+    else
+    {
+        ++deliveredFrameCount_;
+    }
     lastFrameWidth_ = width;
     lastFrameHeight_ = height;
 

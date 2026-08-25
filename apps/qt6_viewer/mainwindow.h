@@ -82,6 +82,8 @@ private:
 
     // Frame-source state updated by arriving frames.
     uint64_t lastFramePtsNs_ = 0;
+    uint64_t firstFrameId_ = 0;
+    uint64_t deliveredFrameCount_ = 0;
     int lastFrameWidth_ = 0;
     int lastFrameHeight_ = 0;
     double avgFps_ = 0.0;
@@ -197,7 +199,7 @@ private:
     void stopRecordingSession(bool showSummary);
     QString buildRecordingPath(const QDateTime &now) const;
     void applySelectedRecordingAudioDevice();
-    void updateFrameSourceState(uint64_t ptsNs, int width, int height, uint64_t &lastPtsTracker);
+    void updateFrameSourceState(uint64_t ptsNs, uint64_t frameId, int width, int height, uint64_t &lastPtsTracker);
     void dispatchFrameImage(const QImage &img);
     void refreshFrameDependentUi(const QImage &img);
     void logFramePacketIfNeeded(const gcap_frame_packet_t &pkt);
