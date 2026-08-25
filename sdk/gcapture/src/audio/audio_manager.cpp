@@ -1,5 +1,6 @@
 #include "audio_manager.h"
 #include "dshow_audio_monitor.h"
+#include "wasapi_renderer.h"
 
 #include "../core/logging.h"
 
@@ -11,7 +12,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -133,187 +133,6 @@ namespace
             return is_pcm_subformat(ext->SubFormat) || is_float_subformat(ext->SubFormat);
         }
         return false;
-    }
-
-    int bytes_per_sample(const WAVEFORMATEX *fmt)
-    {
-        if (!fmt || fmt->nChannels == 0)
-            return 0;
-        const int fromAlign = fmt->nBlockAlign / fmt->nChannels;
-        if (fromAlign > 0)
-            return fromAlign;
-        return (fmt->wBitsPerSample + 7) / 8;
-    }
-
-    float clamp_unit(float v)
-    {
-        if (v > 1.0f)
-            return 1.0f;
-        if (v < -1.0f)
-            return -1.0f;
-        return v;
-    }
-
-    float read_sample(const uint8_t *frame, const WAVEFORMATEX *fmt, int channel)
-    {
-        if (!frame || !fmt)
-            return 0.0f;
-
-        const int bps = bytes_per_sample(fmt);
-        const uint8_t *p = frame + static_cast<size_t>(channel) * static_cast<size_t>(bps);
-
-        if (is_float_format(fmt))
-        {
-            if (bps == 4)
-            {
-                float v = 0.0f;
-                std::memcpy(&v, p, sizeof(v));
-                return std::isfinite(v) ? clamp_unit(v) : 0.0f;
-            }
-            return 0.0f;
-        }
-
-        const int bits = bits_per_sample(fmt);
-        if (bps == 1 || bits == 8)
-            return (static_cast<int>(*p) - 128) / 128.0f;
-        if (bps == 2)
-        {
-            int16_t v = 0;
-            std::memcpy(&v, p, sizeof(v));
-            return static_cast<float>(v) / 32768.0f;
-        }
-        if (bps == 3)
-        {
-            int32_t v = static_cast<int32_t>(p[0]) |
-                        (static_cast<int32_t>(p[1]) << 8) |
-                        (static_cast<int32_t>(p[2]) << 16);
-            if (v & 0x00800000)
-                v |= static_cast<int32_t>(0xFF000000);
-            return static_cast<float>(v) / 8388608.0f;
-        }
-        if (bps >= 4)
-        {
-            int32_t v = 0;
-            std::memcpy(&v, p, sizeof(v));
-            return static_cast<float>(v) / 2147483648.0f;
-        }
-        return 0.0f;
-    }
-
-    void write_sample(uint8_t *frame, const WAVEFORMATEX *fmt, int channel, float value)
-    {
-        if (!frame || !fmt)
-            return;
-
-        value = clamp_unit(value);
-        const int bps = bytes_per_sample(fmt);
-        uint8_t *p = frame + static_cast<size_t>(channel) * static_cast<size_t>(bps);
-
-        if (is_float_format(fmt))
-        {
-            if (bps == 4)
-                std::memcpy(p, &value, sizeof(value));
-            return;
-        }
-
-        const int bits = bits_per_sample(fmt);
-        if (bps == 1 || bits == 8)
-        {
-            const int v = (std::max)(0, (std::min)(255, static_cast<int>(std::lrint(value * 127.0f + 128.0f))));
-            *p = static_cast<uint8_t>(v);
-        }
-        else if (bps == 2)
-        {
-            const int v = (std::max)(-32768, (std::min)(32767, static_cast<int>(std::lrint(value * 32767.0f))));
-            const int16_t s = static_cast<int16_t>(v);
-            std::memcpy(p, &s, sizeof(s));
-        }
-        else if (bps == 3)
-        {
-            const int v = (std::max)(-8388608, (std::min)(8388607, static_cast<int>(std::lrint(value * 8388607.0f))));
-            p[0] = static_cast<uint8_t>(v & 0xFF);
-            p[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
-            p[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
-        }
-        else if (bps >= 4)
-        {
-            const int64_t scaled = static_cast<int64_t>(std::llround(value * 2147483647.0f));
-            const int32_t v = static_cast<int32_t>((std::max)(static_cast<int64_t>(INT32_MIN), (std::min)(static_cast<int64_t>(INT32_MAX), scaled)));
-            std::memcpy(p, &v, sizeof(v));
-        }
-    }
-
-    void convert_audio(const uint8_t *src,
-                       UINT32 srcFrames,
-                       DWORD srcFlags,
-                       const WAVEFORMATEX *srcFmt,
-                       const WAVEFORMATEX *dstFmt,
-                       std::vector<uint8_t> &out,
-                       UINT32 &outFrames)
-    {
-        out.clear();
-        outFrames = 0;
-        if (!srcFmt || !dstFmt || srcFrames == 0 || srcFmt->nSamplesPerSec == 0 || dstFmt->nSamplesPerSec == 0)
-            return;
-
-        const UINT32 dstFrames64 = static_cast<UINT32>(
-            (std::max)(uint64_t{1},
-                       (static_cast<uint64_t>(srcFrames) * dstFmt->nSamplesPerSec + srcFmt->nSamplesPerSec - 1) /
-                           srcFmt->nSamplesPerSec));
-        outFrames = dstFrames64;
-        out.resize(static_cast<size_t>(outFrames) * dstFmt->nBlockAlign);
-
-        const bool silent = (srcFlags & AUDCLNT_BUFFERFLAGS_SILENT) != 0 || !src;
-        const int srcChannels = srcFmt->nChannels;
-        const int dstChannels = dstFmt->nChannels;
-
-        for (UINT32 of = 0; of < outFrames; ++of)
-        {
-            const UINT32 sf = (std::min)(srcFrames - 1,
-                                         static_cast<UINT32>((static_cast<uint64_t>(of) * srcFmt->nSamplesPerSec) /
-                                                             dstFmt->nSamplesPerSec));
-            const uint8_t *srcFrame = silent ? nullptr : src + static_cast<size_t>(sf) * srcFmt->nBlockAlign;
-            uint8_t *dstFrame = out.data() + static_cast<size_t>(of) * dstFmt->nBlockAlign;
-
-            for (int dc = 0; dc < dstChannels; ++dc)
-            {
-                float sample = 0.0f;
-                if (!silent)
-                {
-                    if (dstChannels == 1 && srcChannels > 1)
-                    {
-                        for (int sc = 0; sc < srcChannels; ++sc)
-                            sample += read_sample(srcFrame, srcFmt, sc);
-                        sample /= static_cast<float>(srcChannels);
-                    }
-                    else
-                    {
-                        const int sc = (srcChannels == 1) ? 0 : (std::min)(dc, srcChannels - 1);
-                        sample = read_sample(srcFrame, srcFmt, sc);
-                    }
-                }
-                write_sample(dstFrame, dstFmt, dc, sample);
-            }
-        }
-    }
-
-    size_t wave_format_size(const WAVEFORMATEX *fmt)
-    {
-        if (!fmt)
-            return 0;
-        return sizeof(WAVEFORMATEX) + fmt->cbSize;
-    }
-
-    std::vector<uint8_t> clone_wave_format(const WAVEFORMATEX *fmt)
-    {
-        std::vector<uint8_t> out;
-        const size_t size = wave_format_size(fmt);
-        if (size > 0)
-        {
-            out.resize(size);
-            std::memcpy(out.data(), fmt, size);
-        }
-        return out;
     }
 
     std::string lower_ascii(std::string s)
@@ -440,31 +259,6 @@ namespace
             running_.store(false);
         }
 
-        bool choose_render_format(IAudioClient *renderClient,
-                                  const WAVEFORMATEX *captureFmt,
-                                  const WAVEFORMATEX *renderMixFmt,
-                                  std::vector<uint8_t> &formatBytes)
-        {
-            if (renderClient && captureFmt && is_supported_pcm_like(captureFmt))
-            {
-                WAVEFORMATEX *closest = nullptr;
-                const HRESULT hr = renderClient->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED, captureFmt, &closest);
-                if (closest)
-                    CoTaskMemFree(closest);
-                if (hr == S_OK)
-                {
-                    formatBytes = clone_wave_format(captureFmt);
-                    return !formatBytes.empty();
-                }
-            }
-            if (renderMixFmt && is_supported_pcm_like(renderMixFmt))
-            {
-                formatBytes = clone_wave_format(renderMixFmt);
-                return !formatBytes.empty();
-            }
-            return false;
-        }
-
         void run()
         {
             ComInit com;
@@ -498,52 +292,20 @@ namespace
                 return;
             }
 
-            ComPtr<IMMDevice> renderDevice;
-            hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &renderDevice);
-            if (FAILED(hr) || !renderDevice)
-            {
-                fail("default render endpoint open failed", hr);
-                return;
-            }
-
             ComPtr<IAudioClient> captureClient;
-            ComPtr<IAudioClient> renderClient;
             hr = captureDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void **>(captureClient.GetAddressOf()));
             if (FAILED(hr) || !captureClient)
             {
                 fail("capture IAudioClient activate failed", hr);
                 return;
             }
-            hr = renderDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void **>(renderClient.GetAddressOf()));
-            if (FAILED(hr) || !renderClient)
-            {
-                fail("render IAudioClient activate failed", hr);
-                return;
-            }
-
             CoTaskMemWaveFormat captureMix;
-            CoTaskMemWaveFormat renderMix;
             hr = captureClient->GetMixFormat(captureMix.put());
             if (FAILED(hr) || !captureMix.get() || !is_supported_pcm_like(captureMix.get()))
             {
                 fail("capture mix format unsupported", hr);
                 return;
             }
-            hr = renderClient->GetMixFormat(renderMix.put());
-            if (FAILED(hr) || !renderMix.get())
-            {
-                fail("render mix format unavailable", hr);
-                return;
-            }
-
-            std::vector<uint8_t> renderFormatBytes;
-            if (!choose_render_format(renderClient.Get(), captureMix.get(), renderMix.get(), renderFormatBytes))
-            {
-                fail("render format unsupported");
-                return;
-            }
-            WAVEFORMATEX *renderFmt = reinterpret_cast<WAVEFORMATEX *>(renderFormatBytes.data());
-
             const REFERENCE_TIME bufferDuration = 1000000; // 100 ms
             hr = captureClient->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, bufferDuration, 0, captureMix.get(), nullptr);
             if (FAILED(hr))
@@ -551,46 +313,25 @@ namespace
                 fail("capture IAudioClient Initialize failed", hr);
                 return;
             }
-            hr = renderClient->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, bufferDuration, 0, renderFmt, nullptr);
-            if (FAILED(hr))
-            {
-                fail("render IAudioClient Initialize failed", hr);
-                return;
-            }
-
-            UINT32 renderBufferFrames = 0;
-            renderClient->GetBufferSize(&renderBufferFrames);
-            if (renderBufferFrames == 0)
-            {
-                fail("render buffer size is zero");
-                return;
-            }
-
             ComPtr<IAudioCaptureClient> capture;
-            ComPtr<IAudioRenderClient> render;
             hr = captureClient->GetService(IID_PPV_ARGS(&capture));
             if (FAILED(hr) || !capture)
             {
                 fail("IAudioCaptureClient unavailable", hr);
                 return;
             }
-            hr = renderClient->GetService(IID_PPV_ARGS(&render));
-            if (FAILED(hr) || !render)
+            gcap::audio::wasapi_renderer renderer;
+            std::string rendererError;
+            if (!renderer.start(captureMix.get(), &rendererError))
             {
-                fail("IAudioRenderClient unavailable", hr);
+                fail(rendererError.empty() ? "WASAPI renderer start failed" : rendererError.c_str());
                 return;
             }
 
-            hr = renderClient->Start();
-            if (FAILED(hr))
-            {
-                fail("render Start failed", hr);
-                return;
-            }
             hr = captureClient->Start();
             if (FAILED(hr))
             {
-                renderClient->Stop();
+                renderer.stop();
                 fail("capture Start failed", hr);
                 return;
             }
@@ -599,12 +340,11 @@ namespace
                              "[AudioMonitoring] started capture %u ch %u Hz -> speaker %u ch %u Hz",
                              captureMix.get()->nChannels,
                              captureMix.get()->nSamplesPerSec,
-                             renderFmt->nChannels,
-                             renderFmt->nSamplesPerSec);
+                             renderer.channels(),
+                             renderer.sample_rate());
 
             ready_.store(true);
 
-            std::vector<uint8_t> converted;
             while (running_.load())
             {
                 UINT32 packetFrames = 0;
@@ -625,39 +365,17 @@ namespace
                 if (FAILED(hr))
                     break;
 
-                UINT32 convertedFrames = 0;
-                convert_audio(src, packetFrames, flags, captureMix.get(), renderFmt, converted, convertedFrames);
-
-                UINT32 written = 0;
-                while (running_.load() && written < convertedFrames)
-                {
-                    UINT32 padding = 0;
-                    if (FAILED(renderClient->GetCurrentPadding(&padding)))
-                        break;
-                    const UINT32 available = (padding < renderBufferFrames) ? (renderBufferFrames - padding) : 0;
-                    if (available == 0)
-                    {
-                        Sleep(3);
-                        continue;
-                    }
-
-                    const UINT32 framesNow = (std::min)(available, convertedFrames - written);
-                    BYTE *dst = nullptr;
-                    hr = render->GetBuffer(framesNow, &dst);
-                    if (FAILED(hr) || !dst)
-                        break;
-                    std::memcpy(dst,
-                                converted.data() + static_cast<size_t>(written) * renderFmt->nBlockAlign,
-                                static_cast<size_t>(framesNow) * renderFmt->nBlockAlign);
-                    render->ReleaseBuffer(framesNow, 0);
-                    written += framesNow;
-                }
-
+                const bool rendered = renderer.write(src, packetFrames, flags, running_, &rendererError);
                 capture->ReleaseBuffer(packetFrames);
+                if (!rendered && running_.load())
+                {
+                    fail(rendererError.empty() ? "WASAPI renderer write failed" : rendererError.c_str());
+                    break;
+                }
             }
 
             captureClient->Stop();
-            renderClient->Stop();
+            renderer.stop();
             ready_.store(false);
             gcap_log_info("[AudioMonitoring] stopped");
         }
