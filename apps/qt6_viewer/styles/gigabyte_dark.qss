@@ -101,6 +101,7 @@ QFrame#statusPanel {
 QFrame#statusTile,
 QFrame#statusTile2,
 QFrame#statusTile3,
+QFrame#statusTileAudio,
 QFrame#statusTile4 {
     background: #0c141d;
     border: 1px solid #203347;
@@ -127,6 +128,7 @@ QLabel#previewHint,
 QLabel#metricLabel,
 QLabel#metricLabel2,
 QLabel#metricLabel3,
+QLabel#metricLabelAudio,
 QLabel#metricLabel4 {
     color: #8fa6ba;
 }
@@ -158,6 +160,7 @@ QLabel#previewTitle {
 QLabel#metricValue,
 QLabel#metricValue2,
 QLabel#metricValue3,
+QLabel#metricValueAudio,
 QLabel#metricValue4 {
     color: #f1f8ff;
     font-size: 16px;

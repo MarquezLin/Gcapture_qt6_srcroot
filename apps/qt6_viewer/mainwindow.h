@@ -74,6 +74,7 @@ private:
     int deviceIndex_ = 0;
     bool recording_ = false;
     bool previewAudioActive_ = false;
+    QString previewAudioStatusDetail_;
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     GvfgSource *gvfg_ = nullptr;
     bool usingGvfg_ = false;
@@ -191,6 +192,7 @@ private:
     void closeCaptureSession();
     void startPreviewAudio();
     void stopPreviewAudio();
+    void setPreviewAudioStatus(const QString &status, const QString &detail = QString());
     bool showCaptureErrorAndClose(const QString &action, gcap_status_t st, const char *apiName = nullptr);
     void stopRecordingSession(bool showSummary);
     QString buildRecordingPath(const QDateTime &now) const;

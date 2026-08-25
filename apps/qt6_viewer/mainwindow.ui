@@ -59,6 +59,7 @@ QFrame#statusPanel {
 QFrame#statusTile,
 QFrame#statusTile2,
 QFrame#statusTile3,
+QFrame#statusTileAudio,
 QFrame#statusTile4 {
     background: #0c141d;
     border: 1px solid #203347;
@@ -77,6 +78,7 @@ QLabel#previewHint,
 QLabel#metricLabel,
 QLabel#metricLabel2,
 QLabel#metricLabel3,
+QLabel#metricLabelAudio,
 QLabel#metricLabel4 {
     color: #8fa6ba;
 }
@@ -116,6 +118,7 @@ QLabel#previewTitle {
 QLabel#metricValue,
 QLabel#metricValue2,
 QLabel#metricValue3,
+QLabel#metricValueAudio,
 QLabel#metricValue4 {
     color: #f1f8ff;
     font-size: 16px;
@@ -858,6 +861,38 @@ QPushButton#btnStop:pressed {
              <widget class="QLabel" name="metricValue3">
               <property name="text">
                <string>10-bit Ready</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QFrame" name="statusTileAudio">
+           <layout class="QVBoxLayout" name="statusTileLayoutAudio">
+            <property name="leftMargin">
+             <number>12</number>
+            </property>
+            <property name="topMargin">
+             <number>10</number>
+            </property>
+            <property name="rightMargin">
+             <number>12</number>
+            </property>
+            <property name="bottomMargin">
+             <number>10</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="metricLabelAudio">
+              <property name="text">
+               <string>Audio</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="metricValueAudio">
+              <property name="text">
+               <string>Disabled</string>
               </property>
              </widget>
             </item>

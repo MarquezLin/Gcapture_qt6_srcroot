@@ -367,13 +367,17 @@ void MainWindow::startPreviewAudio()
 
     if (ui->checkAudioPreview && !ui->checkAudioPreview->isChecked())
     {
+        setPreviewAudioStatus(QStringLiteral("Disabled"), QStringLiteral("Audio preview is disabled by the user."));
         MainWindow::postLog(QStringLiteral("[AudioPreview] disabled by user"));
         return;
     }
 
     const QString videoDeviceName = currentDeviceText();
     if (videoDeviceName.isEmpty())
+    {
+        setPreviewAudioStatus(QStringLiteral("No Video Source"));
         return;
+    }
 
     gcap_audio_device_t audio{};
     bool found = false;
@@ -409,6 +413,8 @@ void MainWindow::startPreviewAudio()
 
     if (!found)
     {
+        setPreviewAudioStatus(QStringLiteral("No Endpoint"),
+                              QStringLiteral("No matching Windows audio capture endpoint for %1.").arg(videoDeviceName));
         MainWindow::postLog(QStringLiteral("[AudioPreview] no matching WASAPI capture endpoint for video device=%1")
                                 .arg(videoDeviceName));
         return;
@@ -422,6 +428,10 @@ void MainWindow::startPreviewAudio()
     const int st = gcap_start_audio_capture(&cfg);
     if (st != GCAP_OK)
     {
+        setPreviewAudioStatus(QStringLiteral("Start Failed"),
+                              QStringLiteral("%1 (status %2)")
+                                  .arg(QString::fromUtf8(audio.name))
+                                  .arg(st));
         MainWindow::postLog(QStringLiteral("[AudioPreview] start failed for endpoint=%1 status=%2")
                                 .arg(QString::fromUtf8(audio.name))
                                 .arg(st),
@@ -430,6 +440,11 @@ void MainWindow::startPreviewAudio()
     }
 
     previewAudioActive_ = true;
+    setPreviewAudioStatus(QStringLiteral("Playing"),
+                          QStringLiteral("%1\n%2 Hz, %3 channels")
+                              .arg(QString::fromUtf8(audio.name))
+                              .arg(audio.sample_rate)
+                              .arg(audio.channels));
     MainWindow::postLog(QStringLiteral("[AudioPreview] started endpoint=%1 (%2 Hz, %3 ch)")
                             .arg(QString::fromUtf8(audio.name))
                             .arg(audio.sample_rate)
@@ -443,6 +458,21 @@ void MainWindow::stopPreviewAudio()
     previewAudioActive_ = false;
     if (wasActive)
         MainWindow::postLog(QStringLiteral("[AudioPreview] stopped"));
+
+    if (ui && ui->checkAudioPreview && ui->checkAudioPreview->isChecked())
+        setPreviewAudioStatus(QStringLiteral("Standby"), QStringLiteral("Audio preview is enabled but not running."));
+    else
+        setPreviewAudioStatus(QStringLiteral("Disabled"), QStringLiteral("Audio preview is disabled by the user."));
+}
+
+void MainWindow::setPreviewAudioStatus(const QString &status, const QString &detail)
+{
+    previewAudioStatusDetail_ = detail;
+    if (!ui || !ui->metricValueAudio)
+        return;
+
+    ui->metricValueAudio->setText(status);
+    ui->metricValueAudio->setToolTip(detail);
 }
 
 void MainWindow::onStart()
