@@ -56,31 +56,6 @@ inputinfodialog::inputinfodialog(QWidget *parent)
 
     initializing_ = true;
 
-    // // ---- Audio devices (SDK) ----
-    // int count = gcap_get_audio_device_count();
-    // if (count > 0)
-    // {
-    //     audioDevices_.resize(count);
-    //     int n = gcap_enum_audio_devices(audioDevices_.data(), count);
-
-    //     for (int i = 0; i < n; ++i)
-    //     {
-    //         ui->comboAudioDevice->addItem(audioDevices_[i].name);
-    //     }
-
-    //     connect(ui->comboAudioDevice,
-    //             QOverload<int>::of(&QComboBox::currentIndexChanged),
-    //             this,
-    //             &inputinfodialog::onAudioDeviceChanged);
-
-    //     if (n > 0)
-    //         onAudioDeviceChanged(0);
-    // }
-    // else
-    // {
-    //     ui->labelAudioInfo->setText(tr("No audio device"));
-    // }
-
     connect(ui->btnRefresh, &QPushButton::clicked,
             this, &inputinfodialog::onRefreshClicked);
 
@@ -259,7 +234,7 @@ void inputinfodialog::refreshAudioDevices(bool keepSelection)
     audioDevices_.clear();
     ui->comboAudioDevice->clear();
 
-    int count = gcap_get_audio_device_count();
+    int count = gcap_audio_device_count();
     if (count <= 0)
     {
         ui->labelAudioInfo->setText(tr("No audio device"));
@@ -268,7 +243,7 @@ void inputinfodialog::refreshAudioDevices(bool keepSelection)
     }
 
     audioDevices_.resize(count);
-    int n = gcap_enum_audio_devices(audioDevices_.data(), count);
+    int n = gcap_audio_enum_devices(audioDevices_.data(), count);
     if (n <= 0)
     {
         audioDevices_.clear();

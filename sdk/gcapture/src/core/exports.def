@@ -8,7 +8,6 @@ EXPORTS
     gcap_start
     gcap_start_recording
     gcap_stop_recording
-    gcap_enumerate_audio_devices
     gcap_set_recording_audio_device
     gcap_set_backend
     gcap_set_d3d_adapter
@@ -23,10 +22,7 @@ EXPORTS
     gcap_stop
     gcap_close
     gcap_strerror
-    gcap_get_audio_device_count
-    gcap_enum_audio_devices
     gcap_get_active_backend
-    gcap_export_preview_scene_rgb10
     gcap_enum_video_caps
     gcap_enum_supported_pixel_formats
     gcap_enum_property_pages

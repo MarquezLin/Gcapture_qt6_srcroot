@@ -26,25 +26,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <wrl/client.h>
-#include <mmdeviceapi.h>
-#include <functiondiscoverykeys_devpkey.h>
 #include <wincodec.h>
 #pragma comment(lib, "ole32.lib")
 using Microsoft::WRL::ComPtr;
-
-static std::string w2utf8(const wchar_t *ws)
-{
-    if (!ws)
-        return {};
-    int len = WideCharToMultiByte(CP_UTF8, 0, ws, -1, nullptr, 0, nullptr, nullptr);
-    if (len <= 0)
-        return {};
-    std::string out(static_cast<size_t>(len), '\0');
-    if (WideCharToMultiByte(CP_UTF8, 0, ws, -1, out.data(), len, nullptr, nullptr) <= 0)
-        return {};
-    out.pop_back();
-    return out;
-}
 
 static std::wstring utf8_to_wide_path(const char *s)
 {
@@ -352,7 +336,6 @@ extern "C"
         case GCAP_SOURCE_WINMF_GPU: return "WinMF GPU";
         case GCAP_SOURCE_WINMF_CPU: return "WinMF CPU";
         case GCAP_SOURCE_DSHOW_RAWSINK: return "DShow RawSink";
-        case GCAP_SOURCE_DSHOW_RENDERER: return "DShow Renderer (legacy)";
         case GCAP_SOURCE_UNKNOWN:
         default: return "Unknown";
         }
@@ -814,106 +797,6 @@ extern "C"
         }
     }
 
-    GCAP_API gcap_status_t gcap_enumerate_audio_devices(gcap_audio_device_t *out, int max, int *count)
-    {
-        if (!out || max <= 0)
-            return GCAP_EINVAL;
-
-#ifndef _WIN32
-        if (count)
-            *count = 0;
-        return GCAP_ENOTSUP;
-#else
-        HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-
-        ComPtr<IMMDeviceEnumerator> enumerator;
-        hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
-        if (FAILED(hr))
-        {
-            if (count)
-                *count = 0;
-            CoUninitialize();
-            return GCAP_EIO;
-        }
-
-        // Default endpoint id
-        std::wstring defaultId;
-        {
-            ComPtr<IMMDevice> def;
-            if (SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &def)))
-            {
-                wchar_t *wid = nullptr;
-                if (SUCCEEDED(def->GetId(&wid)) && wid)
-                {
-                    defaultId = wid;
-                    CoTaskMemFree(wid);
-                }
-            }
-        }
-
-        ComPtr<IMMDeviceCollection> coll;
-        hr = enumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &coll);
-        if (FAILED(hr))
-        {
-            if (count)
-                *count = 0;
-            CoUninitialize();
-            return GCAP_EIO;
-        }
-
-        UINT n = 0;
-        coll->GetCount(&n);
-        if (count)
-            *count = (int)n;
-
-        UINT toCopy = (UINT)max;
-        if (toCopy > n)
-            toCopy = n;
-
-        for (UINT i = 0; i < toCopy; ++i)
-        {
-            ComPtr<IMMDevice> dev;
-            if (FAILED(coll->Item(i, &dev)))
-                continue;
-
-            // id
-            wchar_t *wid = nullptr;
-            std::wstring idW;
-            if (SUCCEEDED(dev->GetId(&wid)) && wid)
-            {
-                idW = wid;
-                CoTaskMemFree(wid);
-            }
-
-            // name
-            std::wstring nameW;
-            ComPtr<IPropertyStore> store;
-            if (SUCCEEDED(dev->OpenPropertyStore(STGM_READ, &store)))
-            {
-                PROPVARIANT pv;
-                PropVariantInit(&pv);
-                if (SUCCEEDED(store->GetValue(PKEY_Device_FriendlyName, &pv)))
-                {
-                    if (pv.vt == VT_LPWSTR && pv.pwszVal)
-                        nameW = pv.pwszVal;
-                }
-                PropVariantClear(&pv);
-            }
-
-            std::string idU8 = w2utf8(idW.c_str());
-            std::string nameU8 = w2utf8(nameW.c_str());
-
-            memset(&out[i], 0, sizeof(out[i]));
-            strncpy(out[i].id, idU8.c_str(), sizeof(out[i].id) - 1);
-            strncpy(out[i].name, nameU8.c_str(), sizeof(out[i].name) - 1);
-            out[i].is_default = (!defaultId.empty() && idW == defaultId) ? 1 : 0;
-        }
-
-        CoUninitialize();
-        return GCAP_OK;
-#endif
-    }
-
     GCAP_API gcap_status_t gcap_set_recording_audio_device(gcap_handle h, const char *device_id_utf8)
     {
         if (!h)
@@ -1033,18 +916,6 @@ extern "C"
             return GCAP_EINVAL;
 
         return h->mgr.setPreview(*desc);
-    }
-
-    GCAP_API gcap_status_t gcap_export_preview_scene_rgb10(gcap_handle h, const char *base_path_utf8,
-                                                           int export_raw, int export_tiff, int export_stats)
-    {
-        if (!h || !base_path_utf8 || !*base_path_utf8)
-            return GCAP_EINVAL;
-        return h->mgr.exportPreviewSceneRgb10(base_path_utf8,
-                                              export_raw != 0 ? GCAP_EXPORT_RAW_ALL : 0,
-                                              export_tiff != 0,
-                                              export_stats != 0,
-                                              false);
     }
 
     GCAP_API gcap_status_t gcap_export_snapshot(gcap_handle h, const gcap_snapshot_export_desc_t *desc,
@@ -1197,13 +1068,13 @@ extern "C"
         return GCAP_OK;
     }
 
-    extern "C" GCAP_API int gcap_get_audio_device_count(void)
+    extern "C" GCAP_API int gcap_audio_device_count(void)
     {
         auto list = gcap::audio::enumerate_devices();
         return static_cast<int>(list.size());
     }
 
-    extern "C" GCAP_API int gcap_enum_audio_devices(
+    extern "C" GCAP_API int gcap_audio_enum_devices(
         gcap_audio_device_t *out,
         int max_count)
     {
@@ -1230,16 +1101,6 @@ extern "C"
         }
 
         return n;
-    }
-
-    extern "C" GCAP_API int gcap_audio_device_count(void)
-    {
-        return gcap_get_audio_device_count();
-    }
-
-    extern "C" GCAP_API int gcap_audio_enum_devices(gcap_audio_device_t *out_devices, int max_devices)
-    {
-        return gcap_enum_audio_devices(out_devices, max_devices);
     }
 
     extern "C" GCAP_API int gcap_audio_find_device_for_capture(const char *capture_device_name_utf8,

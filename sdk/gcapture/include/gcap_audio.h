@@ -61,14 +61,6 @@ extern "C"
         gcap_audio_device_t *out,
         int max_count);
 
-    /** Legacy alias for gcap_audio_device_count(). Kept for source/binary compatibility. */
-    GCAP_API int gcap_get_audio_device_count(void);
-
-    /** Legacy alias for gcap_audio_enum_devices(). Kept for source/binary compatibility. */
-    GCAP_API int gcap_enum_audio_devices(
-        gcap_audio_device_t *out,
-        int max_count);
-
     /**
      * Best-effort match from a video capture device friendly name to a WASAPI
      * capture endpoint. Returns 1 and writes out when a likely endpoint is found.

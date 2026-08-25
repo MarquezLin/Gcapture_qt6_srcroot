@@ -230,8 +230,6 @@ void MainWindow::logFramePacketIfNeeded(const gcap_frame_packet_t &pkt)
         {
         case GCAP_SOURCE_DSHOW_RAWSINK:
             return "DShowRawSink";
-        case GCAP_SOURCE_DSHOW_RENDERER:
-            return "DShowRenderer";
         case GCAP_SOURCE_WINMF_GPU:
             return "WinMFGPU";
         case GCAP_SOURCE_WINMF_CPU:

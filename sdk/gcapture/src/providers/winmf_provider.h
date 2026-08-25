@@ -56,7 +56,7 @@ public:
     gcap_status_t stopRecording();
 
     // Select WASAPI capture endpoint for recording audio.
-    // device_id_utf8 from gcap_enumerate_audio_devices; nullptr/"" => use default endpoint.
+    // device_id_utf8 from gcap_audio_enum_devices(); nullptr/"" => use default endpoint.
     gcap_status_t setRecordingAudioDevice(const char *device_id_utf8);
 
     // Set number of buffers and size hints (unused here)

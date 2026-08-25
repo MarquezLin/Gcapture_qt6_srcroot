@@ -276,9 +276,6 @@ extern "C"
         char rgba16_path[512];      /** *_rgba16_expanded.raw, generated for 10-bit sources when RAW export is requested. */
         char rgba8_path[512];       /** *_rgba8.raw, generated for 8-bit hex-editor-friendly R8 G8 B8 A8 inspection. */
         char gigabyte_native_raw_path[512]; /** Headered mirror: *_gigabyte_abgr2101010.raw or *_gigabyte_bgra8.raw. */
-        char gigabyte_fp16_raw_path[512];   /** Reserved legacy field. Current snapshot export leaves this empty. */
-        char gigabyte_rgb10_u16_path[512];  /** Reserved legacy field. Current snapshot export leaves this empty. */
-        char gigabyte_rgba16_path[512];     /** Reserved legacy field. Current snapshot export leaves this empty. */
         char tiff_path[512];        /** *.tiff when TIFF export is requested. */
         char stats_path[512];       /** *.stats.txt when STATS export is requested. */
         char png_path[512];         /** *.png when PNG export is requested. */
@@ -384,8 +381,7 @@ extern "C"
         GCAP_SOURCE_UNKNOWN = 0,
         GCAP_SOURCE_WINMF_GPU = 1,
         GCAP_SOURCE_WINMF_CPU = 2,
-        GCAP_SOURCE_DSHOW_RAWSINK = 3,
-        GCAP_SOURCE_DSHOW_RENDERER = 4 /** Legacy/debug renderer path. Prefer GCAP_SOURCE_DSHOW_RAWSINK for SDK clients. */
+        GCAP_SOURCE_DSHOW_RAWSINK = 3
     } gcap_frame_source_kind_t;
 
     /** Preferred raw frame callback payload. Plane pointers are valid only during callback. */
@@ -527,14 +523,6 @@ extern "C"
     GCAP_API gcap_status_t gcap_stop(gcap_handle h);
 
     /**
-     * Enumerate WASAPI capture endpoints.
-     *
-     * Legacy status-code API. New clients may prefer gcap_audio_device_count()
-     * and gcap_audio_enum_devices().
-     */
-    GCAP_API gcap_status_t gcap_enumerate_audio_devices(gcap_audio_device_t *out, int max, int *count);
-
-    /**
      * Select WASAPI capture endpoint for recording.
      *
      * Call state:
@@ -558,16 +546,6 @@ extern "C"
 
     /** Query actual backend currently used by an opened/running handle. Returns -1 for invalid handle. */
     GCAP_API int gcap_get_active_backend(gcap_handle h);
-
-    /**
-     * Legacy snapshot helper.
-     *
-     * Prefer gcap_export_snapshot() for new SDK clients because it returns the
-     * generated paths and flags. This helper uses base_path_utf8 plus SDK-defined
-     * suffixes and writes requested RAW/TIFF/STATS outputs.
-     */
-    GCAP_API gcap_status_t gcap_export_preview_scene_rgb10(gcap_handle h, const char *base_path_utf8,
-                                                           int export_raw, int export_tiff, int export_stats);
 
     /**
      * Export a snapshot from the current preview scene/readback path.
@@ -648,12 +626,6 @@ extern "C"
 
     /** Reset ProcAmp settings to backend defaults/neutral values. */
     GCAP_API gcap_status_t gcap_reset_procamp(gcap_handle h);
-
-    /** Legacy audio count helper. Prefer gcap_audio_device_count() for new code. */
-    GCAP_API int gcap_get_audio_device_count(void);
-
-    /** Legacy audio enumeration helper. Prefer gcap_audio_enum_devices() for new code. Returns number written, or total if out_devices is null. */
-    GCAP_API int gcap_enum_audio_devices(gcap_audio_device_t *out_devices, int max_devices);
 
     /** Return number of active WASAPI capture devices. */
     GCAP_API int gcap_audio_device_count(void);
