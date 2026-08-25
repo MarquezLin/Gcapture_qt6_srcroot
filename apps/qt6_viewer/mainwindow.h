@@ -91,7 +91,7 @@ private:
     QString recordPath_;
     QString recordEncoderName_;
     QImage lastFrameImage_;
-    QString recordAudioDeviceIdUtf8_;
+    QString selectedAudioDeviceIdUtf8_;
 
     // Debug log panel.
     QDockWidget *debugDock_ = nullptr;

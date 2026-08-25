@@ -426,6 +426,26 @@ QPushButton#btnStop:pressed {
              </property>
             </widget>
            </item>
+           <item row="5" column="0">
+            <widget class="QLabel" name="labelAudioPreview">
+             <property name="text">
+              <string>Audio</string>
+             </property>
+            </widget>
+           </item>
+           <item row="5" column="1">
+            <widget class="QCheckBox" name="checkAudioPreview">
+             <property name="toolTip">
+              <string>Monitor the matching Windows audio capture endpoint through the default speaker.</string>
+             </property>
+             <property name="text">
+              <string>Enable preview</string>
+             </property>
+             <property name="checked">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
           </layout>
          </item>
          <item>

@@ -256,7 +256,16 @@ void MainWindow::ensureSignalInfoDialog()
 
     connect(infoDlg_, &inputinfodialog::audioDeviceSelected,
             this, [this](const QString &id)
-            { recordAudioDeviceIdUtf8_ = id; });
+            {
+                selectedAudioDeviceIdUtf8_ = id;
+                const bool captureRunning = h_
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+                                            || usingGvfg_
+#endif
+                    ;
+                if (captureRunning && (!ui->checkAudioPreview || ui->checkAudioPreview->isChecked()))
+                    startPreviewAudio();
+            });
 
     connect(infoDlg_, &inputinfodialog::openPropertyPageRequested,
             this, [this](const QString &pageNameUtf8, bool capturePin)
@@ -528,7 +537,7 @@ void MainWindow::refreshSignalInfoDialog()
     infoDlg_->setWindowTitle(tr("Signal Info"));
     infoDlg_->setInfoText(lastInfoText_);
     infoDlg_->setPropertyPages(captureInfo_.propertyPages);
-    infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
+    infoDlg_->setCurrentAudioDevice(selectedAudioDeviceIdUtf8_);
 }
 
 void MainWindow::refreshDisplayInfoDialog()

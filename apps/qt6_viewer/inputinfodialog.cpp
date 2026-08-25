@@ -224,6 +224,7 @@ void inputinfodialog::onAudioDeviceChanged(int index)
         return;
     }
 
+    currentAudioDeviceIdUtf8_ = id;
     emit audioDeviceSelected(id);
 
     ui->labelAudioInfo->setText(text);

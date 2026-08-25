@@ -11,6 +11,7 @@
 #include <QUrl>
 #include <array>
 #include <cmath>
+#include <vector>
 namespace
 {
 QString recordInputFormatName(gcap_pixfmt_t fmt)
@@ -351,26 +352,62 @@ QString MainWindow::buildRecordingPath(const QDateTime &now) const
 
 void MainWindow::applySelectedRecordingAudioDevice()
 {
-    const QString deviceId = recordAudioDeviceIdUtf8_.isEmpty() ? QStringLiteral("default") : recordAudioDeviceIdUtf8_;
+    const QString deviceId = selectedAudioDeviceIdUtf8_.isEmpty() ? QStringLiteral("default") : selectedAudioDeviceIdUtf8_;
     MainWindow::postLog(QStringLiteral("[Record] apply audio device=%1").arg(deviceId));
 
-    if (recordAudioDeviceIdUtf8_.isEmpty())
+    if (selectedAudioDeviceIdUtf8_.isEmpty())
         gcap_set_recording_audio_device(h_, nullptr);
     else
-        gcap_set_recording_audio_device(h_, recordAudioDeviceIdUtf8_.toUtf8().constData());
+        gcap_set_recording_audio_device(h_, selectedAudioDeviceIdUtf8_.toUtf8().constData());
 }
 
 void MainWindow::startPreviewAudio()
 {
     stopPreviewAudio();
 
+    if (ui->checkAudioPreview && !ui->checkAudioPreview->isChecked())
+    {
+        MainWindow::postLog(QStringLiteral("[AudioPreview] disabled by user"));
+        return;
+    }
+
     const QString videoDeviceName = currentDeviceText();
     if (videoDeviceName.isEmpty())
         return;
 
     gcap_audio_device_t audio{};
-    const QByteArray videoNameUtf8 = videoDeviceName.toUtf8();
-    if (!gcap_audio_find_device_for_capture(videoNameUtf8.constData(), &audio))
+    bool found = false;
+    if (!selectedAudioDeviceIdUtf8_.isEmpty())
+    {
+        const int count = gcap_audio_device_count();
+        if (count > 0)
+        {
+            std::vector<gcap_audio_device_t> devices(static_cast<size_t>(count));
+            const int written = gcap_audio_enum_devices(devices.data(), count);
+            for (int i = 0; i < written; ++i)
+            {
+                if (selectedAudioDeviceIdUtf8_ == QString::fromUtf8(devices[static_cast<size_t>(i)].id))
+                {
+                    audio = devices[static_cast<size_t>(i)];
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (!found)
+        {
+            MainWindow::postLog(QStringLiteral("[AudioPreview] selected endpoint is unavailable; falling back to video-device matching"),
+                                true);
+        }
+    }
+
+    if (!found)
+    {
+        const QByteArray videoNameUtf8 = videoDeviceName.toUtf8();
+        found = gcap_audio_find_device_for_capture(videoNameUtf8.constData(), &audio) != 0;
+    }
+
+    if (!found)
     {
         MainWindow::postLog(QStringLiteral("[AudioPreview] no matching WASAPI capture endpoint for video device=%1")
                                 .arg(videoDeviceName));
@@ -401,12 +438,11 @@ void MainWindow::startPreviewAudio()
 
 void MainWindow::stopPreviewAudio()
 {
-    if (!previewAudioActive_)
-        return;
-
+    const bool wasActive = previewAudioActive_;
     gcap_stop_audio_capture();
     previewAudioActive_ = false;
-    MainWindow::postLog(QStringLiteral("[AudioPreview] stopped"));
+    if (wasActive)
+        MainWindow::postLog(QStringLiteral("[AudioPreview] stopped"));
 }
 
 void MainWindow::onStart()
@@ -490,6 +526,7 @@ void MainWindow::onStart()
         MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 channel=%2; waiting for first frame")
                                 .arg(deviceIndex_)
                                 .arg(GVFG_CHANNEL_0));
+        startPreviewAudio();
         updateRuntimeStatusUi();
         refreshCaptureInfoFromSdkAndRuntime(false);
         refreshDisplayInfoFromCurrentState();

@@ -304,6 +304,10 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    stopRecordingSession(false);
+    if (h_)
+        gcap_stop(h_);
+    closeCaptureSession();
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     if (gvfg_)
         gvfg_->close();
@@ -327,6 +331,11 @@ void MainWindow::closeEvent(QCloseEvent *event)
     {
         previewWindow_->close();
     }
+
+    stopRecordingSession(false);
+    if (h_)
+        gcap_stop(h_);
+    closeCaptureSession();
 
     QMainWindow::closeEvent(event);
 }
@@ -862,7 +871,7 @@ void MainWindow::setupRuntimeStatusTimer()
                     {
                         infoDlg_->setInfoText(lastInfoText_);
                         infoDlg_->setPropertyPages(captureInfo_.propertyPages);
-                        infoDlg_->setCurrentAudioDevice(recordAudioDeviceIdUtf8_);
+                        infoDlg_->setCurrentAudioDevice(selectedAudioDeviceIdUtf8_);
                     }
 
                     if (DpinfoDlg_ && DpinfoDlg_->isVisible())
@@ -1324,6 +1333,24 @@ void MainWindow::setupConnections()
                         gvfg_->setVideoFormat(static_cast<gvfg_pixel_format_t>(ui->comboPixelFormat->currentData().toInt()));
                 });
 #endif
+
+    if (ui->checkAudioPreview)
+    {
+        connect(ui->checkAudioPreview, &QCheckBox::toggled, this, [this](bool enabled)
+                {
+                    const bool captureRunning = h_
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+                                                || usingGvfg_
+#endif
+                        ;
+                    if (!captureRunning)
+                        return;
+                    if (enabled)
+                        startPreviewAudio();
+                    else
+                        stopPreviewAudio();
+                });
+    }
 
     if (ui->comboPreviewBitDepth)
     {
