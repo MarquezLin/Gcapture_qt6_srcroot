@@ -413,6 +413,40 @@ void MainWindow::startPreviewAudio()
 
     if (!found)
     {
+        const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
+        if (backend == GCAP_BACKEND_DSHOW)
+        {
+            gcap_audio_device_t dshowAudio{};
+            const QByteArray videoNameUtf8 = videoDeviceName.toUtf8();
+            const int st = gcap_start_dshow_audio_preview(videoNameUtf8.constData(), &dshowAudio);
+            if (st == GCAP_OK)
+            {
+                previewAudioActive_ = true;
+                const QString format = (dshowAudio.sample_rate > 0 && dshowAudio.channels > 0)
+                                           ? QStringLiteral("%1 Hz, %2 channels, %3-bit PCM")
+                                                 .arg(dshowAudio.sample_rate)
+                                                 .arg(dshowAudio.channels)
+                                                 .arg(dshowAudio.bits_per_sample)
+                                           : QStringLiteral("PCM format reported by DirectShow");
+                setPreviewAudioStatus(QStringLiteral("Playing (DirectShow)"),
+                                      QStringLiteral("%1\n%2")
+                                          .arg(QString::fromUtf8(dshowAudio.name), format));
+                MainWindow::postLog(QStringLiteral("[AudioPreview][DShow] started filter=%1 (%2)")
+                                        .arg(QString::fromUtf8(dshowAudio.name), format));
+                return;
+            }
+
+            setPreviewAudioStatus(QStringLiteral("Start Failed"),
+                                  QStringLiteral("DirectShow audio filter matching/start failed for %1 (status %2).")
+                                      .arg(videoDeviceName)
+                                      .arg(st));
+            MainWindow::postLog(QStringLiteral("[AudioPreview][DShow] matching/start failed for video device=%1 status=%2")
+                                    .arg(videoDeviceName)
+                                    .arg(st),
+                                true);
+            return;
+        }
+
         setPreviewAudioStatus(QStringLiteral("No Endpoint"),
                               QStringLiteral("No matching Windows audio capture endpoint for %1.").arg(videoDeviceName));
         MainWindow::postLog(QStringLiteral("[AudioPreview] no matching WASAPI capture endpoint for video device=%1")
@@ -440,7 +474,7 @@ void MainWindow::startPreviewAudio()
     }
 
     previewAudioActive_ = true;
-    setPreviewAudioStatus(QStringLiteral("Playing"),
+    setPreviewAudioStatus(QStringLiteral("Playing (WASAPI)"),
                           QStringLiteral("%1\n%2 Hz, %3 channels")
                               .arg(QString::fromUtf8(audio.name))
                               .arg(audio.sample_rate)

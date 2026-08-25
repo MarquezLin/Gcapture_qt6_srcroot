@@ -89,7 +89,17 @@ extern "C"
     GCAP_API int gcap_start_audio_capture(
         const gcap_audio_capture_config_t *cfg);
 
-    /** Stop low-level WASAPI audio preview/capture if it was started. */
+    /**
+     * Match a DirectShow audio input filter to a video capture device name and
+     * monitor its PCM output through the Windows default audio renderer.
+     * out_source may be null; when supplied it receives the matched filter and
+     * connected PCM format.
+     */
+    GCAP_API int gcap_start_dshow_audio_preview(
+        const char *video_device_name_utf8,
+        gcap_audio_device_t *out_source);
+
+    /** Stop the active WASAPI or DirectShow audio preview. */
     GCAP_API void gcap_stop_audio_capture(void);
 
 #ifdef __cplusplus

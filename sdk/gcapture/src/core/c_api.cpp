@@ -1276,6 +1276,34 @@ extern "C"
         return GCAP_OK;
     }
 
+    extern "C" GCAP_API int gcap_start_dshow_audio_preview(const char *video_device_name_utf8,
+                                                            gcap_audio_device_t *out_source)
+    {
+        if (!video_device_name_utf8 || !*video_device_name_utf8)
+            return GCAP_EINVAL;
+
+        gcap::audio::device source;
+        std::string error;
+        if (!gcap::audio::start_dshow_preview(video_device_name_utf8, source, &error))
+        {
+            if (!error.empty())
+                gcap::log_printf(GCAP_LOG_WARN, "[AudioPreview][DShow] start failed: %s", error.c_str());
+            return GCAP_EIO;
+        }
+
+        if (out_source)
+        {
+            memset(out_source, 0, sizeof(*out_source));
+            strncpy_s(out_source->id, source.id.c_str(), _TRUNCATE);
+            strncpy_s(out_source->name, source.name.c_str(), _TRUNCATE);
+            out_source->channels = source.channels;
+            out_source->sample_rate = source.sample_rate;
+            out_source->bits_per_sample = source.bits_per_sample;
+            out_source->is_float = source.is_float ? 1 : 0;
+        }
+        return GCAP_OK;
+    }
+
     extern "C" GCAP_API void gcap_stop_audio_capture(void)
     {
         gcap::audio::stop_preview();

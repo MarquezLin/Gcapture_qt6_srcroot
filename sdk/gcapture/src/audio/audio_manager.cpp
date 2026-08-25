@@ -1,4 +1,5 @@
 #include "audio_manager.h"
+#include "dshow_audio_preview.h"
 
 #include "../core/logging.h"
 
@@ -671,6 +672,7 @@ namespace
 
     std::mutex g_previewMutex;
     std::unique_ptr<WasapiPreview> g_preview;
+    std::unique_ptr<gcap::audio::dshow_preview> g_dshowPreview;
 }
 
 namespace gcap::audio
@@ -783,14 +785,28 @@ namespace gcap::audio
         return true;
     }
 
+    bool start_dshow_preview(const char *videoDeviceNameUtf8, device &source, std::string *error)
+    {
+        std::lock_guard<std::mutex> lock(g_previewMutex);
+        auto next = std::make_unique<dshow_preview>();
+        if (!next->start(videoDeviceNameUtf8, source, error))
+            return false;
+        g_dshowPreview = std::move(next);
+        return true;
+    }
+
     void stop_preview()
     {
         std::unique_ptr<WasapiPreview> old;
+        std::unique_ptr<dshow_preview> oldDshow;
         {
             std::lock_guard<std::mutex> lock(g_previewMutex);
             old = std::move(g_preview);
+            oldDshow = std::move(g_dshowPreview);
         }
         if (old)
             old->stop();
+        if (oldDshow)
+            oldDshow->stop();
     }
 }

@@ -15,6 +15,7 @@ add_library(gcapture SHARED
     src/providers/dshow_raw_renderer.cpp
     src/providers/dshow_custom_sink.cpp
     src/audio/audio_manager.cpp
+    src/audio/dshow_audio_preview.cpp
     src/core/exports.def
 )
 

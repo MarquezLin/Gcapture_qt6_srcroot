@@ -19,5 +19,6 @@ namespace gcap::audio
     std::vector<device> enumerate_devices();
     bool find_device_for_capture_name(const std::string &captureNameUtf8, device &out);
     bool start_preview(const char *deviceIdUtf8, std::string *error);
+    bool start_dshow_preview(const char *videoDeviceNameUtf8, device &source, std::string *error);
     void stop_preview();
 }
