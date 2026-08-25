@@ -51,7 +51,7 @@ EXPORTS
     gcap_audio_device_count
     gcap_audio_enum_devices
     gcap_audio_find_device_for_capture
-    gcap_start_audio_capture
-    gcap_start_dshow_audio_preview
-    gcap_stop_audio_capture
+    gcap_start_audio_monitoring
+    gcap_start_dshow_audio_monitoring
+    gcap_stop_audio_monitoring
     gcap_set_log_callback

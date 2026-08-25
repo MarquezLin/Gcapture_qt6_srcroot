@@ -263,8 +263,8 @@ void MainWindow::ensureSignalInfoDialog()
                                             || usingGvfg_
 #endif
                     ;
-                if (captureRunning && (!ui->checkAudioPreview || ui->checkAudioPreview->isChecked()))
-                    startPreviewAudio();
+                if (captureRunning && (!ui->checkAudioMonitoring || ui->checkAudioMonitoring->isChecked()))
+                    startAudioMonitoring();
             });
 
     connect(infoDlg_, &inputinfodialog::openPropertyPageRequested,

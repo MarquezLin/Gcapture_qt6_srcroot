@@ -7,14 +7,14 @@
 
 namespace gcap::audio
 {
-    class dshow_preview
+    class dshow_monitor
     {
     public:
-        dshow_preview();
-        ~dshow_preview();
+        dshow_monitor();
+        ~dshow_monitor();
 
-        dshow_preview(const dshow_preview &) = delete;
-        dshow_preview &operator=(const dshow_preview &) = delete;
+        dshow_monitor(const dshow_monitor &) = delete;
+        dshow_monitor &operator=(const dshow_monitor &) = delete;
 
         bool start(const char *videoDeviceNameUtf8, device &source, std::string *error);
         void stop();

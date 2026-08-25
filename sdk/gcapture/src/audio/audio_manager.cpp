@@ -1,5 +1,5 @@
 #include "audio_manager.h"
-#include "dshow_audio_preview.h"
+#include "dshow_audio_monitor.h"
 
 #include "../core/logging.h"
 
@@ -385,10 +385,10 @@ namespace
         return score;
     }
 
-    class WasapiPreview
+    class WasapiMonitor
     {
     public:
-        ~WasapiPreview() { stop(); }
+        ~WasapiMonitor() { stop(); }
 
         bool start(const char *deviceIdUtf8, std::string *error)
         {
@@ -431,9 +431,9 @@ namespace
         {
             char buf[512] = {};
             if (FAILED(hr))
-                sprintf_s(buf, "[AudioPreview] %s hr=0x%08X", message, static_cast<unsigned>(hr));
+                sprintf_s(buf, "[AudioMonitoring] %s hr=0x%08X", message, static_cast<unsigned>(hr));
             else
-                sprintf_s(buf, "[AudioPreview] %s", message);
+                sprintf_s(buf, "[AudioMonitoring] %s", message);
             lastError_ = buf;
             gcap_log_warn(buf);
             failed_.store(true);
@@ -596,7 +596,7 @@ namespace
             }
 
             gcap::log_printf(GCAP_LOG_INFO,
-                             "[AudioPreview] started capture %u ch %u Hz -> speaker %u ch %u Hz",
+                             "[AudioMonitoring] started capture %u ch %u Hz -> speaker %u ch %u Hz",
                              captureMix.get()->nChannels,
                              captureMix.get()->nSamplesPerSec,
                              renderFmt->nChannels,
@@ -659,7 +659,7 @@ namespace
             captureClient->Stop();
             renderClient->Stop();
             ready_.store(false);
-            gcap_log_info("[AudioPreview] stopped");
+            gcap_log_info("[AudioMonitoring] stopped");
         }
 
         std::atomic<bool> running_{false};
@@ -671,8 +671,8 @@ namespace
     };
 
     std::mutex g_previewMutex;
-    std::unique_ptr<WasapiPreview> g_preview;
-    std::unique_ptr<gcap::audio::dshow_preview> g_dshowPreview;
+    std::unique_ptr<WasapiMonitor> g_monitor;
+    std::unique_ptr<gcap::audio::dshow_monitor> g_dshowMonitor;
 }
 
 namespace gcap::audio
@@ -775,34 +775,34 @@ namespace gcap::audio
         return found && bestScore >= 20;
     }
 
-    bool start_preview(const char *deviceIdUtf8, std::string *error)
+    bool start_monitoring(const char *deviceIdUtf8, std::string *error)
     {
         std::lock_guard<std::mutex> lock(g_previewMutex);
-        auto next = std::make_unique<WasapiPreview>();
+        auto next = std::make_unique<WasapiMonitor>();
         if (!next->start(deviceIdUtf8, error))
             return false;
-        g_preview = std::move(next);
+        g_monitor = std::move(next);
         return true;
     }
 
-    bool start_dshow_preview(const char *videoDeviceNameUtf8, device &source, std::string *error)
+    bool start_dshow_monitoring(const char *videoDeviceNameUtf8, device &source, std::string *error)
     {
         std::lock_guard<std::mutex> lock(g_previewMutex);
-        auto next = std::make_unique<dshow_preview>();
+        auto next = std::make_unique<dshow_monitor>();
         if (!next->start(videoDeviceNameUtf8, source, error))
             return false;
-        g_dshowPreview = std::move(next);
+        g_dshowMonitor = std::move(next);
         return true;
     }
 
-    void stop_preview()
+    void stop_monitoring()
     {
-        std::unique_ptr<WasapiPreview> old;
-        std::unique_ptr<dshow_preview> oldDshow;
+        std::unique_ptr<WasapiMonitor> old;
+        std::unique_ptr<dshow_monitor> oldDshow;
         {
             std::lock_guard<std::mutex> lock(g_previewMutex);
-            old = std::move(g_preview);
-            oldDshow = std::move(g_dshowPreview);
+            old = std::move(g_monitor);
+            oldDshow = std::move(g_dshowMonitor);
         }
         if (old)
             old->stop();

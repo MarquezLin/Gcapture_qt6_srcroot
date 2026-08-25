@@ -1124,20 +1124,20 @@ extern "C"
         return 1;
     }
 
-    extern "C" GCAP_API int gcap_start_audio_capture(const gcap_audio_capture_config_t *cfg)
+    extern "C" GCAP_API int gcap_start_audio_monitoring(const gcap_audio_monitor_config_t *cfg)
     {
         std::string error;
         const char *deviceId = (cfg && cfg->device_id && *cfg->device_id) ? cfg->device_id : nullptr;
-        if (!gcap::audio::start_preview(deviceId, &error))
+        if (!gcap::audio::start_monitoring(deviceId, &error))
         {
             if (!error.empty())
-                gcap::log_printf(GCAP_LOG_WARN, "[AudioPreview] start failed: %s", error.c_str());
+                gcap::log_printf(GCAP_LOG_WARN, "[AudioMonitoring] start failed: %s", error.c_str());
             return GCAP_EIO;
         }
         return GCAP_OK;
     }
 
-    extern "C" GCAP_API int gcap_start_dshow_audio_preview(const char *video_device_name_utf8,
+    extern "C" GCAP_API int gcap_start_dshow_audio_monitoring(const char *video_device_name_utf8,
                                                             gcap_audio_device_t *out_source)
     {
         if (!video_device_name_utf8 || !*video_device_name_utf8)
@@ -1145,10 +1145,10 @@ extern "C"
 
         gcap::audio::device source;
         std::string error;
-        if (!gcap::audio::start_dshow_preview(video_device_name_utf8, source, &error))
+        if (!gcap::audio::start_dshow_monitoring(video_device_name_utf8, source, &error))
         {
             if (!error.empty())
-                gcap::log_printf(GCAP_LOG_WARN, "[AudioPreview][DShow] start failed: %s", error.c_str());
+                gcap::log_printf(GCAP_LOG_WARN, "[AudioMonitoring][DShow] start failed: %s", error.c_str());
             return GCAP_EIO;
         }
 
@@ -1165,9 +1165,9 @@ extern "C"
         return GCAP_OK;
     }
 
-    extern "C" GCAP_API void gcap_stop_audio_capture(void)
+    extern "C" GCAP_API void gcap_stop_audio_monitoring(void)
     {
-        gcap::audio::stop_preview();
+        gcap::audio::stop_monitoring();
     }
 
 } // extern "C"

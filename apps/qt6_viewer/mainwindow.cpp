@@ -1331,9 +1331,9 @@ void MainWindow::setupConnections()
                 });
 #endif
 
-    if (ui->checkAudioPreview)
+    if (ui->checkAudioMonitoring)
     {
-        connect(ui->checkAudioPreview, &QCheckBox::toggled, this, [this](bool enabled)
+        connect(ui->checkAudioMonitoring, &QCheckBox::toggled, this, [this](bool enabled)
                 {
                     const bool captureRunning = h_
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
@@ -1343,9 +1343,9 @@ void MainWindow::setupConnections()
                     if (!captureRunning)
                         return;
                     if (enabled)
-                        startPreviewAudio();
+                        startAudioMonitoring();
                     else
-                        stopPreviewAudio();
+                        stopAudioMonitoring();
                 });
     }
 

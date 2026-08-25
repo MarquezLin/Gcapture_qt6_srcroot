@@ -1,4 +1,4 @@
-#include "dshow_audio_preview.h"
+#include "dshow_audio_monitor.h"
 
 #include "../core/logging.h"
 
@@ -147,7 +147,7 @@ namespace
 
 namespace gcap::audio
 {
-    struct dshow_preview::impl
+    struct dshow_monitor::impl
     {
         ComPtr<IGraphBuilder> graph;
         ComPtr<ICaptureGraphBuilder2> builder;
@@ -156,10 +156,10 @@ namespace gcap::audio
         bool comInitialized = false;
     };
 
-    dshow_preview::dshow_preview() : impl_(std::make_unique<impl>()) {}
-    dshow_preview::~dshow_preview() { stop(); }
+    dshow_monitor::dshow_monitor() : impl_(std::make_unique<impl>()) {}
+    dshow_monitor::~dshow_monitor() { stop(); }
 
-    bool dshow_preview::start(const char *videoDeviceNameUtf8, device &sourceInfo, std::string *error)
+    bool dshow_monitor::start(const char *videoDeviceNameUtf8, device &sourceInfo, std::string *error)
     {
         stop();
         if (!videoDeviceNameUtf8 || !*videoDeviceNameUtf8)
@@ -255,13 +255,13 @@ namespace gcap::audio
         sourceInfo.name = bestName;
         read_connected_audio_format(impl_->source.Get(), sourceInfo);
         gcap::log_printf(GCAP_LOG_INFO,
-                         "[AudioPreview][DShow] started filter=%s format=%d Hz/%d ch/%d bit",
+                         "[AudioMonitoring][DShow] started filter=%s format=%d Hz/%d ch/%d bit",
                          sourceInfo.name.c_str(), sourceInfo.sample_rate, sourceInfo.channels,
                          sourceInfo.bits_per_sample);
         return true;
     }
 
-    void dshow_preview::stop()
+    void dshow_monitor::stop()
     {
         if (!impl_)
             return;

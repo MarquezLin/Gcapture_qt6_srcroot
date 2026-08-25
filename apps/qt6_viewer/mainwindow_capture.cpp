@@ -146,7 +146,7 @@ void MainWindow::clearPreviewSurface()
 
 void MainWindow::closeCaptureSession()
 {
-    stopPreviewAudio();
+    stopAudioMonitoring();
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     if (usingGvfg_ && gvfg_)
@@ -363,21 +363,21 @@ void MainWindow::applySelectedRecordingAudioDevice()
         gcap_set_recording_audio_device(h_, selectedAudioDeviceIdUtf8_.toUtf8().constData());
 }
 
-void MainWindow::startPreviewAudio()
+void MainWindow::startAudioMonitoring()
 {
-    stopPreviewAudio();
+    stopAudioMonitoring();
 
-    if (ui->checkAudioPreview && !ui->checkAudioPreview->isChecked())
+    if (ui->checkAudioMonitoring && !ui->checkAudioMonitoring->isChecked())
     {
-        setPreviewAudioStatus(QStringLiteral("Disabled"), QStringLiteral("Audio preview is disabled by the user."));
-        MainWindow::postLog(QStringLiteral("[AudioPreview] disabled by user"));
+        setAudioMonitoringStatus(QStringLiteral("Disabled"), QStringLiteral("Audio monitoring is disabled by the user."));
+        MainWindow::postLog(QStringLiteral("[AudioMonitoring] disabled by user"));
         return;
     }
 
     const QString videoDeviceName = currentDeviceText();
     if (videoDeviceName.isEmpty())
     {
-        setPreviewAudioStatus(QStringLiteral("No Video Source"));
+        setAudioMonitoringStatus(QStringLiteral("No Video Source"));
         return;
     }
 
@@ -402,7 +402,7 @@ void MainWindow::startPreviewAudio()
         }
         if (!found)
         {
-            MainWindow::postLog(QStringLiteral("[AudioPreview] selected endpoint is unavailable; falling back to video-device matching"),
+            MainWindow::postLog(QStringLiteral("[AudioMonitoring] selected endpoint is unavailable; falling back to video-device matching"),
                                 true);
         }
     }
@@ -420,90 +420,90 @@ void MainWindow::startPreviewAudio()
         {
             gcap_audio_device_t dshowAudio{};
             const QByteArray videoNameUtf8 = videoDeviceName.toUtf8();
-            const int st = gcap_start_dshow_audio_preview(videoNameUtf8.constData(), &dshowAudio);
+            const int st = gcap_start_dshow_audio_monitoring(videoNameUtf8.constData(), &dshowAudio);
             if (st == GCAP_OK)
             {
-                previewAudioActive_ = true;
+                audioMonitoringActive_ = true;
                 const QString format = (dshowAudio.sample_rate > 0 && dshowAudio.channels > 0)
                                            ? QStringLiteral("%1 Hz, %2 channels, %3-bit PCM")
                                                  .arg(dshowAudio.sample_rate)
                                                  .arg(dshowAudio.channels)
                                                  .arg(dshowAudio.bits_per_sample)
                                            : QStringLiteral("PCM format reported by DirectShow");
-                setPreviewAudioStatus(QStringLiteral("Playing (DirectShow)"),
+                setAudioMonitoringStatus(QStringLiteral("Monitoring (DirectShow)"),
                                       QStringLiteral("%1\n%2")
                                           .arg(QString::fromUtf8(dshowAudio.name), format));
-                MainWindow::postLog(QStringLiteral("[AudioPreview][DShow] started filter=%1 (%2)")
+                MainWindow::postLog(QStringLiteral("[AudioMonitoring][DShow] started filter=%1 (%2)")
                                         .arg(QString::fromUtf8(dshowAudio.name), format));
                 return;
             }
 
-            setPreviewAudioStatus(QStringLiteral("Start Failed"),
+            setAudioMonitoringStatus(QStringLiteral("Start Failed"),
                                   QStringLiteral("DirectShow audio filter matching/start failed for %1 (status %2).")
                                       .arg(videoDeviceName)
                                       .arg(st));
-            MainWindow::postLog(QStringLiteral("[AudioPreview][DShow] matching/start failed for video device=%1 status=%2")
+            MainWindow::postLog(QStringLiteral("[AudioMonitoring][DShow] matching/start failed for video device=%1 status=%2")
                                     .arg(videoDeviceName)
                                     .arg(st),
                                 true);
             return;
         }
 
-        setPreviewAudioStatus(QStringLiteral("No Endpoint"),
+        setAudioMonitoringStatus(QStringLiteral("No Endpoint"),
                               QStringLiteral("No matching Windows audio capture endpoint for %1.").arg(videoDeviceName));
-        MainWindow::postLog(QStringLiteral("[AudioPreview] no matching WASAPI capture endpoint for video device=%1")
+        MainWindow::postLog(QStringLiteral("[AudioMonitoring] no matching WASAPI capture endpoint for video device=%1")
                                 .arg(videoDeviceName));
         return;
     }
 
-    gcap_audio_capture_config_t cfg{};
+    gcap_audio_monitor_config_t cfg{};
     cfg.device_id = audio.id;
     cfg.sample_rate = audio.sample_rate;
     cfg.channels = audio.channels;
 
-    const int st = gcap_start_audio_capture(&cfg);
+    const int st = gcap_start_audio_monitoring(&cfg);
     if (st != GCAP_OK)
     {
-        setPreviewAudioStatus(QStringLiteral("Start Failed"),
+        setAudioMonitoringStatus(QStringLiteral("Start Failed"),
                               QStringLiteral("%1 (status %2)")
                                   .arg(QString::fromUtf8(audio.name))
                                   .arg(st));
-        MainWindow::postLog(QStringLiteral("[AudioPreview] start failed for endpoint=%1 status=%2")
+        MainWindow::postLog(QStringLiteral("[AudioMonitoring] start failed for endpoint=%1 status=%2")
                                 .arg(QString::fromUtf8(audio.name))
                                 .arg(st),
                             true);
         return;
     }
 
-    previewAudioActive_ = true;
-    setPreviewAudioStatus(QStringLiteral("Playing (WASAPI)"),
+    audioMonitoringActive_ = true;
+    setAudioMonitoringStatus(QStringLiteral("Monitoring (WASAPI)"),
                           QStringLiteral("%1\n%2 Hz, %3 channels")
                               .arg(QString::fromUtf8(audio.name))
                               .arg(audio.sample_rate)
                               .arg(audio.channels));
-    MainWindow::postLog(QStringLiteral("[AudioPreview] started endpoint=%1 (%2 Hz, %3 ch)")
+    MainWindow::postLog(QStringLiteral("[AudioMonitoring] started endpoint=%1 (%2 Hz, %3 ch)")
                             .arg(QString::fromUtf8(audio.name))
                             .arg(audio.sample_rate)
                             .arg(audio.channels));
 }
 
-void MainWindow::stopPreviewAudio()
+void MainWindow::stopAudioMonitoring()
 {
-    const bool wasActive = previewAudioActive_;
-    gcap_stop_audio_capture();
-    previewAudioActive_ = false;
+    const bool wasActive = audioMonitoringActive_;
+    gcap_stop_audio_monitoring();
+    audioMonitoringActive_ = false;
     if (wasActive)
-        MainWindow::postLog(QStringLiteral("[AudioPreview] stopped"));
+        MainWindow::postLog(QStringLiteral("[AudioMonitoring] stopped"));
 
-    if (ui && ui->checkAudioPreview && ui->checkAudioPreview->isChecked())
-        setPreviewAudioStatus(QStringLiteral("Standby"), QStringLiteral("Audio preview is enabled but not running."));
+    if (ui && ui->checkAudioMonitoring && ui->checkAudioMonitoring->isChecked())
+        setAudioMonitoringStatus(QStringLiteral("Standby"), QStringLiteral("Audio monitoring is enabled but not running."));
     else
-        setPreviewAudioStatus(QStringLiteral("Disabled"), QStringLiteral("Audio preview is disabled by the user."));
+        setAudioMonitoringStatus(QStringLiteral("Disabled"), QStringLiteral("Audio monitoring is disabled by the user."));
 }
 
-void MainWindow::setPreviewAudioStatus(const QString &status, const QString &detail)
+void MainWindow::setAudioMonitoringStatus(const QString &status, const QString &detail)
 {
-    previewAudioStatusDetail_ = detail;
+    audioMonitoringStatusDetail_ = detail;
     if (!ui || !ui->metricValueAudio)
         return;
 
@@ -592,7 +592,7 @@ void MainWindow::onStart()
         MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 channel=%2; waiting for first frame")
                                 .arg(deviceIndex_)
                                 .arg(GVFG_CHANNEL_0));
-        startPreviewAudio();
+        startAudioMonitoring();
         updateRuntimeStatusUi();
         refreshCaptureInfoFromSdkAndRuntime(false);
         refreshDisplayInfoFromCurrentState();
@@ -692,7 +692,7 @@ void MainWindow::onStart()
         return;
     }
 
-    startPreviewAudio();
+    startAudioMonitoring();
     updateRuntimeStatusUi();
     refreshCaptureInfoFromSdkAndRuntime(false);
     refreshDisplayInfoFromCurrentState();
@@ -708,7 +708,7 @@ void MainWindow::onStop()
         return;
 
     stopRecordingSession(false);
-    stopPreviewAudio();
+    stopAudioMonitoring();
     if (h_)
         gcap_stop(h_);
     closeCaptureSession();

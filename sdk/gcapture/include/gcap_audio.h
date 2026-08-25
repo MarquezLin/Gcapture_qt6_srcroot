@@ -8,8 +8,8 @@
       - gcap_audio_enum_devices()
       - gcap_set_recording_audio_device() from gcapture.h
 
-    The low-level gcap_start_audio_capture()/gcap_stop_audio_capture() APIs run
-    a simple WASAPI preview monitor from a capture endpoint to the default
+    The low-level gcap_start_audio_monitoring()/gcap_stop_audio_monitoring() APIs run
+    a simple WASAPI monitor from a capture endpoint to the default
     speaker. They are independent from the recording path.
 */
 
@@ -69,17 +69,17 @@ extern "C"
         const char *capture_device_name_utf8,
         gcap_audio_device_t *out);
 
-    /** Experimental low-level audio capture configuration. Prefer gcap_set_recording_audio_device() for recording. */
-    typedef struct gcap_audio_capture_config_t
+    /** Audio monitoring configuration. This is independent from recording. */
+    typedef struct gcap_audio_monitor_config_t
     {
         const char *device_id;            /** Endpoint id from gcap_audio_enum_devices(). null/empty may mean default. */
         int sample_rate;                  /** Requested sample rate, commonly 48000. */
         int channels;                     /** Requested channels, commonly 1 or 2. */
-    } gcap_audio_capture_config_t;
+    } gcap_audio_monitor_config_t;
 
-    /** Start low-level WASAPI audio preview/capture from cfg->device_id to the default speaker. */
-    GCAP_API int gcap_start_audio_capture(
-        const gcap_audio_capture_config_t *cfg);
+    /** Start WASAPI audio monitoring from cfg->device_id to the default speaker. */
+    GCAP_API int gcap_start_audio_monitoring(
+        const gcap_audio_monitor_config_t *cfg);
 
     /**
      * Match a DirectShow audio input filter to a video capture device name and
@@ -87,12 +87,12 @@ extern "C"
      * out_source may be null; when supplied it receives the matched filter and
      * connected PCM format.
      */
-    GCAP_API int gcap_start_dshow_audio_preview(
+    GCAP_API int gcap_start_dshow_audio_monitoring(
         const char *video_device_name_utf8,
         gcap_audio_device_t *out_source);
 
-    /** Stop the active WASAPI or DirectShow audio preview. */
-    GCAP_API void gcap_stop_audio_capture(void);
+    /** Stop the active WASAPI or DirectShow audio monitoring session. */
+    GCAP_API void gcap_stop_audio_monitoring(void);
 
 #ifdef __cplusplus
 }
