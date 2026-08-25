@@ -123,7 +123,7 @@ namespace
     {
         return QStringLiteral("[GVFG][signal]\n"
                               "  input: connected=%1 channel=%2 width=%3 height=%4 format=%5 bit_depth=%6\n"
-                              "  runtime: fps=%7 frames=%8 lost=%9")
+                              "  runtime: fps=%7 frames=%8")
             .arg(signal.connected)
             .arg(signal.channel)
             .arg(signal.width)
@@ -131,23 +131,20 @@ namespace
             .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
             .arg(signal.bit_depth)
             .arg(rt.capture_fps > 0.0 ? QString::number(rt.capture_fps, 'f', 2) : QStringLiteral("--"))
-            .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)))
-            .arg(QString::number(static_cast<qulonglong>(rt.lost_frames)));
+            .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
     }
 
-    static QString formatGvfgStatusStateKey(const gvfg_runtime_info_t &rt, const gvfg_signal_status_t &signal)
+    static QString formatGvfgStatusStateKey(const gvfg_signal_status_t &signal)
     {
-        // FPS and delivered_frames change continuously and are displayed in
-        // the status bar. Keep them out of the log de-duplication key so the
-        // log records only signal/format changes and newly detected loss.
-        return QStringLiteral("%1|%2|%3|%4|%5|%6|%7")
+        // Runtime counters change continuously and are displayed in the status
+        // bar. Keep them out of the key so logs only record signal/format changes.
+        return QStringLiteral("%1|%2|%3|%4|%5|%6")
             .arg(signal.connected)
             .arg(signal.channel)
             .arg(signal.width)
             .arg(signal.height)
             .arg(signal.pixel_format)
-            .arg(signal.bit_depth)
-            .arg(rt.lost_frames);
+            .arg(signal.bit_depth);
     }
 #endif
 
@@ -595,7 +592,7 @@ void MainWindow::updateRuntimeStatusUi()
         {
             const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
             const gvfg_signal_status_t signal = gvfg_->signalStatus();
-            const QString rawStateKey = formatGvfgStatusStateKey(rt, signal);
+            const QString rawStateKey = formatGvfgStatusStateKey(signal);
             const bool waitingForFirstFrame = rt.delivered_frames == 0 &&
                                               !signal.connected &&
                                               signal.width == 0 &&
@@ -609,10 +606,9 @@ void MainWindow::updateRuntimeStatusUi()
             const QString transferMode = ui->checkZeroCopy && ui->checkZeroCopy->isChecked()
                                              ? QStringLiteral("Zero-copy")
                                              : QStringLiteral("Copy");
-            const QString sb = QStringLiteral("GVFG | %1 fps | frames=%2 | lost=%3 | %4")
+            const QString sb = QStringLiteral("GVFG | %1 fps | frames=%2 | %3")
                                    .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
                                    .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)))
-                                   .arg(QString::number(static_cast<qulonglong>(rt.lost_frames)))
                                    .arg(transferMode);
             if (lastRuntimeStatusText_ != sb)
             {

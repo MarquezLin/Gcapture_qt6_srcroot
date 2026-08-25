@@ -24,8 +24,6 @@ QString gvfgEventName(gvfg_event_type_t type)
         return QStringLiteral("STREAM_READY");
     case GVFG_EVENT_FORMAT_CHANGE_BEGIN:
         return QStringLiteral("FORMAT_CHANGE_BEGIN");
-    case GVFG_EVENT_FRAME_LOSS:
-        return QStringLiteral("FRAME_LOSS");
     default:
         return QStringLiteral("UNKNOWN");
     }
@@ -229,7 +227,7 @@ void GvfgSource::stop()
         previewHandle_ = nullptr;
     }
     if (handle_)
-        gvfg_stop(handle_);
+        gvfg_stop_channel(handle_, GVFG_CHANNEL_0);
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
         recordingWidth_ = 0;
@@ -444,10 +442,7 @@ void GvfgSource::pollEvents()
     while (gvfg_poll_channel_event(handle_, GVFG_CHANNEL_0, &event, 0) == GVFG_OK)
     {
         const auto type = static_cast<gvfg_event_type_t>(event.type);
-        if (type == GVFG_EVENT_FRAME_LOSS)
-            emit errorOccurred(QStringLiteral("GVFG frame loss: %1 frame(s)").arg(static_cast<qulonglong>(event.count)));
-        else
-            emit eventOccurred(QStringLiteral("GVFG event %1").arg(gvfgEventName(type)));
+        emit eventOccurred(QStringLiteral("GVFG event %1").arg(gvfgEventName(type)));
         if (type == GVFG_EVENT_SIGNAL_CONNECTED || type == GVFG_EVENT_SIGNAL_DISCONNECTED ||
             type == GVFG_EVENT_FORMAT_CHANGE_BEGIN || type == GVFG_EVENT_STREAM_READY)
         {
