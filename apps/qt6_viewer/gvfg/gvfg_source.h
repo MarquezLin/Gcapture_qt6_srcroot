@@ -47,7 +47,8 @@ public:
 
     bool open(int deviceIndex, bool zeroCopyEnabled);
     void close();
-    bool start(void *previewHwnd, int deviceIndex, int previewBitDepthMode, bool zeroCopyEnabled);
+    bool start(void *previewHwnd, int deviceIndex, int previewBitDepthMode,
+               bool zeroCopyEnabled, bool audioEnabled);
     bool setPreview(void *previewHwnd, int previewBitDepthMode);
     void stop();
     bool isOpen() const { return handle_ != nullptr; }
@@ -57,6 +58,8 @@ public:
     void clearPreview();
     void pollEvents();
     bool isRunning() const { return running_; }
+    bool audioEnabled() const { return audioEnabled_; }
+    gvfg_audio_format_t audioFormat() const { return audioFormat_; }
     bool startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error);
     void stopRecording();
     bool isRecording() const;
@@ -79,6 +82,7 @@ signals:
 
 private:
     void readLoop();
+    void audioReadLoop();
     void writeRecordingFrame(const gvfg_frame_t &frame);
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
     void recordingLoop();
@@ -91,7 +95,10 @@ private:
     gvfg_signal_status_t cachedSignal_{};
     gvfg_preview_handle previewHandle_ = nullptr;
     std::thread readThread_;
+    std::thread audioThread_;
     std::atomic_bool stopRequested_{false};
+    bool audioEnabled_ = false;
+    gvfg_audio_format_t audioFormat_{};
     mutable std::mutex recordingMutex_;
     std::mutex snapshotMutex_;
     std::condition_variable snapshotCv_;
@@ -133,8 +140,13 @@ private:
         int stride = 0;
         int64_t pts = 0;
     };
+    struct QueuedRecordingAudio
+    {
+        std::vector<uint8_t> data;
+    };
     std::condition_variable recordingCv_;
     std::deque<QueuedRecordingFrame> recordingQueue_;
+    std::deque<QueuedRecordingAudio> recordingAudioQueue_;
     std::thread recordingThread_;
 #endif
     bool running_ = false;

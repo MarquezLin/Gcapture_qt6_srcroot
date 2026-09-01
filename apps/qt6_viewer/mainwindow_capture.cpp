@@ -567,7 +567,9 @@ void MainWindow::onStart()
         currentProfile_.fps_den = 0;
 
         const bool zeroCopyEnabled = ui->checkZeroCopy && ui->checkZeroCopy->isChecked();
-        const bool started = gvfg_->start(hwnd, deviceIndex_, selectedPreviewBitDepthMode(), zeroCopyEnabled);
+        const bool audioEnabled = !ui->checkAudioMonitoring || ui->checkAudioMonitoring->isChecked();
+        const bool started = gvfg_->start(hwnd, deviceIndex_, selectedPreviewBitDepthMode(),
+                                          zeroCopyEnabled, audioEnabled);
         if (!started)
         {
             usingGvfg_ = false;
@@ -592,7 +594,24 @@ void MainWindow::onStart()
         MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 channel=%2; waiting for first frame")
                                 .arg(deviceIndex_)
                                 .arg(GVFG_CHANNEL_0));
-        startAudioMonitoring();
+        if (gvfg_->audioEnabled())
+        {
+            const gvfg_audio_format_t audio = gvfg_->audioFormat();
+            setAudioMonitoringStatus(QStringLiteral("Monitoring (GVFG Qt)"),
+                                     QStringLiteral("Default Qt audio output\n%1 Hz, %2 channels, %3-bit PCM\nA/V synchronization is not enabled.")
+                                         .arg(audio.sample_rate)
+                                         .arg(audio.channels)
+                                         .arg(audio.bits_per_sample));
+            MainWindow::postLog(QStringLiteral("[GVFG][Audio] Qt playback requested: %1 Hz, %2 ch, %3-bit PCM; A/V sync disabled")
+                                    .arg(audio.sample_rate)
+                                    .arg(audio.channels)
+                                    .arg(audio.bits_per_sample));
+        }
+        else
+        {
+            setAudioMonitoringStatus(QStringLiteral("Disabled"),
+                                     QStringLiteral("GVFG audio playback is disabled by the user."));
+        }
         updateRuntimeStatusUi();
         refreshCaptureInfoFromSdkAndRuntime(false);
         refreshDisplayInfoFromCurrentState();
@@ -815,7 +834,9 @@ void MainWindow::onRecord()
         ui->btnRecord->setText(QStringLiteral("Stop Rec"));
         recordStartTime_ = now;
         recordPath_ = fullPath;
-        recordEncoderName_ = QStringLiteral("FFmpeg H.264 / AVC Compatible");
+        recordEncoderName_ = gvfg_->audioEnabled()
+                                 ? QStringLiteral("FFmpeg H.264 + AAC")
+                                 : QStringLiteral("FFmpeg H.264 / AVC Compatible");
 
         if (ui->statusbar)
         {

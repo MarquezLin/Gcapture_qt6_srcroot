@@ -2,6 +2,12 @@
 
 #include <gvfg_debug.h>
 
+#include <QAudioDevice>
+#include <QAudioFormat>
+#include <QAudioSink>
+#include <QIODevice>
+#include <QMediaDevices>
+
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -149,7 +155,8 @@ void GvfgSource::close()
     cachedSignal_ = {};
 }
 
-bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMode, bool zeroCopyEnabled)
+bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMode,
+                       bool zeroCopyEnabled, bool audioEnabled)
 {
     stop();
     if (!open(deviceIndex, zeroCopyEnabled))
@@ -162,7 +169,42 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         return false;
     }
 
-    const gvfg_status_t st = gvfg_start_channel(handle_, GVFG_CHANNEL_0);
+    gvfg_status_t st = gvfg_set_channel_audio_enabled(
+        handle_, GVFG_CHANNEL_0, audioEnabled ? 1 : 0);
+    if (st != GVFG_OK)
+    {
+        emit errorOccurred(QStringLiteral("gvfg_set_channel_audio_enabled failed: %1")
+                               .arg(QString::fromUtf8(gvfg_strerror(st))));
+        setPreview(nullptr, previewBitDepthMode);
+        return false;
+    }
+
+    audioFormat_ = {};
+    if (audioEnabled)
+    {
+        st = gvfg_get_channel_audio_format(handle_, GVFG_CHANNEL_0, &audioFormat_);
+        if (st != GVFG_OK)
+        {
+            emit errorOccurred(QStringLiteral("gvfg_get_channel_audio_format failed: %1")
+                                   .arg(QString::fromUtf8(gvfg_strerror(st))));
+            setPreview(nullptr, previewBitDepthMode);
+            return false;
+        }
+        if (audioFormat_.sample_rate == 0 || audioFormat_.channels == 0 ||
+            (audioFormat_.bits_per_sample != 8 &&
+             audioFormat_.bits_per_sample != 16 &&
+             audioFormat_.bits_per_sample != 32))
+        {
+            emit errorOccurred(QStringLiteral("GVFG audio format is not supported by Qt playback: %1 Hz, %2 ch, %3-bit")
+                                   .arg(audioFormat_.sample_rate)
+                                   .arg(audioFormat_.channels)
+                                   .arg(audioFormat_.bits_per_sample));
+            setPreview(nullptr, previewBitDepthMode);
+            return false;
+        }
+    }
+
+    st = gvfg_start_channel(handle_, GVFG_CHANNEL_0);
     if (st != GVFG_OK)
     {
         emit errorOccurred(QStringLiteral("gvfg_start failed: %1").arg(QString::fromUtf8(gvfg_strerror(st))));
@@ -171,8 +213,11 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
     }
 
     running_ = true;
+    audioEnabled_ = audioEnabled;
     stopRequested_.store(false, std::memory_order_release);
     readThread_ = std::thread([this]() { readLoop(); });
+    if (audioEnabled_)
+        audioThread_ = std::thread([this]() { audioReadLoop(); });
     return true;
 }
 
@@ -220,6 +265,8 @@ void GvfgSource::stop()
     snapshotCv_.notify_all();
     if (readThread_.joinable())
         readThread_.join();
+    if (audioThread_.joinable())
+        audioThread_.join();
     stopRecording();
     if (previewHandle_)
     {
@@ -228,12 +275,123 @@ void GvfgSource::stop()
     }
     if (handle_)
         gvfg_stop_channel(handle_, GVFG_CHANNEL_0);
+    audioEnabled_ = false;
+    audioFormat_ = {};
     {
         std::lock_guard<std::mutex> lock(recordingMutex_);
         recordingWidth_ = 0;
         recordingHeight_ = 0;
         recordingPixelFormat_ = GVFG_PIXFMT_UNKNOWN;
     }
+}
+
+void GvfgSource::audioReadLoop()
+{
+    const gvfg_audio_format_t format = audioFormat_;
+    QAudioFormat outputFormat;
+    outputFormat.setSampleRate(static_cast<int>(format.sample_rate));
+    outputFormat.setChannelCount(static_cast<int>(format.channels));
+    switch (format.bits_per_sample)
+    {
+    case 8:
+        outputFormat.setSampleFormat(QAudioFormat::UInt8);
+        break;
+    case 16:
+        outputFormat.setSampleFormat(QAudioFormat::Int16);
+        break;
+    case 32:
+        outputFormat.setSampleFormat(QAudioFormat::Int32);
+        break;
+    default:
+        return;
+    }
+
+    const QAudioDevice outputDevice = QMediaDevices::defaultAudioOutput();
+    if (outputDevice.isNull() || !outputDevice.isFormatSupported(outputFormat))
+    {
+        emit errorOccurred(QStringLiteral("Default Qt audio output does not support GVFG PCM: %1 Hz, %2 ch, %3-bit")
+                               .arg(format.sample_rate)
+                               .arg(format.channels)
+                               .arg(format.bits_per_sample));
+        return;
+    }
+
+    QAudioSink audioSink(outputDevice, outputFormat);
+    QIODevice *audioOutput = audioSink.start();
+    if (!audioOutput)
+    {
+        emit errorOccurred(QStringLiteral("Qt audio output failed to start for GVFG PCM."));
+        return;
+    }
+
+    emit eventOccurred(QStringLiteral("Audio playback started via Qt: %1 Hz, %2 ch, %3-bit PCM")
+                           .arg(format.sample_rate)
+                           .arg(format.channels)
+                           .arg(format.bits_per_sample));
+
+    while (!stopRequested_.load(std::memory_order_acquire))
+    {
+        gvfg_audio_frame_t frame{};
+        const gvfg_status_t st = gvfg_read_channel_audio_frame(
+            handle_, GVFG_CHANNEL_0, &frame, 200);
+        if (st == GVFG_ETIMEOUT)
+            continue;
+        if (st != GVFG_OK)
+        {
+            if (!stopRequested_.load(std::memory_order_acquire))
+                emit errorOccurred(QStringLiteral("gvfg_read_channel_audio_frame failed: %1")
+                                       .arg(QString::fromUtf8(gvfg_strerror(st))));
+            break;
+        }
+
+#ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
+        {
+            std::lock_guard<std::mutex> lock(recordingMutex_);
+            if (recording_ && !recordingStopRequested_)
+            {
+                QueuedRecordingAudio queued;
+                const auto *begin = static_cast<const uint8_t *>(frame.data);
+                queued.data.assign(begin, begin + frame.data_size);
+                constexpr size_t kMaxQueuedAudioPackets = 64;
+                if (recordingAudioQueue_.size() >= kMaxQueuedAudioPackets)
+                    recordingAudioQueue_.pop_front();
+                recordingAudioQueue_.push_back(std::move(queued));
+                recordingCv_.notify_one();
+            }
+        }
+#endif
+
+        qint64 written = 0;
+        while (written < static_cast<qint64>(frame.data_size) &&
+               !stopRequested_.load(std::memory_order_acquire))
+        {
+            const qint64 result = audioOutput->write(
+                static_cast<const char *>(frame.data) + written,
+                static_cast<qint64>(frame.data_size) - written);
+            if (result < 0)
+            {
+                emit errorOccurred(QStringLiteral("Qt audio output write failed for GVFG PCM."));
+                gvfg_release_channel_audio_frame(handle_, GVFG_CHANNEL_0, &frame);
+                audioSink.stop();
+                return;
+            }
+            if (result == 0)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            written += result;
+        }
+        const gvfg_status_t releaseStatus =
+            gvfg_release_channel_audio_frame(handle_, GVFG_CHANNEL_0, &frame);
+        if (releaseStatus != GVFG_OK && !stopRequested_.load(std::memory_order_acquire))
+        {
+            emit errorOccurred(QStringLiteral("gvfg_release_channel_audio_frame failed: %1")
+                                   .arg(QString::fromUtf8(gvfg_strerror(releaseStatus))));
+            break;
+        }
+    }
+    audioSink.stop();
 }
 
 bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error)
@@ -315,6 +473,7 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         recordingHeight_ = height;
         recordingPixelFormat_ = pixelFormat;
         recordingQueue_.clear();
+        recordingAudioQueue_.clear();
     }
     recordingThread_ = std::thread([this]() { recordingLoop(); });
     return true;
@@ -339,6 +498,7 @@ void GvfgSource::stopRecording()
         recordingOpenPending_ = false;
         recordingStopRequested_ = false;
         recordingQueue_.clear();
+        recordingAudioQueue_.clear();
     }
 #endif
 }
@@ -703,6 +863,10 @@ void GvfgSource::recordingLoop()
     cfg.bitrate_kbps = config.bitrateKbps;
     cfg.input_format = GCAP_FMT_NV12;
     cfg.force_h264 = true;
+    cfg.audio_enabled = audioEnabled_;
+    cfg.audio_sample_rate = static_cast<int>(audioFormat_.sample_rate);
+    cfg.audio_channels = static_cast<int>(audioFormat_.channels);
+    cfg.audio_bits_per_sample = static_cast<int>(audioFormat_.bits_per_sample);
 
     FfmpegVideoRecorder recorder;
     std::string error;
@@ -714,6 +878,7 @@ void GvfgSource::recordingLoop()
             recordingOpenPending_ = false;
             recordingStopRequested_ = true;
             recordingQueue_.clear();
+            recordingAudioQueue_.clear();
         }
         emit errorOccurred(QStringLiteral("GVFG recording stopped: %1").arg(QString::fromStdString(error)));
         return;
@@ -726,20 +891,52 @@ void GvfgSource::recordingLoop()
     while (true)
     {
         QueuedRecordingFrame queued;
+        QueuedRecordingAudio queuedAudio;
+        bool haveVideo = false;
+        bool haveAudio = false;
         {
             std::unique_lock<std::mutex> lock(recordingMutex_);
             recordingCv_.wait(lock, [this]() {
-                return recordingStopRequested_ || !recordingQueue_.empty();
+                return recordingStopRequested_ || !recordingQueue_.empty() || !recordingAudioQueue_.empty();
             });
-            if (recordingQueue_.empty())
+            if (!recordingAudioQueue_.empty())
+            {
+                queuedAudio = std::move(recordingAudioQueue_.front());
+                recordingAudioQueue_.pop_front();
+                haveAudio = true;
+            }
+            if (!recordingQueue_.empty())
+            {
+                queued = std::move(recordingQueue_.front());
+                recordingQueue_.pop_front();
+                haveVideo = true;
+            }
+            if (!haveAudio && !haveVideo)
             {
                 if (recordingStopRequested_)
                     break;
                 continue;
             }
-            queued = std::move(recordingQueue_.front());
-            recordingQueue_.pop_front();
         }
+
+        if (haveAudio)
+        {
+            if (!recorder.writeAudio(queuedAudio.data.data(), queuedAudio.data.size(), &error))
+            {
+                {
+                    std::lock_guard<std::mutex> lock(recordingMutex_);
+                    recording_ = false;
+                    recordingStopRequested_ = true;
+                    recordingQueue_.clear();
+                    recordingAudioQueue_.clear();
+                }
+                emit errorOccurred(QStringLiteral("GVFG recording stopped: %1").arg(QString::fromStdString(error)));
+                break;
+            }
+        }
+
+        if (!haveVideo)
+            continue;
 
         FfmpegVideoFrameView view{};
         view.format = GCAP_FMT_NV12;
@@ -758,6 +955,7 @@ void GvfgSource::recordingLoop()
                 recording_ = false;
                 recordingStopRequested_ = true;
                 recordingQueue_.clear();
+                recordingAudioQueue_.clear();
             }
             emit errorOccurred(QStringLiteral("GVFG recording stopped: %1").arg(QString::fromStdString(error)));
             break;

@@ -254,6 +254,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(gvfg_, &GvfgSource::errorOccurred, this, [this](const QString &message)
             {
                 MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message), true);
+                if (message.contains(QStringLiteral("audio"), Qt::CaseInsensitive))
+                    setAudioMonitoringStatus(QStringLiteral("Playback Error"), message);
                 if (message.startsWith(QStringLiteral("GVFG recording stopped:")))
                 {
                     recording_ = false;
@@ -580,6 +582,8 @@ void MainWindow::updateRuntimeStatusUi()
         ui->checkZeroCopy->setVisible(false);
 #endif
     }
+    if (ui->checkAudioMonitoring)
+        ui->checkAudioMonitoring->setEnabled(!gvfgStreamActive);
 
     updateBrandDashboard();
 

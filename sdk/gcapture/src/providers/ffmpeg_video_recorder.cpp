@@ -9,8 +9,11 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
+#include <libavutil/audio_fifo.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
+#include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
 #endif
@@ -189,6 +192,17 @@ static void configureColorSpace(SwsContext *sws, AVPixelFormat srcFmt)
     sws_setColorspaceDetails(sws, coeff, srcRange, coeff, dstRange,
                              0, 1 << 16, 1 << 16);
 }
+
+static AVSampleFormat pcmSampleFormat(int bits)
+{
+    switch (bits)
+    {
+    case 8: return AV_SAMPLE_FMT_U8;
+    case 16: return AV_SAMPLE_FMT_S16;
+    case 32: return AV_SAMPLE_FMT_S32;
+    default: return AV_SAMPLE_FMT_NONE;
+    }
+}
 #endif
 }
 
@@ -200,6 +214,12 @@ struct FfmpegVideoRecorder::Impl
     AVStream *stream = nullptr;
     AVPacket *pkt = nullptr;
     SwsContext *sws = nullptr;
+    AVCodecContext *audioCodec = nullptr;
+    AVStream *audioStream = nullptr;
+    AVPacket *audioPkt = nullptr;
+    SwrContext *swr = nullptr;
+    AVAudioFifo *audioFifo = nullptr;
+    int64_t audioPts = 0;
 #endif
 };
 
@@ -339,6 +359,83 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     }
     impl_->stream->time_base = impl_->codec->time_base;
 
+    if (cfg.audio_enabled)
+    {
+        const AVSampleFormat inputFormat = pcmSampleFormat(cfg.audio_bits_per_sample);
+        if (cfg.audio_sample_rate <= 0 || cfg.audio_channels <= 0 || inputFormat == AV_SAMPLE_FMT_NONE)
+        {
+            setErr(error, "invalid PCM audio recorder config");
+            close();
+            return false;
+        }
+        const AVCodec *audioEncoder = avcodec_find_encoder(AV_CODEC_ID_AAC);
+        if (!audioEncoder)
+        {
+            setErr(error, "AAC encoder not found in FFmpeg build");
+            close();
+            return false;
+        }
+        impl_->audioStream = avformat_new_stream(impl_->fmt, nullptr);
+        impl_->audioCodec = avcodec_alloc_context3(audioEncoder);
+        if (!impl_->audioStream || !impl_->audioCodec)
+        {
+            setErr(error, "failed to allocate FFmpeg AAC stream");
+            close();
+            return false;
+        }
+        impl_->audioCodec->codec_type = AVMEDIA_TYPE_AUDIO;
+        impl_->audioCodec->codec_id = AV_CODEC_ID_AAC;
+        impl_->audioCodec->sample_rate = cfg.audio_sample_rate;
+        impl_->audioCodec->time_base = AVRational{1, cfg.audio_sample_rate};
+        impl_->audioCodec->bit_rate = static_cast<int64_t>(std::max(64, cfg.audio_bitrate_kbps)) * 1000;
+        impl_->audioCodec->sample_fmt = audioEncoder->sample_fmts
+                                           ? audioEncoder->sample_fmts[0]
+                                           : AV_SAMPLE_FMT_FLTP;
+        av_channel_layout_default(&impl_->audioCodec->ch_layout, cfg.audio_channels);
+        if (impl_->fmt->oformat->flags & AVFMT_GLOBALHEADER)
+            impl_->audioCodec->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+        ret = avcodec_open2(impl_->audioCodec, audioEncoder, nullptr);
+        if (ret < 0)
+        {
+            setErr(error, "avcodec_open2 failed for AAC: " + ffErr(ret));
+            close();
+            return false;
+        }
+        ret = avcodec_parameters_from_context(impl_->audioStream->codecpar, impl_->audioCodec);
+        if (ret < 0)
+        {
+            setErr(error, "AAC parameters failed: " + ffErr(ret));
+            close();
+            return false;
+        }
+        impl_->audioStream->time_base = impl_->audioCodec->time_base;
+
+        AVChannelLayout inputLayout{};
+        av_channel_layout_default(&inputLayout, cfg.audio_channels);
+        ret = swr_alloc_set_opts2(&impl_->swr,
+                                  &impl_->audioCodec->ch_layout, impl_->audioCodec->sample_fmt,
+                                  impl_->audioCodec->sample_rate,
+                                  &inputLayout, inputFormat, cfg.audio_sample_rate,
+                                  0, nullptr);
+        av_channel_layout_uninit(&inputLayout);
+        if (ret < 0 || !impl_->swr || (ret = swr_init(impl_->swr)) < 0)
+        {
+            setErr(error, "PCM to AAC resampler initialization failed: " + ffErr(ret));
+            close();
+            return false;
+        }
+        impl_->audioFifo = av_audio_fifo_alloc(impl_->audioCodec->sample_fmt,
+                                               cfg.audio_channels,
+                                               std::max(impl_->audioCodec->frame_size, 1024) * 4);
+        impl_->audioPkt = av_packet_alloc();
+        if (!impl_->audioFifo || !impl_->audioPkt)
+        {
+            setErr(error, "failed to allocate AAC audio buffers");
+            close();
+            return false;
+        }
+    }
+
     if (!(impl_->fmt->oformat->flags & AVFMT_NOFILE))
     {
         ret = avio_open(&impl_->fmt->pb, cfg.path.c_str(), AVIO_FLAG_WRITE);
@@ -367,6 +464,107 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     }
 
     opened_ = true;
+    return true;
+#endif
+}
+
+bool FfmpegVideoRecorder::writeAudio(const uint8_t *data, size_t bytes, std::string *error)
+{
+#ifndef GCAP_ENABLE_FFMPEG
+    (void)data;
+    (void)bytes;
+    if (error)
+        *error = "FFmpeg support is not enabled";
+    return false;
+#else
+    if (!opened_ || !cfg_.audio_enabled || !impl_->audioCodec || !impl_->audioFifo || !impl_->swr)
+    {
+        setErr(error, "FFmpeg audio recorder is not open");
+        return false;
+    }
+    const int bytesPerSample = cfg_.audio_bits_per_sample / 8;
+    const int blockAlign = bytesPerSample * cfg_.audio_channels;
+    if (!data || blockAlign <= 0 || bytes == 0 || (bytes % static_cast<size_t>(blockAlign)) != 0)
+    {
+        setErr(error, "invalid PCM packet for FFmpeg audio recorder");
+        return false;
+    }
+
+    const int inputSamples = static_cast<int>(bytes / static_cast<size_t>(blockAlign));
+    const int outputCapacity = swr_get_out_samples(impl_->swr, inputSamples);
+    uint8_t **converted = nullptr;
+    int convertedLinesize = 0;
+    int ret = av_samples_alloc_array_and_samples(&converted, &convertedLinesize,
+                                                 cfg_.audio_channels, outputCapacity,
+                                                 impl_->audioCodec->sample_fmt, 0);
+    if (ret < 0)
+    {
+        setErr(error, "AAC conversion buffer allocation failed: " + ffErr(ret));
+        return false;
+    }
+    const uint8_t *input[] = {data};
+    const int convertedSamples = swr_convert(impl_->swr, converted, outputCapacity,
+                                             input, inputSamples);
+    if (convertedSamples < 0 ||
+        av_audio_fifo_realloc(impl_->audioFifo,
+                              av_audio_fifo_size(impl_->audioFifo) + std::max(0, convertedSamples)) < 0 ||
+        (convertedSamples > 0 &&
+         av_audio_fifo_write(impl_->audioFifo, reinterpret_cast<void **>(converted), convertedSamples) != convertedSamples))
+    {
+        setErr(error, "PCM to AAC conversion failed");
+        av_freep(&converted[0]);
+        av_freep(&converted);
+        return false;
+    }
+    av_freep(&converted[0]);
+    av_freep(&converted);
+
+    const int frameSamples = impl_->audioCodec->frame_size > 0 ? impl_->audioCodec->frame_size : 1024;
+    while (av_audio_fifo_size(impl_->audioFifo) >= frameSamples)
+    {
+        AVFrame *frame = av_frame_alloc();
+        if (!frame)
+        {
+            setErr(error, "AAC frame allocation failed");
+            return false;
+        }
+        frame->nb_samples = frameSamples;
+        frame->format = impl_->audioCodec->sample_fmt;
+        frame->sample_rate = impl_->audioCodec->sample_rate;
+        av_channel_layout_copy(&frame->ch_layout, &impl_->audioCodec->ch_layout);
+        frame->pts = impl_->audioPts;
+        impl_->audioPts += frameSamples;
+        ret = av_frame_get_buffer(frame, 0);
+        if (ret >= 0)
+            ret = av_audio_fifo_read(impl_->audioFifo,
+                                     reinterpret_cast<void **>(frame->extended_data), frameSamples);
+        if (ret >= 0)
+            ret = avcodec_send_frame(impl_->audioCodec, frame);
+        av_frame_free(&frame);
+        if (ret < 0)
+        {
+            setErr(error, "AAC frame submission failed: " + ffErr(ret));
+            return false;
+        }
+        while ((ret = avcodec_receive_packet(impl_->audioCodec, impl_->audioPkt)) >= 0)
+        {
+            av_packet_rescale_ts(impl_->audioPkt, impl_->audioCodec->time_base,
+                                 impl_->audioStream->time_base);
+            impl_->audioPkt->stream_index = impl_->audioStream->index;
+            const int writeRet = av_interleaved_write_frame(impl_->fmt, impl_->audioPkt);
+            av_packet_unref(impl_->audioPkt);
+            if (writeRet < 0)
+            {
+                setErr(error, "AAC mux failed: " + ffErr(writeRet));
+                return false;
+            }
+        }
+        if (ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
+        {
+            setErr(error, "AAC packet encoding failed: " + ffErr(ret));
+            return false;
+        }
+    }
     return true;
 #endif
 }
@@ -496,6 +694,18 @@ void FfmpegVideoRecorder::close()
             av_interleaved_write_frame(impl_->fmt, impl_->pkt);
             av_packet_unref(impl_->pkt);
         }
+        if (impl_->audioCodec)
+        {
+            avcodec_send_frame(impl_->audioCodec, nullptr);
+            while (avcodec_receive_packet(impl_->audioCodec, impl_->audioPkt) >= 0)
+            {
+                av_packet_rescale_ts(impl_->audioPkt, impl_->audioCodec->time_base,
+                                     impl_->audioStream->time_base);
+                impl_->audioPkt->stream_index = impl_->audioStream->index;
+                av_interleaved_write_frame(impl_->fmt, impl_->audioPkt);
+                av_packet_unref(impl_->audioPkt);
+            }
+        }
         av_write_trailer(impl_->fmt);
     }
     if (impl_)
@@ -507,6 +717,17 @@ void FfmpegVideoRecorder::close()
         }
         if (impl_->pkt)
             av_packet_free(&impl_->pkt);
+        if (impl_->audioPkt)
+            av_packet_free(&impl_->audioPkt);
+        if (impl_->audioFifo)
+        {
+            av_audio_fifo_free(impl_->audioFifo);
+            impl_->audioFifo = nullptr;
+        }
+        if (impl_->swr)
+            swr_free(&impl_->swr);
+        if (impl_->audioCodec)
+            avcodec_free_context(&impl_->audioCodec);
         if (impl_->codec)
             avcodec_free_context(&impl_->codec);
         if (impl_->fmt)
@@ -517,6 +738,8 @@ void FfmpegVideoRecorder::close()
             impl_->fmt = nullptr;
         }
         impl_->stream = nullptr;
+        impl_->audioStream = nullptr;
+        impl_->audioPts = 0;
     }
 #endif
     opened_ = false;

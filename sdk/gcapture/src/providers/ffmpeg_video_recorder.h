@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -48,6 +49,11 @@ struct FfmpegVideoRecordConfig
     // Intel Quick Sync, then Media Foundation, then an LGPL software encoder.
     bool force_hevc_main10 = false;
     bool force_h264 = false;
+    bool audio_enabled = false;
+    int audio_sample_rate = 0;
+    int audio_channels = 0;
+    int audio_bits_per_sample = 0;
+    int audio_bitrate_kbps = 192;
 };
 
 struct FfmpegVideoFrameView
@@ -68,6 +74,7 @@ public:
 
     bool open(const FfmpegVideoRecordConfig &cfg, std::string *error = nullptr);
     bool writeFrame(const FfmpegVideoFrameView &frame, std::string *error = nullptr);
+    bool writeAudio(const uint8_t *data, size_t bytes, std::string *error = nullptr);
     void close();
     bool isOpen() const { return opened_; }
 
