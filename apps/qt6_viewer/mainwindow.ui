@@ -427,6 +427,9 @@ QPushButton#btnStop:pressed {
              <property name="text">
               <string>Zero-copy</string>
              </property>
+             <property name="checked">
+              <bool>true</bool>
+             </property>
             </widget>
            </item>
            <item row="5" column="0">
