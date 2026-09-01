@@ -106,10 +106,10 @@ bool GvfgSource::open(int deviceIndex, bool zeroCopyEnabled)
         return false;
     }
 
-    st = gvfg_set_zero_copy_enabled(handle_, zeroCopyEnabled ? 1 : 0);
+    st = gvfg_set_channel_zero_copy_enabled(handle_, GVFG_CHANNEL_0, zeroCopyEnabled ? 1 : 0);
     if (st != GVFG_OK)
     {
-        emit errorOccurred(QStringLiteral("gvfg_set_zero_copy_enabled failed: %1")
+        emit errorOccurred(QStringLiteral("gvfg_set_channel_zero_copy_enabled failed: %1")
                                .arg(QString::fromUtf8(gvfg_strerror(st))));
         close();
         return false;
