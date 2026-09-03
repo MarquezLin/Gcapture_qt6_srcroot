@@ -187,11 +187,16 @@ void MainWindow::stopRecordingSession(bool showSummary)
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     if (usingGvfg_ && gvfg_)
     {
-        const uint64_t framesWritten = gvfg_->recordingFrames();
         const gvfg_signal_status_t signal = gvfg_->signalStatus();
         gvfg_->stopRecording();
+        const uint64_t framesWritten = gvfg_->recordingFrames();
+        const uint64_t framesDropped = gvfg_->recordingDroppedFrames();
         recording_ = false;
         ui->btnRecord->setText(QStringLiteral("Record"));
+        MainWindow::postLog(QStringLiteral("[GVFG][record] stopped frames_written=%1 frames_dropped=%2")
+                                .arg(static_cast<qulonglong>(framesWritten))
+                                .arg(static_cast<qulonglong>(framesDropped)),
+                            framesDropped > 0);
 
         if (showSummary && !recordPath_.isEmpty() && recordStartTime_.isValid())
         {
@@ -203,9 +208,11 @@ void MainWindow::stopRecordingSession(bool showSummary)
                                          "No frames were written.\n"
                                          "file:%1\n"
                                          "frames written:%2\n"
+                                         "recording frames dropped:%3\n"
                                          "The recording was stopped before the GVFG recorder wrote its first frame.")
                                          .arg(recordPath_)
-                                         .arg(QString::number(static_cast<qulonglong>(framesWritten)));
+                                         .arg(QString::number(static_cast<qulonglong>(framesWritten)))
+                                         .arg(QString::number(static_cast<qulonglong>(framesDropped)));
                 QMessageBox::warning(this, QStringLiteral("Record"), info);
 
                 if (ui->statusbar)
@@ -233,7 +240,8 @@ void MainWindow::stopRecordingSession(bool showSummary)
                                      "record mode:%6\n"
                                      "encoder:%7\n"
                                      "frames written:%8\n"
-                                     "file avg bit rate:%9 kbps")
+                                     "recording frames dropped:%9\n"
+                                     "file avg bit rate:%10 kbps")
                                      .arg(recordPath_)
                                      .arg(QString::number(sizeBytes / (1024.0 * 1024.0), 'f', 2))
                                      .arg(srcW)
@@ -242,14 +250,16 @@ void MainWindow::stopRecordingSession(bool showSummary)
                                      .arg(QStringLiteral("GVFG + FFmpeg MP4"))
                                      .arg(recordEncoderName_.isEmpty() ? QStringLiteral("FFmpeg") : recordEncoderName_)
                                      .arg(QString::number(static_cast<qulonglong>(framesWritten)))
+                                     .arg(QString::number(static_cast<qulonglong>(framesDropped)))
                                      .arg(QString::number(bitrateKbps, 'f', 1));
             QMessageBox::information(this, QStringLiteral("Record"), info);
 
             if (ui->statusbar)
             {
-                ui->statusbar->showMessage(QStringLiteral("Record done: GVFG + FFmpeg MP4 | file:%1 | avg %2 kbps")
+                ui->statusbar->showMessage(QStringLiteral("Record done: GVFG + FFmpeg MP4 | file:%1 | avg %2 kbps | dropped:%3")
                                                .arg(fi.fileName())
-                                               .arg(QString::number(bitrateKbps, 'f', 1)));
+                                               .arg(QString::number(bitrateKbps, 'f', 1))
+                                               .arg(static_cast<qulonglong>(framesDropped)));
             }
         }
         return;

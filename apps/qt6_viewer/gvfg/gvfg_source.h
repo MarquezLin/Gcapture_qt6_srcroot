@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -60,10 +61,12 @@ public:
     bool isRunning() const { return running_; }
     bool audioEnabled() const { return audioEnabled_; }
     gvfg_audio_format_t audioFormat() const { return audioFormat_; }
+    void setAudioVolume(float volume);
     bool startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error);
     void stopRecording();
     bool isRecording() const;
     uint64_t recordingFrames() const;
+    uint64_t recordingDroppedFrames() const;
     QImage captureSnapshot(int timeoutMs, QString *error);
     Snapshot captureSnapshotData(int timeoutMs, QString *error);
 
@@ -83,6 +86,7 @@ signals:
 private:
     void readLoop();
     void audioReadLoop();
+    void audioPlaybackLoop();
     void writeRecordingFrame(const gvfg_frame_t &frame);
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
     void recordingLoop();
@@ -96,7 +100,12 @@ private:
     gvfg_preview_handle previewHandle_ = nullptr;
     std::thread readThread_;
     std::thread audioThread_;
+    std::thread audioPlaybackThread_;
+    std::mutex audioPlaybackMutex_;
+    std::condition_variable audioPlaybackCv_;
+    std::deque<std::vector<uint8_t>> audioPlaybackQueue_;
     std::atomic_bool stopRequested_{false};
+    std::atomic<float> audioVolume_{1.0f};
     bool audioEnabled_ = false;
     gvfg_audio_format_t audioFormat_{};
     mutable std::mutex recordingMutex_;
@@ -130,14 +139,20 @@ private:
 
     bool recordingOpenPending_ = false;
     bool recordingStopRequested_ = false;
+    bool recordingCopyInProgress_ = false;
+    QString recordingStartError_;
     uint64_t recordingFirstFrameId_ = 0;
     RecordingConfig recordingConfig_;
-    struct QueuedRecordingFrame
+    static constexpr size_t kRecordingSlotCount = 4;
+    struct RecordingSlot
     {
-        std::vector<uint8_t> data;
+        std::vector<uint8_t> rawData;
         int width = 0;
         int height = 0;
-        int stride = 0;
+        int rowStrideBytes = 0;
+        int pixelFormat = GVFG_PIXFMT_UNKNOWN;
+        int bitDepth = 0;
+        uint64_t frameId = 0;
         int64_t pts = 0;
     };
     struct QueuedRecordingAudio
@@ -145,7 +160,10 @@ private:
         std::vector<uint8_t> data;
     };
     std::condition_variable recordingCv_;
-    std::deque<QueuedRecordingFrame> recordingQueue_;
+    std::vector<RecordingSlot> recordingSlots_;
+    std::vector<size_t> freeRecordingSlots_;
+    std::vector<size_t> pendingRecordingSlots_;
+    std::vector<uint8_t> recordingNv12Buffer_;
     std::deque<QueuedRecordingAudio> recordingAudioQueue_;
     std::thread recordingThread_;
 #endif

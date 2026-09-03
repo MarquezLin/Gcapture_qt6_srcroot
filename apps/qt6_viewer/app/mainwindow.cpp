@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QSlider>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QWindow>
@@ -584,6 +585,14 @@ void MainWindow::updateRuntimeStatusUi()
     }
     if (ui->checkAudioMonitoring)
         ui->checkAudioMonitoring->setEnabled(!gvfgStreamActive);
+    if (ui->labelGvfgVolume)
+        ui->labelGvfgVolume->setVisible(gvfgSelected);
+    if (ui->sliderGvfgVolume)
+    {
+        ui->sliderGvfgVolume->setVisible(gvfgSelected);
+        ui->sliderGvfgVolume->setEnabled(gvfgSelected && ui->checkAudioMonitoring &&
+                                         ui->checkAudioMonitoring->isChecked());
+    }
 
     updateBrandDashboard();
 
@@ -854,7 +863,7 @@ void MainWindow::setPreviewFullscreen(bool enabled)
 void MainWindow::setupRuntimeStatusTimer()
 {
     runtimeStatusTimer_ = new QTimer(this);
-    runtimeStatusTimer_->setInterval(500);
+    runtimeStatusTimer_->setInterval(200);
     connect(runtimeStatusTimer_, &QTimer::timeout, this, [this]()
             {
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
@@ -971,6 +980,10 @@ void MainWindow::setupBackendControls()
     ui->comboBackend->setCurrentIndex(dsIndex >= 0 ? dsIndex : 0);
     if (ui->checkZeroCopy)
         ui->checkZeroCopy->setVisible(false);
+    if (ui->labelGvfgVolume)
+        ui->labelGvfgVolume->setVisible(false);
+    if (ui->sliderGvfgVolume)
+        ui->sliderGvfgVolume->setVisible(false);
 
     refreshPixelFormatOptions(false);
 }
@@ -1313,6 +1326,16 @@ void MainWindow::setupConnections()
     }
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (ui->sliderGvfgVolume && gvfg_)
+    {
+        gvfg_->setAudioVolume(static_cast<float>(ui->sliderGvfgVolume->value()) / 100.0f);
+        connect(ui->sliderGvfgVolume, &QSlider::valueChanged, this, [this](int value)
+                {
+                    if (gvfg_)
+                        gvfg_->setAudioVolume(static_cast<float>(value) / 100.0f);
+                });
+    }
+
     if (ui->checkZeroCopy)
         connect(ui->checkZeroCopy, &QCheckBox::toggled, this, [this](bool)
                 {
@@ -1339,6 +1362,11 @@ void MainWindow::setupConnections()
     {
         connect(ui->checkAudioMonitoring, &QCheckBox::toggled, this, [this](bool enabled)
                 {
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+                    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
+                    if (ui->sliderGvfgVolume)
+                        ui->sliderGvfgVolume->setEnabled(backend == kQtViewerGvfgBackend && enabled);
+#endif
                     const bool captureRunning = h_
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
                                                 || usingGvfg_

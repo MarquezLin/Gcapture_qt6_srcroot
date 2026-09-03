@@ -452,6 +452,29 @@ QPushButton#btnStop:pressed {
              </property>
             </widget>
            </item>
+           <item row="6" column="0">
+            <widget class="QLabel" name="labelGvfgVolume">
+             <property name="text">
+              <string>Volume</string>
+             </property>
+            </widget>
+           </item>
+           <item row="6" column="1">
+            <widget class="QSlider" name="sliderGvfgVolume">
+             <property name="toolTip">
+              <string>GVFG Qt playback volume. This does not change captured or recorded PCM audio.</string>
+             </property>
+             <property name="maximum">
+              <number>100</number>
+             </property>
+             <property name="value">
+              <number>100</number>
+             </property>
+             <property name="orientation">
+              <enum>Qt::Orientation::Horizontal</enum>
+             </property>
+            </widget>
+           </item>
           </layout>
          </item>
          <item>

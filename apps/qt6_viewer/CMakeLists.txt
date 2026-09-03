@@ -10,32 +10,32 @@ find_package(QT NAMES Qt6 REQUIRED COMPONENTS Widgets Multimedia)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Multimedia)
 
 set(VIEWER_SOURCES
-  main.cpp
-  mainwindow.cpp
-  mainwindow_capture.cpp
-  mainwindow_info.cpp
-  mainwindow_frame.cpp
-  mainwindow.h
-  mainwindow.ui
-  inputinfodialog.h
-  inputinfodialog.cpp
-  inputinfodialog.ui
-  displayinfodialog.h
-  displayinfodialog.cpp
-  displayinfodialog.ui
-  procamp.h
-  procamp.cpp
-  procamp.ui
+  app/main.cpp
+  app/mainwindow.cpp
+  app/mainwindow_capture.cpp
+  app/mainwindow_info.cpp
+  app/mainwindow_frame.cpp
+  app/mainwindow.h
+  app/mainwindow.ui
+  dialogs/inputinfo/inputinfodialog.h
+  dialogs/inputinfo/inputinfodialog.cpp
+  dialogs/inputinfo/inputinfodialog.ui
+  dialogs/displayinfo/displayinfodialog.h
+  dialogs/displayinfo/displayinfodialog.cpp
+  dialogs/displayinfo/displayinfodialog.ui
+  dialogs/procamp/procamp.h
+  dialogs/procamp/procamp.cpp
+  dialogs/procamp/procamp.ui
   info/display_output_info.h
   info/display_output_info.cpp
   info/capture_device_info.h
   info/capture_device_info.cpp
-  rawframe.h
-  rawframe.cpp
-  rawpreviewwidget.h
-  rawpreviewwidget.cpp
-  rawinspectordialog.h
-  rawinspectordialog.cpp
+  raw/rawframe.h
+  raw/rawframe.cpp
+  raw/rawpreviewwidget.h
+  raw/rawpreviewwidget.cpp
+  raw/rawinspectordialog.h
+  raw/rawinspectordialog.cpp
 )
 
 set(VIEWER_DESIGN_ASSETS
@@ -56,9 +56,9 @@ if (WIN32)
   list(APPEND VIEWER_SOURCES
     gvfg/gvfg_source.h
     gvfg/gvfg_source.cpp
-    registerdialog.h
-    registerdialog.cpp
-    registerdialog.ui
+    dialogs/register/registerdialog.h
+    dialogs/register/registerdialog.cpp
+    dialogs/register/registerdialog.ui
   )
   set(QT6_VIEWER_GVFG_RECORDING_SOURCE "${CMAKE_SOURCE_DIR}/sdk/gcapture/src/providers/ffmpeg_video_recorder.cpp")
   if (EXISTS "${QT6_VIEWER_GVFG_RECORDING_SOURCE}")
@@ -72,7 +72,9 @@ if (QT_VERSION_MAJOR GREATER_EQUAL 6)
   qt_add_executable(qt6_viewer MANUAL_FINALIZATION ${VIEWER_SOURCES}
     resources.qrc
     app.rc
-    previewwindow.h previewwindow.cpp previewwindow.ui
+    preview/previewwindow.h
+    preview/previewwindow.cpp
+    preview/previewwindow.ui
   )
 else()
   add_executable(qt6_viewer ${VIEWER_SOURCES})
@@ -90,7 +92,14 @@ endif()
 # - gdisplay public headers (display_info.h, edid_reader.h)
 target_include_directories(qt6_viewer PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/app
+  ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/displayinfo
+  ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/inputinfo
+  ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/procamp
+  ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/register
   ${CMAKE_CURRENT_SOURCE_DIR}/info
+  ${CMAKE_CURRENT_SOURCE_DIR}/preview
+  ${CMAKE_CURRENT_SOURCE_DIR}/raw
   ${CMAKE_SOURCE_DIR}/sdk/gcapture/include
 )
 
