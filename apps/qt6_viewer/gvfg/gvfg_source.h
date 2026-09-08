@@ -96,6 +96,8 @@ private:
     int openedDeviceIndex_ = -1;
     bool zeroCopyEnabled_ = false;
     mutable std::mutex signalMutex_;
+    std::condition_variable signalCv_;
+    std::atomic_bool signalConnected_{false};
     gvfg_signal_status_t cachedSignal_{};
     gvfg_preview_handle previewHandle_ = nullptr;
     std::thread readThread_;

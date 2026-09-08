@@ -218,6 +218,7 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
 
     running_ = true;
     audioEnabled_ = audioEnabled;
+    signalConnected_.store(true, std::memory_order_release);
     stopRequested_.store(false, std::memory_order_release);
     {
         std::lock_guard<std::mutex> lock(audioPlaybackMutex_);
@@ -278,6 +279,7 @@ void GvfgSource::stop()
 {
     running_ = false;
     stopRequested_.store(true, std::memory_order_release);
+    signalCv_.notify_all();
     snapshotCv_.notify_all();
     audioPlaybackCv_.notify_all();
     if (readThread_.joinable())
@@ -313,6 +315,16 @@ void GvfgSource::audioReadLoop()
 {
     while (!stopRequested_.load(std::memory_order_acquire))
     {
+        {
+            std::unique_lock<std::mutex> lock(signalMutex_);
+            signalCv_.wait(lock, [this]() {
+                return stopRequested_.load(std::memory_order_acquire) ||
+                       signalConnected_.load(std::memory_order_acquire);
+            });
+        }
+        if (stopRequested_.load(std::memory_order_acquire))
+            break;
+
         gvfg_audio_frame_t frame{};
         const gvfg_status_t st = gvfg_read_channel_audio_frame(
             handle_, GVFG_CHANNEL_0, &frame, 200);
@@ -777,6 +789,13 @@ void GvfgSource::pollEvents()
                     emit signalStatusChanged(status.connected != 0);
             }
         }
+        if (type == GVFG_EVENT_SIGNAL_DISCONNECTED)
+            signalConnected_.store(false, std::memory_order_release);
+        else if (type == GVFG_EVENT_SIGNAL_CONNECTED || type == GVFG_EVENT_STREAM_READY)
+        {
+            signalConnected_.store(true, std::memory_order_release);
+            signalCv_.notify_all();
+        }
         event = {};
         event.struct_size = sizeof(event);
     }
@@ -824,6 +843,16 @@ void GvfgSource::readLoop()
 {
     while (!stopRequested_.load(std::memory_order_acquire))
     {
+        {
+            std::unique_lock<std::mutex> lock(signalMutex_);
+            signalCv_.wait(lock, [this]() {
+                return stopRequested_.load(std::memory_order_acquire) ||
+                       signalConnected_.load(std::memory_order_acquire);
+            });
+        }
+        if (stopRequested_.load(std::memory_order_acquire))
+            break;
+
         gvfg_frame_t frame{};
         const gvfg_status_t st = handle_ ? gvfg_read_channel_frame(handle_, GVFG_CHANNEL_0, &frame, 200) : GVFG_ESTATE;
         if (st == GVFG_OK)
