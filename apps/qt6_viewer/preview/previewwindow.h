@@ -31,7 +31,11 @@ public:
 
     void *previewHwnd() const;
 
+signals:
+    void doubleClicked();
+
 protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 

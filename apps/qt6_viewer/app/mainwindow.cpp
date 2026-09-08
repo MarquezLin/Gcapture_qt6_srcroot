@@ -794,6 +794,10 @@ void MainWindow::setupPreviewWindow()
 
     previewWindow_ = new previewwindow(ui->previewPanel);
     previewWindow_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    connect(previewWindow_, &previewwindow::doubleClicked, this, [this]() {
+        if (previewFullscreen_)
+            setPreviewFullscreen(false);
+    });
     ui->previewArt->hide();
     ui->previewContainerLayout->addWidget(previewWindow_);
     previewWindow_->show();

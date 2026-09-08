@@ -220,6 +220,7 @@ struct FfmpegVideoRecorder::Impl
     SwrContext *swr = nullptr;
     AVAudioFifo *audioFifo = nullptr;
     int64_t audioPts = 0;
+    bool audioTimelineInitialized = false;
 #endif
 };
 
@@ -468,11 +469,13 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
 #endif
 }
 
-bool FfmpegVideoRecorder::writeAudio(const uint8_t *data, size_t bytes, std::string *error)
+bool FfmpegVideoRecorder::writeAudio(const uint8_t *data, size_t bytes,
+                                     int64_t timelinePtsNs, std::string *error)
 {
 #ifndef GCAP_ENABLE_FFMPEG
     (void)data;
     (void)bytes;
+    (void)timelinePtsNs;
     if (error)
         *error = "FFmpeg support is not enabled";
     return false;
@@ -491,6 +494,35 @@ bool FfmpegVideoRecorder::writeAudio(const uint8_t *data, size_t bytes, std::str
     }
 
     const int inputSamples = static_cast<int>(bytes / static_cast<size_t>(blockAlign));
+    if (timelinePtsNs >= 0)
+    {
+        const int sampleRate = impl_->audioCodec->sample_rate;
+        const int64_t desiredPts = av_rescale_q(
+            timelinePtsNs, AVRational{1, 1'000'000'000}, AVRational{1, sampleRate});
+        if (!impl_->audioTimelineInitialized)
+        {
+            impl_->audioPts = desiredPts;
+            impl_->audioTimelineInitialized = true;
+        }
+        else
+        {
+            const int64_t queuedSamples = av_audio_fifo_size(impl_->audioFifo);
+            const int64_t resamplerDelay = swr_get_delay(impl_->swr, sampleRate);
+            const int64_t predictedPts = impl_->audioPts + queuedSamples + resamplerDelay;
+            const int64_t driftSamples = desiredPts - predictedPts;
+            const int64_t correctionLimit = std::max<int64_t>(1, sampleRate / 200); // 5 ms
+            if (driftSamples > correctionLimit || driftSamples < -correctionLimit)
+            {
+                const int correction = static_cast<int>(
+                    std::clamp<int64_t>(driftSamples, -correctionLimit, correctionLimit));
+                if (swr_set_compensation(impl_->swr, correction, sampleRate) < 0)
+                {
+                    setErr(error, "failed to apply audio timestamp drift compensation");
+                    return false;
+                }
+            }
+        }
+    }
     const int outputCapacity = swr_get_out_samples(impl_->swr, inputSamples);
     uint8_t **converted = nullptr;
     int convertedLinesize = 0;
@@ -740,6 +772,7 @@ void FfmpegVideoRecorder::close()
         impl_->stream = nullptr;
         impl_->audioStream = nullptr;
         impl_->audioPts = 0;
+        impl_->audioTimelineInitialized = false;
     }
 #endif
     opened_ = false;

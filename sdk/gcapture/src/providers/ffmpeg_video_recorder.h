@@ -74,7 +74,8 @@ public:
 
     bool open(const FfmpegVideoRecordConfig &cfg, std::string *error = nullptr);
     bool writeFrame(const FfmpegVideoFrameView &frame, std::string *error = nullptr);
-    bool writeAudio(const uint8_t *data, size_t bytes, std::string *error = nullptr);
+    bool writeAudio(const uint8_t *data, size_t bytes, int64_t timeline_pts_ns = -1,
+                    std::string *error = nullptr);
     void close();
     bool isOpen() const { return opened_; }
 

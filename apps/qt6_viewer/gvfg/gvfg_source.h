@@ -105,7 +105,14 @@ private:
     std::thread audioPlaybackThread_;
     std::mutex audioPlaybackMutex_;
     std::condition_variable audioPlaybackCv_;
-    std::deque<std::vector<uint8_t>> audioPlaybackQueue_;
+    struct PlaybackAudioPacket
+    {
+        std::vector<uint8_t> pcm;
+        uint64_t timestampNs = 0;
+    };
+    std::deque<PlaybackAudioPacket> audioPlaybackQueue_;
+    std::atomic<uint64_t> latestVideoTimestampNs_{0};
+    std::atomic<uint64_t> avSyncEpoch_{0};
     std::atomic_bool stopRequested_{false};
     std::atomic<float> audioVolume_{1.0f};
     bool audioEnabled_ = false;
@@ -143,7 +150,8 @@ private:
     bool recordingStopRequested_ = false;
     bool recordingCopyInProgress_ = false;
     QString recordingStartError_;
-    uint64_t recordingFirstFrameId_ = 0;
+    uint64_t recordingTimelineOriginNs_ = 0;
+    int64_t recordingLastVideoPts_ = -1;
     RecordingConfig recordingConfig_;
     static constexpr size_t kRecordingSlotCount = 4;
     struct RecordingSlot
@@ -160,6 +168,7 @@ private:
     struct QueuedRecordingAudio
     {
         std::vector<uint8_t> data;
+        uint64_t timestampNs = 0;
     };
     std::condition_variable recordingCv_;
     std::vector<RecordingSlot> recordingSlots_;

@@ -47,6 +47,22 @@ QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS
 - GVFG snapshot：PNG/TIFF，以及原生 `_source_yuy2.raw` 或 `_source_y210.raw`。
 - GPU conversion 與 FFmpeg 錄影整合。
 
+#### GVFG A/V timestamp 與同步
+
+GVFG SDK `0.2.0` 起，video 與 audio frame 的 `timestamp_ns` 使用同一個
+monotonic SDK delivery clock。`qt6_viewer` 的即時監聽與錄影都使用這組時間：
+
+- Preview 以首次 video/audio delivery offset 為基準；audio 超前時短暫等待，
+  明顯落後時只丟棄 monitoring packet。此規則不影響 recording queue。
+- Recording video PTS 由 `timestamp_ns` 換算成 encoder time base，並維持單調遞增。
+- Recording audio PTS 維持 PCM sample continuity；audio `timestamp_ns` 只用來量測
+  相對 drift，超過約 5 ms 時由 `libswresample` 在約 1 秒內漸進補償。
+- Signal disconnect、format change 或 audio playback recovery 會重設 Preview 的同步
+  基準；錄影遇到輸入格式變更仍依原有流程停止。
+
+這是 software delivery timestamp，不是 driver／hardware capture timestamp。它能修正
+Application delivery 與 audio sample clock 的長期漂移，但不代表硬體層精準同步。
+
 ### `QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS`
 
 會把 register dialog 編入程式，但預設仍隱藏。必須加啟動參數才會顯示：

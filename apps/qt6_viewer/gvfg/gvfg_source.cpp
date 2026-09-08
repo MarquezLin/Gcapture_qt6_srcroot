@@ -21,6 +21,12 @@
 namespace
 {
 constexpr size_t kMaxQueuedPlaybackAudioPackets = 10;
+// Delivery timestamps are not hardware capture timestamps. Keep the correction
+// deliberately small: hold leading monitor audio, or discard audio that has
+// already fallen far enough behind that playing it would increase lip-sync lag.
+constexpr int64_t kAvSyncLeadLimitNs = 40'000'000;
+constexpr int64_t kAvSyncLagDropNs = 80'000'000;
+constexpr auto kAvSyncMaxHold = std::chrono::milliseconds(100);
 
 QString gvfgEventName(gvfg_event_type_t type)
 {
@@ -218,6 +224,8 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
 
     running_ = true;
     audioEnabled_ = audioEnabled;
+    latestVideoTimestampNs_.store(0, std::memory_order_release);
+    avSyncEpoch_.fetch_add(1, std::memory_order_acq_rel);
     signalConnected_.store(true, std::memory_order_release);
     stopRequested_.store(false, std::memory_order_release);
     {
@@ -358,6 +366,7 @@ void GvfgSource::audioReadLoop()
             {
                 QueuedRecordingAudio queued;
                 queued.data = pcm;
+                queued.timestampNs = frame.timestamp_ns;
                 constexpr size_t kMaxQueuedAudioPackets = 64;
                 if (recordingAudioQueue_.size() >= kMaxQueuedAudioPackets)
                     recordingAudioQueue_.pop_front();
@@ -371,7 +380,7 @@ void GvfgSource::audioReadLoop()
             std::lock_guard<std::mutex> lock(audioPlaybackMutex_);
             if (audioPlaybackQueue_.size() >= kMaxQueuedPlaybackAudioPackets)
                 audioPlaybackQueue_.pop_front();
-            audioPlaybackQueue_.push_back(std::move(pcm));
+            audioPlaybackQueue_.push_back({std::move(pcm), frame.timestamp_ns});
         }
         audioPlaybackCv_.notify_one();
     }
@@ -400,6 +409,9 @@ void GvfgSource::audioPlaybackLoop()
     }
 
     bool recovering = false;
+    bool syncBaseValid = false;
+    int64_t syncBaseOffsetNs = 0;
+    uint64_t observedSyncEpoch = avSyncEpoch_.load(std::memory_order_acquire);
     while (!stopRequested_.load(std::memory_order_acquire))
     {
         const QAudioDevice outputDevice = QMediaDevices::defaultAudioOutput();
@@ -437,6 +449,11 @@ void GvfgSource::audioPlaybackLoop()
             ? QStringLiteral("Audio monitoring playback recovered.")
             : QStringLiteral("Audio playback started via Qt: %1 Hz, %2 ch, %3-bit PCM")
                   .arg(format.sample_rate).arg(format.channels).arg(format.bits_per_sample));
+        if (recovering)
+        {
+            observedSyncEpoch = avSyncEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
+            syncBaseValid = false;
+        }
         recovering = false;
         bool restartPlayback = false;
         while (!stopRequested_.load(std::memory_order_acquire) && !restartPlayback)
@@ -448,7 +465,7 @@ void GvfgSource::audioPlaybackLoop()
                 appliedVolume = requestedVolume;
             }
 
-            std::vector<uint8_t> pcm;
+            PlaybackAudioPacket packet;
             {
                 std::unique_lock<std::mutex> lock(audioPlaybackMutex_);
                 audioPlaybackCv_.wait(lock, [this]() {
@@ -457,18 +474,57 @@ void GvfgSource::audioPlaybackLoop()
                 });
                 if (stopRequested_.load(std::memory_order_acquire))
                     break;
-                pcm = std::move(audioPlaybackQueue_.front());
+                packet = std::move(audioPlaybackQueue_.front());
                 audioPlaybackQueue_.pop_front();
+            }
+
+            if (!signalConnected_.load(std::memory_order_acquire))
+                continue;
+
+            const uint64_t currentEpoch = avSyncEpoch_.load(std::memory_order_acquire);
+            if (currentEpoch != observedSyncEpoch)
+            {
+                observedSyncEpoch = currentEpoch;
+                syncBaseValid = false;
+            }
+            uint64_t videoTimestampNs = latestVideoTimestampNs_.load(std::memory_order_acquire);
+            if (packet.timestampNs != 0 && videoTimestampNs != 0)
+            {
+                const int64_t rawOffsetNs = static_cast<int64_t>(packet.timestampNs) -
+                                            static_cast<int64_t>(videoTimestampNs);
+                if (!syncBaseValid)
+                {
+                    syncBaseOffsetNs = rawOffsetNs;
+                    syncBaseValid = true;
+                }
+                int64_t driftNs = rawOffsetNs - syncBaseOffsetNs;
+                if (driftNs < -kAvSyncLagDropNs)
+                    continue;
+                const auto holdDeadline = std::chrono::steady_clock::now() + kAvSyncMaxHold;
+                while (driftNs > kAvSyncLeadLimitNs &&
+                       signalConnected_.load(std::memory_order_acquire) &&
+                       !stopRequested_.load(std::memory_order_acquire) &&
+                       std::chrono::steady_clock::now() < holdDeadline)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                    videoTimestampNs = latestVideoTimestampNs_.load(std::memory_order_acquire);
+                    driftNs = static_cast<int64_t>(packet.timestampNs) -
+                              static_cast<int64_t>(videoTimestampNs) - syncBaseOffsetNs;
+                }
+                if (!signalConnected_.load(std::memory_order_acquire))
+                    continue;
+                if (driftNs > kAvSyncLeadLimitNs)
+                    continue;
             }
 
             qint64 written = 0;
             auto lastProgress = std::chrono::steady_clock::now();
-            while (written < static_cast<qint64>(pcm.size()) &&
+            while (written < static_cast<qint64>(packet.pcm.size()) &&
                    !stopRequested_.load(std::memory_order_acquire))
             {
                 const qint64 result = audioOutput->write(
-                    reinterpret_cast<const char *>(pcm.data()) + written,
-                    static_cast<qint64>(pcm.size()) - written);
+                    reinterpret_cast<const char *>(packet.pcm.data()) + written,
+                    static_cast<qint64>(packet.pcm.size()) - written);
                 const auto now = std::chrono::steady_clock::now();
                 if (result > 0)
                 {
@@ -620,7 +676,8 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         recordingStartError_.clear();
         recordingFrames_ = 0;
         recordingDroppedFrames_ = 0;
-        recordingFirstFrameId_ = 0;
+        recordingTimelineOriginNs_ = latestVideoTimestampNs_.load(std::memory_order_acquire);
+        recordingLastVideoPts_ = -1;
         recordingWidth_ = width;
         recordingHeight_ = height;
         recordingPixelFormat_ = pixelFormat;
@@ -820,7 +877,24 @@ void GvfgSource::pollEvents()
             }
         }
         if (type == GVFG_EVENT_SIGNAL_DISCONNECTED)
+        {
             signalConnected_.store(false, std::memory_order_release);
+            latestVideoTimestampNs_.store(0, std::memory_order_release);
+            avSyncEpoch_.fetch_add(1, std::memory_order_acq_rel);
+            {
+                std::lock_guard<std::mutex> lock(audioPlaybackMutex_);
+                audioPlaybackQueue_.clear();
+            }
+        }
+        else if (type == GVFG_EVENT_FORMAT_CHANGE_BEGIN)
+        {
+            latestVideoTimestampNs_.store(0, std::memory_order_release);
+            avSyncEpoch_.fetch_add(1, std::memory_order_acq_rel);
+            {
+                std::lock_guard<std::mutex> lock(audioPlaybackMutex_);
+                audioPlaybackQueue_.clear();
+            }
+        }
         else if (type == GVFG_EVENT_SIGNAL_CONNECTED || type == GVFG_EVENT_STREAM_READY)
         {
             signalConnected_.store(true, std::memory_order_release);
@@ -887,6 +961,7 @@ void GvfgSource::readLoop()
         const gvfg_status_t st = handle_ ? gvfg_read_channel_frame(handle_, GVFG_CHANNEL_0, &frame, 200) : GVFG_ESTATE;
         if (st == GVFG_OK)
         {
+            latestVideoTimestampNs_.store(frame.timestamp_ns, std::memory_order_release);
             {
                 std::lock_guard<std::mutex> lock(recordingMutex_);
                 if (!recording_)
@@ -1043,9 +1118,18 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
             slot->bitDepth = frame.bit_depth;
             slot->frameId = frame.frame_id;
 
-            if (recordingFirstFrameId_ == 0)
-                recordingFirstFrameId_ = frame.frame_id;
-            slot->pts = static_cast<int64_t>(frame.frame_id - recordingFirstFrameId_);
+            const uint64_t elapsedNs = frame.timestamp_ns > recordingTimelineOriginNs_
+                                           ? frame.timestamp_ns - recordingTimelineOriginNs_
+                                           : 0;
+            const uint64_t ptsDenominator = 1'000'000'000ULL *
+                                            static_cast<uint64_t>(recordingConfig_.fpsDen);
+            int64_t timestampPts = static_cast<int64_t>(
+                (elapsedNs * static_cast<uint64_t>(recordingConfig_.fpsNum) +
+                 ptsDenominator / 2) / ptsDenominator);
+            if (timestampPts <= recordingLastVideoPts_)
+                timestampPts = recordingLastVideoPts_ + 1;
+            slot->pts = timestampPts;
+            recordingLastVideoPts_ = timestampPts;
             recordingCopyInProgress_ = true;
         }
     }
@@ -1174,7 +1258,12 @@ void GvfgSource::recordingLoop()
 
         if (haveAudio)
         {
-            if (!recorder.writeAudio(queuedAudio.data.data(), queuedAudio.data.size(), &error))
+            const int64_t audioTimelineNs = queuedAudio.timestampNs > recordingTimelineOriginNs_
+                                                ? static_cast<int64_t>(queuedAudio.timestampNs -
+                                                                       recordingTimelineOriginNs_)
+                                                : 0;
+            if (!recorder.writeAudio(queuedAudio.data.data(), queuedAudio.data.size(),
+                                     audioTimelineNs, &error))
             {
                 {
                     std::lock_guard<std::mutex> lock(recordingMutex_);

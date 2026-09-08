@@ -7,6 +7,7 @@
 #include <QRect>
 #include <QGridLayout>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPixmap>
 #include <QResizeEvent>
 
@@ -16,6 +17,9 @@ previewwindow::previewwindow(QWidget *parent)
     ui->setupUi(this);
 
     setAttribute(Qt::WA_DeleteOnClose, false);
+    installEventFilter(this);
+    if (ui->previewHost)
+        ui->previewHost->installEventFilter(this);
 }
 
 previewwindow::~previewwindow()
@@ -26,6 +30,21 @@ previewwindow::~previewwindow()
 void *previewwindow::previewHwnd() const
 {
     return reinterpret_cast<void *>(ui->previewHost->winId());
+}
+
+bool previewwindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if ((watched == this || (ui && watched == ui->previewHost) || watched == importedImageLabel_) &&
+        event->type() == QEvent::MouseButtonDblClick)
+    {
+        const auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton)
+        {
+            emit doubleClicked();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void previewwindow::clearFrame()
@@ -84,6 +103,7 @@ void previewwindow::setImportedFrame(const QImage &img)
         importedImageLabel_ = new QLabel(ui->previewHost);
         importedImageLabel_->setAlignment(Qt::AlignCenter);
         importedImageLabel_->setAutoFillBackground(true);
+        importedImageLabel_->installEventFilter(this);
 
         auto *hostLayout = new QGridLayout(ui->previewHost);
         hostLayout->setContentsMargins(0, 0, 0, 0);
