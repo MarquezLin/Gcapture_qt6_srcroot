@@ -399,75 +399,105 @@ void GvfgSource::audioPlaybackLoop()
         return;
     }
 
-    const QAudioDevice outputDevice = QMediaDevices::defaultAudioOutput();
-    if (outputDevice.isNull() || !outputDevice.isFormatSupported(outputFormat))
-    {
-        emit errorOccurred(QStringLiteral("Default Qt audio output does not support GVFG PCM: %1 Hz, %2 ch, %3-bit")
-                               .arg(format.sample_rate)
-                               .arg(format.channels)
-                               .arg(format.bits_per_sample));
-        return;
-    }
-
-    QAudioSink audioSink(outputDevice, outputFormat);
-    float appliedVolume = audioVolume_.load(std::memory_order_acquire);
-    audioSink.setVolume(appliedVolume);
-    QIODevice *audioOutput = audioSink.start();
-    if (!audioOutput)
-    {
-        emit errorOccurred(QStringLiteral("Qt audio output failed to start for GVFG PCM."));
-        return;
-    }
-
-    emit eventOccurred(QStringLiteral("Audio playback started via Qt: %1 Hz, %2 ch, %3-bit PCM")
-                           .arg(format.sample_rate)
-                           .arg(format.channels)
-                           .arg(format.bits_per_sample));
-
+    bool recovering = false;
     while (!stopRequested_.load(std::memory_order_acquire))
     {
-        const float requestedVolume = audioVolume_.load(std::memory_order_acquire);
-        if (requestedVolume != appliedVolume)
+        const QAudioDevice outputDevice = QMediaDevices::defaultAudioOutput();
+        if (outputDevice.isNull() || !outputDevice.isFormatSupported(outputFormat))
         {
-            audioSink.setVolume(requestedVolume);
-            appliedVolume = requestedVolume;
-        }
-
-        std::vector<uint8_t> pcm;
-        {
+            if (!recovering)
+                emit errorOccurred(QStringLiteral("Default Qt audio output is unavailable or does not support GVFG PCM; monitoring playback will retry."));
+            recovering = true;
             std::unique_lock<std::mutex> lock(audioPlaybackMutex_);
-            audioPlaybackCv_.wait(lock, [this]() {
-                return stopRequested_.load(std::memory_order_acquire) ||
-                       !audioPlaybackQueue_.empty();
+            audioPlaybackQueue_.clear();
+            audioPlaybackCv_.wait_for(lock, std::chrono::milliseconds(500), [this]() {
+                return stopRequested_.load(std::memory_order_acquire);
             });
-            if (stopRequested_.load(std::memory_order_acquire))
-                break;
-            pcm = std::move(audioPlaybackQueue_.front());
-            audioPlaybackQueue_.pop_front();
+            continue;
         }
 
-        qint64 written = 0;
-        while (written < static_cast<qint64>(pcm.size()) &&
-               !stopRequested_.load(std::memory_order_acquire))
+        QAudioSink audioSink(outputDevice, outputFormat);
+        float appliedVolume = audioVolume_.load(std::memory_order_acquire);
+        audioSink.setVolume(appliedVolume);
+        QIODevice *audioOutput = audioSink.start();
+        if (!audioOutput)
         {
-            const qint64 result = audioOutput->write(
-                reinterpret_cast<const char *>(pcm.data()) + written,
-                static_cast<qint64>(pcm.size()) - written);
-            if (result < 0)
+            if (!recovering)
+                emit errorOccurred(QStringLiteral("Qt audio output failed to start; monitoring playback will retry."));
+            recovering = true;
+            std::unique_lock<std::mutex> lock(audioPlaybackMutex_);
+            audioPlaybackQueue_.clear();
+            audioPlaybackCv_.wait_for(lock, std::chrono::milliseconds(500), [this]() {
+                return stopRequested_.load(std::memory_order_acquire);
+            });
+            continue;
+        }
+
+        emit eventOccurred(recovering
+            ? QStringLiteral("Audio monitoring playback recovered.")
+            : QStringLiteral("Audio playback started via Qt: %1 Hz, %2 ch, %3-bit PCM")
+                  .arg(format.sample_rate).arg(format.channels).arg(format.bits_per_sample));
+        recovering = false;
+        bool restartPlayback = false;
+        while (!stopRequested_.load(std::memory_order_acquire) && !restartPlayback)
+        {
+            const float requestedVolume = audioVolume_.load(std::memory_order_acquire);
+            if (requestedVolume != appliedVolume)
             {
-                emit errorOccurred(QStringLiteral("Qt audio output write failed for GVFG PCM."));
-                audioSink.stop();
-                return;
+                audioSink.setVolume(requestedVolume);
+                appliedVolume = requestedVolume;
             }
-            if (result == 0)
+
+            std::vector<uint8_t> pcm;
             {
+                std::unique_lock<std::mutex> lock(audioPlaybackMutex_);
+                audioPlaybackCv_.wait(lock, [this]() {
+                    return stopRequested_.load(std::memory_order_acquire) ||
+                           !audioPlaybackQueue_.empty();
+                });
+                if (stopRequested_.load(std::memory_order_acquire))
+                    break;
+                pcm = std::move(audioPlaybackQueue_.front());
+                audioPlaybackQueue_.pop_front();
+            }
+
+            qint64 written = 0;
+            auto lastProgress = std::chrono::steady_clock::now();
+            while (written < static_cast<qint64>(pcm.size()) &&
+                   !stopRequested_.load(std::memory_order_acquire))
+            {
+                const qint64 result = audioOutput->write(
+                    reinterpret_cast<const char *>(pcm.data()) + written,
+                    static_cast<qint64>(pcm.size()) - written);
+                const auto now = std::chrono::steady_clock::now();
+                if (result > 0)
+                {
+                    written += result;
+                    lastProgress = now;
+                    continue;
+                }
+                if (result < 0 || now - lastProgress >= std::chrono::seconds(2))
+                {
+                    emit errorOccurred(result < 0
+                        ? QStringLiteral("Qt audio output write failed; rebuilding monitoring playback.")
+                        : QStringLiteral("Qt audio output made no progress for 2 seconds; rebuilding monitoring playback."));
+                    restartPlayback = true;
+                    break;
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                continue;
             }
-            written += result;
+        }
+        audioSink.stop();
+        if (restartPlayback)
+        {
+            recovering = true;
+            std::unique_lock<std::mutex> lock(audioPlaybackMutex_);
+            audioPlaybackQueue_.clear();
+            audioPlaybackCv_.wait_for(lock, std::chrono::milliseconds(500), [this]() {
+                return stopRequested_.load(std::memory_order_acquire);
+            });
         }
     }
-    audioSink.stop();
 }
 
 bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error)
