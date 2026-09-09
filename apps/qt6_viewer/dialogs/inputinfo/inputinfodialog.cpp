@@ -1,16 +1,11 @@
 #include "inputinfodialog.h"
 #include "ui_inputinfodialog.h"
-#include <gcapture.h>
-#include <gcap_audio.h>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
-#include <QSignalBlocker>
-#include <QDebug>
 #include <QScrollBar>
 
 
@@ -54,15 +49,8 @@ inputinfodialog::inputinfodialog(QWidget *parent)
     ui->setupUi(this);
     setModal(false);
 
-    initializing_ = true;
-
     connect(ui->btnRefresh, &QPushButton::clicked,
             this, &inputinfodialog::onRefreshClicked);
-
-    connect(ui->comboAudioDevice,
-            QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this,
-            &inputinfodialog::onAudioDeviceChanged);
 
     if (QListWidget *list = ensurePropertyPageList(ui))
     {
@@ -70,8 +58,6 @@ inputinfodialog::inputinfodialog(QWidget *parent)
             connect(btn, &QPushButton::clicked, this, &inputinfodialog::onOpenSelectedPropertyPage);
         connect(list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *) { onOpenSelectedPropertyPage(); });
     }
-
-    refreshAudioDevices(true);
 }
 
 inputinfodialog::~inputinfodialog()
@@ -170,112 +156,7 @@ void inputinfodialog::setInfoText(const QString &text)
     lastInfoText_ = text;
 }
 
-void inputinfodialog::onAudioDeviceChanged(int index)
-{
-    if (initializing_)
-        return;
-    if (index < 0 || index >= (int)audioDevices_.size())
-        return;
-
-    const auto &d = audioDevices_[index];
-
-    QString ch =
-        (d.channels == 1) ? "Mono" : (d.channels == 2) ? "Stereo"
-                                                       : QString("%1 ch").arg(d.channels);
-
-    QString depth =
-        d.is_float ? "32-bit float"
-                   : QString("%1-bit").arg(d.bits_per_sample);
-
-    QString text = QString("%1, %2 Hz, %3")
-                       .arg(ch)
-                       .arg(d.sample_rate)
-                       .arg(depth);
-
-    QString id = QString::fromUtf8(d.id);
-    if (!currentAudioDeviceIdUtf8_.isEmpty() && id == currentAudioDeviceIdUtf8_)
-    {
-        ui->labelAudioInfo->setText(text);
-        return;
-    }
-
-    currentAudioDeviceIdUtf8_ = id;
-    emit audioDeviceSelected(id);
-
-    ui->labelAudioInfo->setText(text);
-
-    initializing_ = false;
-}
-
-void inputinfodialog::setCurrentAudioDevice(const QString &deviceIdUtf8)
-{
-    currentAudioDeviceIdUtf8_ = deviceIdUtf8;
-    // 更新顯示：重新掃描一次，但保持 selection 指向 currentAudioDeviceIdUtf8_
-    refreshAudioDevices(/*keepSelection=*/true);
-}
-
 void inputinfodialog::onRefreshClicked()
 {
-    // 只刷新列表，不要自動切換
-    refreshAudioDevices(/*keepSelection=*/true);
     emit refreshRequested();
-}
-
-void inputinfodialog::refreshAudioDevices(bool keepSelection)
-{
-    if (!ui->comboAudioDevice)
-        return;
-
-    initializing_ = true;
-    QSignalBlocker blocker(ui->comboAudioDevice);
-
-    QString keepId = keepSelection ? currentAudioDeviceIdUtf8_ : QString();
-
-    audioDevices_.clear();
-    ui->comboAudioDevice->clear();
-
-    int count = gcap_audio_device_count();
-    if (count <= 0)
-    {
-        ui->labelAudioInfo->setText(tr("No audio device"));
-        initializing_ = false;
-        return;
-    }
-
-    audioDevices_.resize(count);
-    int n = gcap_audio_enum_devices(audioDevices_.data(), count);
-    if (n <= 0)
-    {
-        audioDevices_.clear();
-        ui->labelAudioInfo->setText(tr("No audio device"));
-        initializing_ = false;
-        return;
-    }
-
-    int selectIndex = 0;
-    for (int i = 0; i < n; ++i)
-    {
-        ui->comboAudioDevice->addItem(QString::fromUtf8(audioDevices_[i].name));
-
-        if (!keepId.isEmpty() && keepId == QString::fromUtf8(audioDevices_[i].id))
-            selectIndex = i;
-    }
-
-    ui->comboAudioDevice->setCurrentIndex(selectIndex);
-
-    // 注意：這裡只更新 UI 顯示資訊，不 emit
-    if (selectIndex >= 0 && selectIndex < (int)audioDevices_.size())
-    {
-        const auto &d = audioDevices_[selectIndex];
-
-        QString ch = (d.channels == 1) ? "Mono" : (d.channels == 2) ? "Stereo"
-                                                                    : QString("%1 ch").arg(d.channels);
-        QString depth = d.is_float ? "32-bit float" : QString("%1-bit").arg(d.bits_per_sample);
-        QString text = QString("%1, %2 Hz, %3").arg(ch).arg(d.sample_rate).arg(depth);
-        ui->labelAudioInfo->setText(text);
-
-        currentAudioDeviceIdUtf8_ = QString::fromUtf8(d.id);
-    }
-
-    initializing_ = false;
 }

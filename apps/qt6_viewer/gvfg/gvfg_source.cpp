@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <new>
@@ -27,6 +28,23 @@ constexpr size_t kMaxQueuedPlaybackAudioPackets = 10;
 constexpr int64_t kAvSyncLeadLimitNs = 40'000'000;
 constexpr int64_t kAvSyncLagDropNs = 80'000'000;
 constexpr auto kAvSyncMaxHold = std::chrono::milliseconds(100);
+
+void applyPcm16Gain(std::vector<uint8_t> &pcm, float gain)
+{
+    if (gain <= 1.0f)
+        return;
+
+    constexpr int kMinPcm16 = -32768;
+    constexpr int kMaxPcm16 = 32767;
+    for (size_t offset = 0; offset + sizeof(int16_t) <= pcm.size(); offset += sizeof(int16_t))
+    {
+        int16_t sample = 0;
+        std::memcpy(&sample, pcm.data() + offset, sizeof(sample));
+        const int amplified = static_cast<int>(std::lround(static_cast<float>(sample) * gain));
+        sample = static_cast<int16_t>(std::clamp(amplified, kMinPcm16, kMaxPcm16));
+        std::memcpy(pcm.data() + offset, &sample, sizeof(sample));
+    }
+}
 
 QString gvfgEventName(gvfg_event_type_t type)
 {
@@ -280,7 +298,7 @@ bool GvfgSource::setPreview(void *previewHwnd, int previewBitDepthMode)
 
 void GvfgSource::setAudioVolume(float volume)
 {
-    audioVolume_.store(std::clamp(volume, 0.0f, 1.0f), std::memory_order_release);
+    audioVolume_.store(std::clamp(volume, 0.0f, 2.0f), std::memory_order_release);
 }
 
 void GvfgSource::stop()
@@ -429,7 +447,7 @@ void GvfgSource::audioPlaybackLoop()
         }
 
         QAudioSink audioSink(outputDevice, outputFormat);
-        float appliedVolume = audioVolume_.load(std::memory_order_acquire);
+        float appliedVolume = std::min(audioVolume_.load(std::memory_order_acquire), 1.0f);
         audioSink.setVolume(appliedVolume);
         QIODevice *audioOutput = audioSink.start();
         if (!audioOutput)
@@ -459,10 +477,11 @@ void GvfgSource::audioPlaybackLoop()
         while (!stopRequested_.load(std::memory_order_acquire) && !restartPlayback)
         {
             const float requestedVolume = audioVolume_.load(std::memory_order_acquire);
-            if (requestedVolume != appliedVolume)
+            const float requestedSinkVolume = std::min(requestedVolume, 1.0f);
+            if (requestedSinkVolume != appliedVolume)
             {
-                audioSink.setVolume(requestedVolume);
-                appliedVolume = requestedVolume;
+                audioSink.setVolume(requestedSinkVolume);
+                appliedVolume = requestedSinkVolume;
             }
 
             PlaybackAudioPacket packet;
@@ -516,6 +535,9 @@ void GvfgSource::audioPlaybackLoop()
                 if (driftNs > kAvSyncLeadLimitNs)
                     continue;
             }
+
+            if (format.bits_per_sample == 16)
+                applyPcm16Gain(packet.pcm, std::max(requestedVolume, 1.0f));
 
             qint64 written = 0;
             auto lastProgress = std::chrono::steady_clock::now();

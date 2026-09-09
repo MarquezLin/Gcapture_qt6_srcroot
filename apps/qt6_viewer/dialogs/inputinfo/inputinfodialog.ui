@@ -21,9 +21,6 @@
      </property>
     </widget>
    </item>
-   <item row="1" column="0">
-    <widget class="QComboBox" name="comboAudioDevice"/>
-   </item>
    <item row="5" column="0">
     <widget class="QDialogButtonBox" name="buttonBox">
      <property name="orientation">
@@ -31,13 +28,6 @@
      </property>
      <property name="standardButtons">
       <set>QDialogButtonBox::StandardButton::Cancel|QDialogButtonBox::StandardButton::Ok</set>
-     </property>
-    </widget>
-   </item>
-   <item row="2" column="0">
-    <widget class="QLabel" name="labelAudioInfo">
-     <property name="text">
-      <string>TextLabel</string>
      </property>
     </widget>
    </item>

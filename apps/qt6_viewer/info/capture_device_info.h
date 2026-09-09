@@ -14,7 +14,6 @@ struct CaptureDeviceInfo
     QString pathName;
     QString captureFormat;
     QString renderFormat;
-    QString audioInfo;
     QStringList supportedFormats;
     QStringList propertyPages;
     QString driverVersion;

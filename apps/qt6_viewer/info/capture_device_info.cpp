@@ -74,7 +74,6 @@ QString formatCaptureDeviceInfo(const CaptureDeviceInfo &info, double fallbackFp
     lines << QString("Backend       : %1").arg(info.backendName.isEmpty() ? QStringLiteral("(unknown)") : info.backendName);
     lines << QString("Frame Source  : %1").arg(info.frameSource.isEmpty() ? QStringLiteral("(unknown)") : info.frameSource);
     lines << QString("Path          : %1").arg(info.pathName.isEmpty() ? QStringLiteral("(unknown)") : info.pathName);
-    lines << QString("Audio         : %1").arg(info.audioInfo.isEmpty() ? QStringLiteral("(unknown)") : info.audioInfo);
 
     lines << "";
     lines << formatStatusBlock("Current Capture", info.negotiated, fallbackFps, info.captureFormat);

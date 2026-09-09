@@ -362,17 +362,6 @@ QString MainWindow::buildRecordingPath(const QDateTime &now) const
     return baseDir + QStringLiteral("/capture_") + ts + QStringLiteral(".mp4");
 }
 
-void MainWindow::applySelectedRecordingAudioDevice()
-{
-    const QString deviceId = selectedAudioDeviceIdUtf8_.isEmpty() ? QStringLiteral("default") : selectedAudioDeviceIdUtf8_;
-    MainWindow::postLog(QStringLiteral("[Record] apply audio device=%1").arg(deviceId));
-
-    if (selectedAudioDeviceIdUtf8_.isEmpty())
-        gcap_set_recording_audio_device(h_, nullptr);
-    else
-        gcap_set_recording_audio_device(h_, selectedAudioDeviceIdUtf8_.toUtf8().constData());
-}
-
 void MainWindow::startAudioMonitoring()
 {
     stopAudioMonitoring();
@@ -392,36 +381,8 @@ void MainWindow::startAudioMonitoring()
     }
 
     gcap_audio_device_t audio{};
-    bool found = false;
-    if (!selectedAudioDeviceIdUtf8_.isEmpty())
-    {
-        const int count = gcap_audio_device_count();
-        if (count > 0)
-        {
-            std::vector<gcap_audio_device_t> devices(static_cast<size_t>(count));
-            const int written = gcap_audio_enum_devices(devices.data(), count);
-            for (int i = 0; i < written; ++i)
-            {
-                if (selectedAudioDeviceIdUtf8_ == QString::fromUtf8(devices[static_cast<size_t>(i)].id))
-                {
-                    audio = devices[static_cast<size_t>(i)];
-                    found = true;
-                    break;
-                }
-            }
-        }
-        if (!found)
-        {
-            MainWindow::postLog(QStringLiteral("[AudioMonitoring] selected endpoint is unavailable; falling back to video-device matching"),
-                                true);
-        }
-    }
-
-    if (!found)
-    {
-        const QByteArray videoNameUtf8 = videoDeviceName.toUtf8();
-        found = gcap_audio_find_device_for_capture(videoNameUtf8.constData(), &audio) != 0;
-    }
+    const QByteArray videoNameUtf8 = videoDeviceName.toUtf8();
+    const bool found = gcap_audio_find_device_for_capture(videoNameUtf8.constData(), &audio) != 0;
 
     if (!found)
     {
@@ -876,8 +837,6 @@ void MainWindow::onRecord()
 
     const QDateTime now = QDateTime::currentDateTime();
     const QString fullPath = buildRecordingPath(now);
-
-    applySelectedRecordingAudioDevice();
 
     const gcap_status_t st = gcap_start_recording(h_, fullPath.toUtf8().constData());
     if (st != GCAP_OK)

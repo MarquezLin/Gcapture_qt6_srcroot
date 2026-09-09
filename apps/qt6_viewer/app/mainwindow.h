@@ -94,7 +94,6 @@ private:
     QString recordPath_;
     QString recordEncoderName_;
     QImage lastFrameImage_;
-    QString selectedAudioDeviceIdUtf8_;
 
     // Debug log panel.
     QDockWidget *debugDock_ = nullptr;
@@ -156,7 +155,6 @@ private:
     void applyInitialPreviewSizeFromSource(int width, int height);
     int currentDeviceIndex() const;
     QString currentDeviceText() const;
-    QString currentAudioInfoText() const;
     void ensureSignalInfoDialog();
     void ensureDisplayInfoDialog();
     void showAndActivateDialog(QWidget *dialog);
@@ -198,7 +196,6 @@ private:
     bool showCaptureErrorAndClose(const QString &action, gcap_status_t st, const char *apiName = nullptr);
     void stopRecordingSession(bool showSummary);
     QString buildRecordingPath(const QDateTime &now) const;
-    void applySelectedRecordingAudioDevice();
     void updateFrameSourceState(uint64_t ptsNs, uint64_t frameId, int width, int height, uint64_t &lastPtsTracker);
     void dispatchFrameImage(const QImage &img);
     void refreshFrameDependentUi(const QImage &img);

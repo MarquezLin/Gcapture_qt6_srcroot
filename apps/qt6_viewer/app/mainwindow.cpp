@@ -885,7 +885,6 @@ void MainWindow::setupRuntimeStatusTimer()
                     {
                         infoDlg_->setInfoText(lastInfoText_);
                         infoDlg_->setPropertyPages(captureInfo_.propertyPages);
-                        infoDlg_->setCurrentAudioDevice(selectedAudioDeviceIdUtf8_);
                     }
 
                     if (DpinfoDlg_ && DpinfoDlg_->isVisible())

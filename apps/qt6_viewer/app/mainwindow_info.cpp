@@ -3,7 +3,6 @@
 #include "./ui_mainwindow.h"
 #include <QDateTime>
 #include <QGuiApplication>
-#include <QLabel>
 #include <QMessageBox>
 #include <QScreen>
 #include <QWindow>
@@ -254,19 +253,6 @@ void MainWindow::ensureSignalInfoDialog()
     infoDlg_ = new inputinfodialog(this);
     infoDlg_->setWindowTitle(tr("Signal Info"));
 
-    connect(infoDlg_, &inputinfodialog::audioDeviceSelected,
-            this, [this](const QString &id)
-            {
-                selectedAudioDeviceIdUtf8_ = id;
-                const bool captureRunning = h_
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-                                            || usingGvfg_
-#endif
-                    ;
-                if (captureRunning && (!ui->checkAudioMonitoring || ui->checkAudioMonitoring->isChecked()))
-                    startAudioMonitoring();
-            });
-
     connect(infoDlg_, &inputinfodialog::openPropertyPageRequested,
             this, [this](const QString &pageNameUtf8, bool capturePin)
             {
@@ -407,20 +393,9 @@ void MainWindow::refreshCaptureDeviceProps(bool throttleDeviceProps)
     captureInfo_.serialNumber = QString::fromUtf8(props.serial_number);
 }
 
-QString MainWindow::currentAudioInfoText() const
-{
-    if (infoDlg_)
-    {
-        if (QLabel *audioLabel = infoDlg_->findChild<QLabel *>("labelAudioInfo"))
-            return audioLabel->text();
-    }
-    return captureInfo_.audioInfo;
-}
-
 void MainWindow::refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps)
 {
     captureInfo_.deviceName = currentDeviceText();
-    captureInfo_.audioInfo = currentAudioInfoText();
 
     refreshCaptureRuntimeInfo();
     refreshCaptureDeviceProps(throttleDeviceProps);
@@ -537,7 +512,6 @@ void MainWindow::refreshSignalInfoDialog()
     infoDlg_->setWindowTitle(tr("Signal Info"));
     infoDlg_->setInfoText(lastInfoText_);
     infoDlg_->setPropertyPages(captureInfo_.propertyPages);
-    infoDlg_->setCurrentAudioDevice(selectedAudioDeviceIdUtf8_);
 }
 
 void MainWindow::refreshDisplayInfoDialog()
