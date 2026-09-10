@@ -69,12 +69,10 @@ private slots:
 
 private:
     Ui::MainWindow *ui;
-    // QLabel *view_;
     gcap_handle h_{};
     int deviceIndex_ = 0;
     bool recording_ = false;
     bool audioMonitoringActive_ = false;
-    QString audioMonitoringStatusDetail_;
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     GvfgSource *gvfg_ = nullptr;
     bool usingGvfg_ = false;
@@ -110,7 +108,6 @@ private:
     ProcAmp *procampDlg_ = nullptr;
     gcap_procamp_t m_currentProcAmp{};
     QString lastInfoText_;
-    QString lastCapturePropsText_;
     CaptureDeviceInfo captureInfo_;
     DisplayOutputInfo displayInfo_;
     previewwindow *previewWindow_ = nullptr;

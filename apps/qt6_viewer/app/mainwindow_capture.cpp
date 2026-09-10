@@ -474,7 +474,6 @@ void MainWindow::stopAudioMonitoring()
 
 void MainWindow::setAudioMonitoringStatus(const QString &status, const QString &detail)
 {
-    audioMonitoringStatusDetail_ = detail;
     if (!ui || !ui->metricValueAudio)
         return;
 
