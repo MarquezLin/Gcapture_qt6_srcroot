@@ -101,6 +101,9 @@ if (WIN32)
   if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg_preview.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg_preview.lib")
     message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg_preview.dll and lib/gvfg_preview.lib: ${_gvfg_build_dir}")
   endif()
+  if (NOT EXISTS "${_gvfg_build_dir}/bin/giga_ioctl.dll")
+    message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/giga_ioctl.dll: ${_gvfg_build_dir}")
+  endif()
 
   add_library(gvfg SHARED IMPORTED GLOBAL)
   set_target_properties(gvfg PROPERTIES

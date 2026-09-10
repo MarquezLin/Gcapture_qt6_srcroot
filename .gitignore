@@ -5,6 +5,7 @@
 !/third_party/capturesdk/bin/
 !/third_party/capturesdk/bin/CaptureSDK.dll
 /lib/
+/packages/
 
 # Qt Creator / CMake
 /.qtcreator/

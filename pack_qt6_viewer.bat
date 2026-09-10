@@ -1,145 +1,124 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions
 
-rem === PLEASE MODIFY THESE TWO PATHS ===
-set "QT_BIN=C:\Qt\6.10.2\msvc2022_64\bin"
-set "BUILD_ROOT=C:\Users\mark\Desktop\GcaptureSDK\qt6\srcroot\build\Desktop_Qt_6_10_2_MSVC2022_64bit-Release"
-rem ====================================
+set "PROJECT_DIR=%~dp0"
+set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
-set "BIN_DIR=%BUILD_ROOT%\bin"
-set "OUT_ROOT=%BUILD_ROOT%\dist"
-set "OUT_DIR=%OUT_ROOT%\qt6_viewer_win64"
-set "ZIP_OUT=%OUT_ROOT%\qt6_viewer_win64.zip"
+if not defined SOURCE_BIN set "SOURCE_BIN=%PROJECT_DIR%\build\Desktop_Qt_6_10_2_MSVC2022_64bit-Release\bin"
+if not defined GVFG_SOURCE_BIN set "GVFG_SOURCE_BIN=%PROJECT_DIR%\..\GVFG_Standalone\build\Desktop_Qt_6_10_2_MSVC2022_64bit-Release\bin"
+if not defined QT_BIN set "QT_BIN=C:\Qt\6.10.2\msvc2022_64\bin"
+if not defined VSDEVCMD set "VSDEVCMD=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
 
-echo.
-echo ============================================================
-echo [0/5] Check environment
-echo ============================================================
-
-if not exist "%QT_BIN%\windeployqt.exe" (
-    echo ERROR: windeployqt.exe not found: "%QT_BIN%\windeployqt.exe"
-    pause
-    exit /b 1
+if "%~1"=="" (
+    set "OUTPUT_DIR=%PROJECT_DIR%\packages"
+) else (
+    set "OUTPUT_DIR=%~f1"
 )
 
-if not exist "%BIN_DIR%" (
-    echo ERROR: BIN_DIR not found: "%BIN_DIR%"
-    pause
-    exit /b 1
+for /f %%I in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Date -Format yyyyMMdd_HHmm"') do set "STAMP=%%I"
+for /f "tokens=3" %%I in ('findstr /C:"project(win_capture_sdk VERSION" "%PROJECT_DIR%\CMakeLists.txt"') do set "PACKAGE_VERSION=%%I"
+
+if not defined PACKAGE_VERSION (
+    echo [package] ERROR: Project version not found in CMakeLists.txt.
+    goto fail
 )
 
-if not exist "%BIN_DIR%\qt6_viewer.exe" (
-    echo ERROR: qt6_viewer.exe not found: "%BIN_DIR%\qt6_viewer.exe"
-    pause
-    exit /b 1
+set "PACKAGE_NAME=GIGA_Utility_%STAMP%_%PACKAGE_VERSION%"
+set "ZIP_PATH=%OUTPUT_DIR%\%PACKAGE_NAME%.zip"
+set "STAGE_ROOT=%TEMP%\%PACKAGE_NAME%_%RANDOM%"
+set "STAGE_DIR=%STAGE_ROOT%\%PACKAGE_NAME%"
+set "WINDEPLOYQT=%QT_BIN%\windeployqt.exe"
+set "FFMPEG_BIN=%PROJECT_DIR%\third_party\ffmpeg\bin"
+set "EDID_EXE=%PROJECT_DIR%\third_party\edid-decode\vs\x64\Release\edid-decode.exe"
+set "GIGA_IOCTL_DLL=%SOURCE_BIN%\giga_ioctl.dll"
+if not exist "%GIGA_IOCTL_DLL%" set "GIGA_IOCTL_DLL=%GVFG_SOURCE_BIN%\giga_ioctl.dll"
+
+echo [package] Configuration: Release
+echo [package] Source: "%SOURCE_BIN%"
+echo [package] Output: "%ZIP_PATH%"
+
+for %%F in (qt6_viewer.exe gcapture.dll gdisplay.dll gvfg.dll gvfg_preview.dll) do (
+    if not exist "%SOURCE_BIN%\%%F" (
+        echo [package] ERROR: Required application file not found: %%F
+        goto fail
+    )
+)
+if not exist "%GIGA_IOCTL_DLL%" (
+    echo [package] ERROR: giga_ioctl.dll not found in SOURCE_BIN or GVFG_SOURCE_BIN.
+    goto fail
+)
+if not exist "%WINDEPLOYQT%" (
+    echo [package] ERROR: "%WINDEPLOYQT%" not found.
+    goto fail
+)
+if not exist "%VSDEVCMD%" (
+    echo [package] ERROR: "%VSDEVCMD%" not found.
+    goto fail
+)
+if not exist "%FFMPEG_BIN%\ffmpeg.exe" (
+    echo [package] ERROR: FFmpeg executable not found: "%FFMPEG_BIN%\ffmpeg.exe"
+    goto fail
+)
+if not exist "%EDID_EXE%" (
+    echo [package] ERROR: edid-decode.exe not found: "%EDID_EXE%"
+    goto fail
 )
 
-echo.
-echo ============================================================
-echo [1/5] Prepare output folder
-echo ============================================================
+echo [package] Check FFmpeg release license flags...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$v = & '%FFMPEG_BIN%\ffmpeg.exe' -version 2>$null; $cfg = ($v | Select-String '^configuration:').Line; if ($cfg -match '--enable-gpl|--enable-nonfree') { Write-Host '[package] ERROR: FFmpeg build uses GPL/nonfree options.'; exit 2 }"
+if errorlevel 1 goto fail
 
-if exist "%OUT_DIR%" (
-    echo Removing old: "%OUT_DIR%"
-    rmdir /s /q "%OUT_DIR%"
+if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%" || goto fail
+if exist "%STAGE_ROOT%" rmdir /S /Q "%STAGE_ROOT%" || goto fail
+mkdir "%STAGE_DIR%" || goto fail
+
+echo [package] Copy application files...
+for %%F in (qt6_viewer.exe gcapture.dll gdisplay.dll gvfg.dll gvfg_preview.dll) do (
+    copy /Y "%SOURCE_BIN%\%%F" "%STAGE_DIR%\" >nul || goto fail
 )
+copy /Y "%GIGA_IOCTL_DLL%" "%STAGE_DIR%\" >nul || goto fail
+copy /Y "%FFMPEG_BIN%\*.dll" "%STAGE_DIR%\" >nul || goto fail
+copy /Y "%EDID_EXE%" "%STAGE_DIR%\" >nul || goto fail
 
-mkdir "%OUT_DIR%"
-if errorlevel 1 (
-    echo ERROR: Failed to create: "%OUT_DIR%"
-    pause
-    exit /b 1
+echo [package] Deploy Qt runtime...
+call "%VSDEVCMD%" -arch=x64 >nul || goto fail
+"%WINDEPLOYQT%" --release --compiler-runtime --force --no-translations --dir "%STAGE_DIR%" "%STAGE_DIR%\qt6_viewer.exe"
+if errorlevel 1 goto fail
+
+echo [package] Deploy MSVC runtime...
+if not defined VCToolsRedistDir (
+    echo [package] ERROR: VCToolsRedistDir was not set by VsDevCmd.bat.
+    goto fail
 )
+set "VC_RUNTIME_DIR=%VCToolsRedistDir%x64\Microsoft.VC143.CRT"
+if not exist "%VC_RUNTIME_DIR%\msvcp140.dll" (
+    echo [package] ERROR: MSVC runtime not found in "%VC_RUNTIME_DIR%".
+    goto fail
+)
+copy /Y "%VC_RUNTIME_DIR%\*.dll" "%STAGE_DIR%\" >nul || goto fail
 
-echo.
-echo ============================================================
-echo [2/5] Copy application binaries (exe + your dlls)
-echo ============================================================
-
-copy /y "%BIN_DIR%\qt6_viewer.exe" "%OUT_DIR%\" >nul
-
-for %%F in (gcapture.dll gdisplay.dll gvfg.dll gvfg_preview.dll) do (
-    if exist "%BIN_DIR%\%%F" (
-        echo Copy %%F
-        copy /y "%BIN_DIR%\%%F" "%OUT_DIR%\" >nul
+for %%F in (msvcp140.dll vcruntime140.dll vcruntime140_1.dll) do (
+    if not exist "%STAGE_DIR%\%%F" (
+        echo [package] ERROR: Required MSVC runtime was not deployed: %%F
+        goto fail
     )
 )
 
-rem === Copy FFmpeg runtime DLLs ===
-set "SRC_ROOT=%BUILD_ROOT%\..\.."
-set "FFMPEG_BIN=%SRC_ROOT%\third_party\ffmpeg\bin"
+echo [package] Create zip...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Compress-Archive -Path '%STAGE_DIR%' -DestinationPath '%ZIP_PATH%' -Force"
+if errorlevel 1 goto fail
 
-if exist "%FFMPEG_BIN%" (
-    if exist "%FFMPEG_BIN%\ffmpeg.exe" (
-        echo Check FFmpeg release license flags
-        powershell -NoProfile -ExecutionPolicy Bypass -Command "$v = & '%FFMPEG_BIN%\ffmpeg.exe' -version 2>$null; $cfg = ($v | Select-String '^configuration:').Line; if ($cfg -match '--enable-gpl|--enable-nonfree') { Write-Host 'ERROR: FFmpeg build uses GPL/nonfree options. Replace third_party\ffmpeg with an LGPL shared build before release packaging.'; exit 2 }"
-        if errorlevel 1 (
-            pause
-            exit /b 1
-        )
-    ) else (
-        echo WARNING: ffmpeg.exe not found; cannot verify FFmpeg license flags.
-    )
-    echo Copy FFmpeg DLLs
-    copy /y "%FFMPEG_BIN%\*.dll" "%OUT_DIR%\" >nul
-) else (
-    echo WARNING: FFmpeg bin not found: "%FFMPEG_BIN%"
-)
+rmdir /S /Q "%STAGE_ROOT%"
 
-rem === Copy Edid ===
-set "EDID_EXE=%SRC_ROOT%\third_party\edid-decode\vs\x64\Release"
+echo [package] Done.
+echo [package] Zip: "%ZIP_PATH%"
+if "%NO_PAUSE%"=="" pause
+exit /b 0
 
-if exist "%EDID_EXE%" (
-    echo Copy edid-decode.exe
-    copy /y "%EDID_EXE%\edid-decode.exe" "%OUT_DIR%\" >nul
-) else (
-    echo WARNING: edid-decode.exe not found: "%EDID_EXE%"
-)
-
-echo.
-echo ============================================================
-echo [3/5] Run windeployqt
-echo ============================================================
-
-pushd "%OUT_DIR%"
-"%QT_BIN%\windeployqt.exe" --release --compiler-runtime --no-translations "qt6_viewer.exe"
-if errorlevel 1 (
-    popd
-    echo ERROR: windeployqt failed.
-    pause
-    exit /b 1
-)
-popd
-
-echo.
-echo ============================================================
-echo [4/5] Create zip
-echo ============================================================
-
-if exist "%ZIP_OUT%" del /f /q "%ZIP_OUT%"
-
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%OUT_DIR%\*' -DestinationPath '%ZIP_OUT%' -Force"
-echo PowerShell errorlevel=%errorlevel%
-
-if errorlevel 1 (
-    echo ERROR: Compress-Archive failed. (Need PowerShell 5+)
-    pause
-    exit /b 1
-)
-
-if not exist "%ZIP_OUT%" (
-    echo ERROR: Zip file was not created.
-    pause
-    exit /b 1
-)
-
-cls
-echo ============================================================
-echo [5/5] Done
-echo ============================================================
-echo Output folder: "%OUT_DIR%"
-echo Zip         : "%ZIP_OUT%"
-echo.
-dir "%ZIP_OUT%"
-echo.
-cmd /k
+:fail
+echo [package] FAILED.
+if defined STAGE_ROOT if exist "%STAGE_ROOT%" rmdir /S /Q "%STAGE_ROOT%" >nul 2>nul
+if "%NO_PAUSE%"=="" pause
+exit /b 1
