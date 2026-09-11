@@ -242,8 +242,8 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
     resize(1180, 740);
     setMinimumSize(980, 680);
-    ui->controlPanel->setMinimumWidth(320);
-    ui->controlPanel->setMaximumWidth(380);
+    ui->controlPanel->setMinimumWidth(390);
+    ui->controlPanel->setMaximumWidth(450);
     setWindowTitle(QStringLiteral("GIGABYTE Video Capture utility v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
@@ -1214,6 +1214,7 @@ void MainWindow::initializeDeviceList()
     {
         deviceIndex_ = -1;
     }
+    ui->comboDevice->setToolTip(ui->comboDevice->currentText());
 
     invalidateDeviceCapabilityCache();
     lastPixelFormatWarningKey_.clear();
@@ -1258,6 +1259,7 @@ void MainWindow::setupConnections()
         connect(ui->comboDevice, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this](int idx)
                 {
+                    ui->comboDevice->setToolTip(ui->comboDevice->currentText());
                     if (idx < 0)
                     {
                         deviceIndex_ = -1;

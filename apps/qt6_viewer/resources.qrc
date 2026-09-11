@@ -9,6 +9,7 @@
         <file>image/icon_monitor.svg</file>
         <file>image/icon_chip.svg</file>
         <file>image/icon_image.svg</file>
+        <file>image/icon_chevron_down.svg</file>
         <file>styles/gigabyte_dark.qss</file>
     </qresource>
 </RCC>

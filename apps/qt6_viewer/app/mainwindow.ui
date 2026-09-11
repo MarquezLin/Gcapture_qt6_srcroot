@@ -146,6 +146,12 @@ QComboBox:hover {
     border-color: #2aa7ff;
 }
 
+QComboBox::down-arrow {
+    image: url(:/new/prefix1/image/icon_chevron_down.svg);
+    width: 12px;
+    height: 12px;
+}
+
 QPushButton {
     background: #162536;
     color: #ecf6ff;
