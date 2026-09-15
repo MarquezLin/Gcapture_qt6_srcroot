@@ -190,11 +190,6 @@ if (WIN32)
         $<TARGET_FILE_DIR:qt6_viewer>
     )
   endif()
-  add_custom_command(TARGET qt6_viewer POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "${_gvfg_build_dir}/bin/giga_ioctl.dll"
-      $<TARGET_FILE_DIR:qt6_viewer>
-  )
 endif()
 
 # Copy FFmpeg runtime DLLs next to qt6_viewer.exe (Windows)

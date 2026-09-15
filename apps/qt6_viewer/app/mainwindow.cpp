@@ -275,7 +275,7 @@ MainWindow::MainWindow(QWidget *parent)
                 }
                 const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
                 if (backend == kQtViewerGvfgBackend && !usingGvfg_ && ui->btnStart)
-                    ui->btnStart->setEnabled(connected);
+                    ui->btnStart->setEnabled(gvfg_ && gvfg_->isOpen());
                 updateRuntimeStatusUi();
             });
 #endif
@@ -363,6 +363,7 @@ void MainWindow::updateBrandDashboard()
     double dashboardFps = avgFps_;
     QString colorText = selectedPreviewBitDepthText();
     uint64_t frameCounter = deliveredFrameCount_;
+    bool inputConnected = active;
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     if (usingGvfg_ && gvfg_)
@@ -370,9 +371,10 @@ void MainWindow::updateBrandDashboard()
         const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
         const gvfg_signal_status_t signal = gvfg_->signalStatus();
         const gvfg_preview_info_t pv = gvfg_->previewInfo();
+        inputConnected = signal.connected != 0;
         backendText = QStringLiteral("GVFG");
-        previewActive = pv.active != 0;
-        renderPathText = pv.active
+        previewActive = inputConnected && pv.active != 0;
+        renderPathText = previewActive
                              ? QStringLiteral("gvfg_preview %1x%2 %3 %4bit")
                                    .arg(pv.width)
                                    .arg(pv.height)
@@ -380,14 +382,23 @@ void MainWindow::updateBrandDashboard()
                                    .arg(pv.bit_depth)
                              : tr("preview inactive");
         frameCounter = rt.delivered_frames;
-        dashboardFps = (rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps;
-        if (signal.width > 0 && signal.height > 0)
+        if (inputConnected)
         {
-            signalText = QStringLiteral("%1 x %2").arg(signal.width).arg(signal.height);
-            if (signal.bit_depth > 0)
-                colorText = QStringLiteral("%1 · %2-bit")
-                                .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
-                                .arg(signal.bit_depth);
+            dashboardFps = (rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps;
+            if (signal.width > 0 && signal.height > 0)
+            {
+                signalText = QStringLiteral("%1 x %2").arg(signal.width).arg(signal.height);
+                if (signal.bit_depth > 0)
+                    colorText = QStringLiteral("%1 · %2-bit")
+                                    .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
+                                    .arg(signal.bit_depth);
+            }
+        }
+        else
+        {
+            signalText = tr("Disconnected");
+            dashboardFps = 0.0;
+            colorText = QStringLiteral("--");
         }
     }
 #endif
@@ -408,7 +419,7 @@ void MainWindow::updateBrandDashboard()
         }
     }
 
-    if (active && frameCounter > 0)
+    if (active && inputConnected && frameCounter > 0)
     {
         if (frameCounter == lastWatchdogFrameCounter_)
         {
@@ -446,11 +457,17 @@ void MainWindow::updateBrandDashboard()
         lastWatchdogFrameCounter_ = frameCounter;
     }
 
-    setLabel("statusBadge", frameStallWarningActive_ ? tr("FRAME STALL")
-                                                     : (active ? tr("CAPTURING") : tr("READY FOR SIGNAL")));
-    setLabel("previewTitle", active ? tr("Capture Pipeline Active") : tr("Hardware Signal Pipeline"));
-    setLabel("previewHint", active ? tr("Live render is active in the center preview.")
-                                   : tr("No active capture session."));
+    setLabel("statusBadge", active && !inputConnected
+                                ? tr("NO SIGNAL")
+                                : (frameStallWarningActive_ ? tr("FRAME STALL")
+                                                           : (active ? tr("CAPTURING") : tr("READY FOR SIGNAL"))));
+    setLabel("previewTitle", active && !inputConnected
+                                 ? tr("Waiting for Signal")
+                                 : (active ? tr("Capture Pipeline Active") : tr("Hardware Signal Pipeline")));
+    setLabel("previewHint", active && !inputConnected
+                                ? tr("Capture is active and waiting for the input signal.")
+                                : (active ? tr("Live render is active in the center preview.")
+                                          : tr("No active capture session.")));
 
     const QString fpsText = (dashboardFps > 0.0)
                                 ? QStringLiteral("%1 fps").arg(QString::number(dashboardFps, 'f', 2))
@@ -1248,7 +1265,7 @@ void MainWindow::refreshGvfgMonitoring()
         gvfg_->zeroCopyEnabled() != zeroCopyEnabled)
         gvfg_->open(deviceIndex_, zeroCopyEnabled);
     if (ui->btnStart)
-        ui->btnStart->setEnabled(gvfg_->isOpen() && gvfg_->signalStatus().connected != 0);
+        ui->btnStart->setEnabled(gvfg_->isOpen());
 }
 #endif
 

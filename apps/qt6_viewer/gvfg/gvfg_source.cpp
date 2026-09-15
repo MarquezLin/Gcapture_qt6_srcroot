@@ -50,14 +50,12 @@ QString gvfgEventName(gvfg_event_type_t type)
 {
     switch (type)
     {
-    case GVFG_EVENT_SIGNAL_CONNECTED:
-        return QStringLiteral("SIGNAL_CONNECTED");
-    case GVFG_EVENT_SIGNAL_DISCONNECTED:
-        return QStringLiteral("SIGNAL_DISCONNECTED");
-    case GVFG_EVENT_STREAM_READY:
-        return QStringLiteral("STREAM_READY");
-    case GVFG_EVENT_FORMAT_CHANGE_BEGIN:
-        return QStringLiteral("FORMAT_CHANGE_BEGIN");
+    case GVFG_EVENT_VIDEO_FORMAT_CHANGED:
+        return QStringLiteral("VIDEO_FORMAT_CHANGED");
+    case GVFG_EVENT_VIDEO_INPUT_PLUGIN:
+        return QStringLiteral("VIDEO_INPUT_PLUGIN");
+    case GVFG_EVENT_VIDEO_INPUT_UNPLUG:
+        return QStringLiteral("VIDEO_INPUT_UNPLUG");
     default:
         return QStringLiteral("UNKNOWN");
     }
@@ -159,13 +157,7 @@ bool GvfgSource::open(int deviceIndex, bool zeroCopyEnabled)
 
     openedDeviceIndex_ = requestedIndex;
     zeroCopyEnabled_ = zeroCopyEnabled;
-    gvfg_signal_status_t status{};
-    if (gvfg_get_channel_signal_status(handle_, GVFG_CHANNEL_0, &status) == GVFG_OK)
-    {
-        std::lock_guard<std::mutex> lock(signalMutex_);
-        cachedSignal_ = status;
-    }
-    emit signalStatusChanged(status.connected != 0);
+    refreshSignalStatus();
     return true;
 }
 
@@ -191,6 +183,7 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         return false;
     if (!setPreview(previewHwnd, previewBitDepthMode))
         return false;
+
     if (!signalStatus().connected)
     {
         emit errorOccurred(QStringLiteral("GVFG start blocked: no locked input signal."));
@@ -882,8 +875,20 @@ void GvfgSource::pollEvents()
     {
         const auto type = static_cast<gvfg_event_type_t>(event.type);
         emit eventOccurred(QStringLiteral("GVFG event %1").arg(gvfgEventName(type)));
-        if (type == GVFG_EVENT_SIGNAL_CONNECTED || type == GVFG_EVENT_SIGNAL_DISCONNECTED ||
-            type == GVFG_EVENT_FORMAT_CHANGE_BEGIN || type == GVFG_EVENT_STREAM_READY)
+        if (type == GVFG_EVENT_VIDEO_INPUT_UNPLUG)
+        {
+            bool changed;
+            {
+                std::lock_guard<std::mutex> lock(signalMutex_);
+                changed = cachedSignal_.connected != 0 || cachedSignal_.width != 0 ||
+                          cachedSignal_.height != 0;
+                cachedSignal_ = {};
+                cachedSignal_.channel = GVFG_CHANNEL_0;
+            }
+            if (changed)
+                emit signalStatusChanged(false);
+        }
+        else if (type == GVFG_EVENT_VIDEO_FORMAT_CHANGED || type == GVFG_EVENT_VIDEO_INPUT_PLUGIN)
         {
             gvfg_signal_status_t status{};
             if (gvfg_get_channel_signal_status(handle_, GVFG_CHANNEL_0, &status) == GVFG_OK)
@@ -898,7 +903,7 @@ void GvfgSource::pollEvents()
                     emit signalStatusChanged(status.connected != 0);
             }
         }
-        if (type == GVFG_EVENT_SIGNAL_DISCONNECTED)
+        if (type == GVFG_EVENT_VIDEO_INPUT_UNPLUG)
         {
             signalConnected_.store(false, std::memory_order_release);
             latestVideoTimestampNs_.store(0, std::memory_order_release);
@@ -908,7 +913,7 @@ void GvfgSource::pollEvents()
                 audioPlaybackQueue_.clear();
             }
         }
-        else if (type == GVFG_EVENT_FORMAT_CHANGE_BEGIN)
+        else if (type == GVFG_EVENT_VIDEO_FORMAT_CHANGED)
         {
             latestVideoTimestampNs_.store(0, std::memory_order_release);
             avSyncEpoch_.fetch_add(1, std::memory_order_acq_rel);
@@ -917,7 +922,7 @@ void GvfgSource::pollEvents()
                 audioPlaybackQueue_.clear();
             }
         }
-        else if (type == GVFG_EVENT_SIGNAL_CONNECTED || type == GVFG_EVENT_STREAM_READY)
+        else if (type == GVFG_EVENT_VIDEO_INPUT_PLUGIN)
         {
             signalConnected_.store(true, std::memory_order_release);
             signalCv_.notify_all();
@@ -925,6 +930,26 @@ void GvfgSource::pollEvents()
         event = {};
         event.struct_size = sizeof(event);
     }
+}
+
+bool GvfgSource::refreshSignalStatus()
+{
+    if (!handle_)
+        return false;
+
+    gvfg_signal_status_t status{};
+    if (gvfg_get_channel_signal_status(handle_, GVFG_CHANNEL_0, &status) != GVFG_OK)
+        return false;
+
+    bool connectedChanged;
+    {
+        std::lock_guard<std::mutex> lock(signalMutex_);
+        connectedChanged = cachedSignal_.connected != status.connected;
+        cachedSignal_ = status;
+    }
+    if (connectedChanged)
+        emit signalStatusChanged(status.connected != 0);
+    return true;
 }
 
 gvfg_runtime_info_t GvfgSource::runtimeInfo() const

@@ -518,11 +518,20 @@ void MainWindow::onStart()
         }
 
         refreshGvfgMonitoring();
-        if (!gvfg_->isOpen() || !gvfg_->signalStatus().connected)
+        gvfg_->pollEvents();
+        if (!gvfg_->isOpen())
         {
-            QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("No locked input signal. Start is unavailable."));
-            if (ui->btnStart)
-                ui->btnStart->setEnabled(false);
+            QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("GVFG device is not open."));
+            return;
+        }
+        if (!gvfg_->refreshSignalStatus())
+        {
+            QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("Unable to query the current input signal."));
+            return;
+        }
+        if (!gvfg_->signalStatus().connected)
+        {
+            QMessageBox::information(this, QStringLiteral("GVFG"), QStringLiteral("No locked input signal. Connect a signal and press Start again."));
             return;
         }
         const auto requestedFormat = static_cast<gvfg_pixel_format_t>(

@@ -58,6 +58,7 @@ public:
     bool setVideoFormat(gvfg_pixel_format_t format);
     void clearPreview();
     void pollEvents();
+    bool refreshSignalStatus();
     bool isRunning() const { return running_; }
     bool audioEnabled() const { return audioEnabled_; }
     gvfg_audio_format_t audioFormat() const { return audioFormat_; }

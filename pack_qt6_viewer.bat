@@ -5,7 +5,6 @@ set "PROJECT_DIR=%~dp0"
 set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
 if not defined SOURCE_BIN set "SOURCE_BIN=%PROJECT_DIR%\build\Desktop_Qt_6_10_2_MSVC2022_64bit-Release\bin"
-if not defined GVFG_SOURCE_BIN set "GVFG_SOURCE_BIN=%PROJECT_DIR%\..\GVFG_Standalone\build\Desktop_Qt_6_10_2_MSVC2022_64bit-Release\bin"
 if not defined QT_BIN set "QT_BIN=C:\Qt\6.10.2\msvc2022_64\bin"
 if not defined VSDEVCMD set "VSDEVCMD=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
 
@@ -30,9 +29,6 @@ set "STAGE_DIR=%STAGE_ROOT%\%PACKAGE_NAME%"
 set "WINDEPLOYQT=%QT_BIN%\windeployqt.exe"
 set "FFMPEG_BIN=%PROJECT_DIR%\third_party\ffmpeg\bin"
 set "EDID_EXE=%PROJECT_DIR%\third_party\edid-decode\vs\x64\Release\edid-decode.exe"
-set "GIGA_IOCTL_DLL=%SOURCE_BIN%\giga_ioctl.dll"
-if not exist "%GIGA_IOCTL_DLL%" set "GIGA_IOCTL_DLL=%GVFG_SOURCE_BIN%\giga_ioctl.dll"
-
 echo [package] Configuration: Release
 echo [package] Source: "%SOURCE_BIN%"
 echo [package] Output: "%ZIP_PATH%"
@@ -42,10 +38,6 @@ for %%F in (qt6_viewer.exe gcapture.dll gdisplay.dll gvfg.dll gvfg_preview.dll) 
         echo [package] ERROR: Required application file not found: %%F
         goto fail
     )
-)
-if not exist "%GIGA_IOCTL_DLL%" (
-    echo [package] ERROR: giga_ioctl.dll not found in SOURCE_BIN or GVFG_SOURCE_BIN.
-    goto fail
 )
 if not exist "%WINDEPLOYQT%" (
     echo [package] ERROR: "%WINDEPLOYQT%" not found.
@@ -77,7 +69,6 @@ echo [package] Copy application files...
 for %%F in (qt6_viewer.exe gcapture.dll gdisplay.dll gvfg.dll gvfg_preview.dll) do (
     copy /Y "%SOURCE_BIN%\%%F" "%STAGE_DIR%\" >nul || goto fail
 )
-copy /Y "%GIGA_IOCTL_DLL%" "%STAGE_DIR%\" >nul || goto fail
 copy /Y "%FFMPEG_BIN%\*.dll" "%STAGE_DIR%\" >nul || goto fail
 copy /Y "%EDID_EXE%" "%STAGE_DIR%\" >nul || goto fail
 

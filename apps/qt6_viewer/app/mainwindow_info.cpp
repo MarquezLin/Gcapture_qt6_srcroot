@@ -317,7 +317,7 @@ void MainWindow::refreshCaptureRuntimeInfo()
         fpgaSignal.range = GCAP_RANGE_LIMITED;
 
         gcap_signal_status_t dmaBuffer{};
-        if (rt.delivered_frames > 0)
+        if (signal.connected && rt.delivered_frames > 0)
         {
             dmaBuffer.width = signal.width;
             dmaBuffer.height = signal.height;
@@ -333,10 +333,10 @@ void MainWindow::refreshCaptureRuntimeInfo()
         captureInfo_.backendName = QStringLiteral("GVFG");
         captureInfo_.frameSource = QStringLiteral("GVFG capture frame");
         captureInfo_.pathName = QStringLiteral("FPGA reported signal -> gvfg_read_frame");
-        captureInfo_.captureFormat = rt.delivered_frames > 0
+        captureInfo_.captureFormat = signal.connected && rt.delivered_frames > 0
                                          ? QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format))
                                          : QStringLiteral("--");
-        captureInfo_.renderFormat = pv.active
+        captureInfo_.renderFormat = signal.connected && pv.active
                                         ? QStringLiteral("gvfg_preview %1x%2 %3 %4bit")
                                               .arg(pv.width)
                                               .arg(pv.height)
