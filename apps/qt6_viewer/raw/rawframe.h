@@ -9,6 +9,7 @@ enum class RawPixelFormat
 {
     Yuy2,
     Y210,
+    Nv12,
     Bgra8,
     Rgba8,
     Abgr2101010
@@ -20,6 +21,7 @@ struct RawPixelSample
     int x = 0;
     int y = 0;
     quint64 byteOffset = 0;
+    quint64 chromaByteOffset = 0;
     quint32 packedValue = 0;
     quint16 yValue = 0;
     quint16 uValue = 0;

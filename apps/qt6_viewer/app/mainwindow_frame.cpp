@@ -145,24 +145,6 @@ namespace
                json.write(QJsonDocument(metadata).toJson(QJsonDocument::Indented)) > 0;
     }
 
-    static QByteArray normalizeGvfgY210(const QByteArray &nativeData,
-                                        int width,
-                                        int height,
-                                        int strideBytes)
-    {
-        QByteArray standard = nativeData;
-        const int rowBytes = width * 4;
-        for (int y = 0; y < height; ++y)
-        {
-            char *row = standard.data() + qsizetype(y) * strideBytes;
-            for (int offset = 0; offset + 7 < rowBytes; offset += 8)
-            {
-                std::swap(row[offset + 2], row[offset + 6]);
-                std::swap(row[offset + 3], row[offset + 7]);
-            }
-        }
-        return standard;
-    }
 #endif
 } // namespace
 
@@ -396,24 +378,103 @@ void MainWindow::onSnapshot()
         else
             MainWindow::postLog(QStringLiteral("[GVFG Snapshot] TIFF export failed: %1").arg(tiffPath), true);
 #endif
-        if (snapshot.pixelFormat == GVFG_PIXFMT_Y210)
+        const int outputFormat = ui->comboGvfgSnapshotFormat
+                                     ? ui->comboGvfgSnapshotFormat->currentData().toInt()
+                                     : 0;
+        QByteArray outputData;
+        int outputStride = 0;
+        QString outputName;
+        QString outputSuffix;
+        gvfg_status_t conversionStatus = GVFG_OK;
+
+        if (outputFormat == 0)
         {
-            const QByteArray standardY210 = normalizeGvfgY210(
-                snapshot.rawData, snapshot.width, snapshot.height, snapshot.strideBytes);
-            const QString standardPath = basePath + QStringLiteral("_source_y210.raw");
-            if (writeRawAndMetadata(standardPath, standardY210, snapshot.width,
-                                    snapshot.height, snapshot.strideBytes,
-                                    QStringLiteral("Y210"), snapshot.frameId))
-                saved << standardPath << standardPath + QStringLiteral(".json");
+            outputStride = snapshot.strideBytes;
+            if (snapshot.pixelFormat == GVFG_PIXFMT_Y210)
+            {
+                outputData = snapshot.rawData;
+                outputName = QStringLiteral("Y210");
+                outputSuffix = QStringLiteral("_source_y210.raw");
+            }
+            else if (snapshot.pixelFormat == GVFG_PIXFMT_YUY2)
+            {
+                outputData = snapshot.rawData;
+                outputName = QStringLiteral("YUY2");
+                outputSuffix = QStringLiteral("_source_yuy2.raw");
+            }
+            else
+            {
+                conversionStatus = GVFG_ENOTSUP;
+            }
         }
-        else if (snapshot.pixelFormat == GVFG_PIXFMT_YUY2)
+        else
         {
-            const QString yuy2Path = basePath + QStringLiteral("_source_yuy2.raw");
-            if (writeRawAndMetadata(yuy2Path, snapshot.rawData, snapshot.width,
-                                    snapshot.height, snapshot.strideBytes,
-                                    QStringLiteral("YUY2"), snapshot.frameId))
-                saved << yuy2Path << yuy2Path + QStringLiteral(".json");
+            gvfg_frame_t source{};
+            source.data = snapshot.rawData.constData();
+            source.data_size = static_cast<uint64_t>(snapshot.rawData.size());
+            source.width = snapshot.width;
+            source.height = snapshot.height;
+            source.row_stride_bytes = snapshot.strideBytes;
+            source.pixel_format = snapshot.pixelFormat;
+            source.bit_depth = snapshot.bitDepth;
+            source.frame_id = snapshot.frameId;
+
+            const bool nv12 = outputFormat == GVFG_GPU_OUTPUT_NV12;
+            outputStride = nv12 ? snapshot.width : snapshot.width * 4;
+            const qsizetype outputRows = nv12
+                                             ? qsizetype(snapshot.height) + snapshot.height / 2
+                                             : snapshot.height;
+            outputData.resize(qsizetype(outputStride) * outputRows);
+
+            if (outputFormat == GVFG_GPU_OUTPUT_RGB10A2)
+            {
+                outputName = QStringLiteral("RGB10A2");
+                outputSuffix = QStringLiteral("_rgb10a2.raw");
+                conversionStatus = gvfg_gpu_convert_to_rgb10a2(
+                    &source, outputData.data(), static_cast<uint64_t>(outputData.size()), outputStride);
+            }
+            else if (outputFormat == GVFG_GPU_OUTPUT_BGRA8)
+            {
+                outputName = QStringLiteral("BGRA8");
+                outputSuffix = QStringLiteral("_bgra8.raw");
+                conversionStatus = gvfg_gpu_convert_to_bgra8(
+                    &source, outputData.data(), static_cast<uint64_t>(outputData.size()), outputStride);
+            }
+            else if (outputFormat == GVFG_GPU_OUTPUT_NV12)
+            {
+                outputName = QStringLiteral("NV12");
+                outputSuffix = QStringLiteral("_nv12.raw");
+                conversionStatus = gvfg_gpu_convert_to_nv12(
+                    &source, outputData.data(), static_cast<uint64_t>(outputData.size()), outputStride);
+            }
+            else
+            {
+                conversionStatus = GVFG_EINVAL;
+            }
         }
+
+        if (conversionStatus != GVFG_OK)
+        {
+            QMessageBox::warning(this, "Snapshot",
+                                 QStringLiteral("GVFG RAW conversion failed.\n%1")
+                                     .arg(QString::fromUtf8(gvfg_strerror(conversionStatus))));
+            return;
+        }
+
+        const QString rawPath = basePath + outputSuffix;
+        if (!writeRawAndMetadata(rawPath, outputData, snapshot.width, snapshot.height,
+                                 outputStride, outputName, snapshot.frameId))
+        {
+            QMessageBox::warning(this, "Snapshot",
+                                 QStringLiteral("GVFG RAW snapshot save failed.\nPath: %1")
+                                     .arg(rawPath));
+            return;
+        }
+        saved << rawPath << rawPath + QStringLiteral(".json");
+        MainWindow::postLog(QStringLiteral("[GVFG Snapshot] format=%1 source=%2 path=%3")
+                                .arg(outputName,
+                                     QString::fromLatin1(gvfg_pixel_format_name(snapshot.pixelFormat)),
+                                     rawPath));
 
         lastFrameImage_ = snapshot.image;
         if (ui->statusbar)

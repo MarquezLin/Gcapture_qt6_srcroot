@@ -35,6 +35,16 @@ QRgb yuvToRgb(int y, int u, int v, int bits)
                 clamp8((298 * c + 516 * d + 128) >> 8));
 }
 
+QRgb yuv709ToRgb(int y, int u, int v)
+{
+    const int c = std::max(0, y - 16);
+    const int d = u - 128;
+    const int e = v - 128;
+    return qRgb(clamp8((298 * c + 459 * e + 128) >> 8),
+                clamp8((298 * c - 55 * d - 136 * e + 128) >> 8),
+                clamp8((298 * c + 541 * d + 128) >> 8));
+}
+
 QString number(quint32 value, bool hex, int digits = 0)
 {
     if (!hex)
@@ -64,8 +74,17 @@ bool RawFrame::load(const QString &filePath, int w, int h, int stride,
             *error = QStringLiteral("Invalid dimensions/stride. Minimum stride is %1 bytes.").arg(minStride);
         return false;
     }
+    if (pixelFormat == RawPixelFormat::Nv12 && ((w & 1) != 0 || (h & 1) != 0))
+    {
+        if (error)
+            *error = QStringLiteral("NV12 width and height must both be even.");
+        return false;
+    }
 
-    const qint64 required = qint64(stride) * h;
+    const qint64 rowCount = pixelFormat == RawPixelFormat::Nv12
+                                ? qint64(h) + h / 2
+                                : h;
+    const qint64 required = qint64(stride) * rowCount;
     if (file.size() < required)
     {
         if (error)
@@ -86,7 +105,10 @@ bool RawFrame::load(const QString &filePath, int w, int h, int stride,
 bool RawFrame::isValid() const
 {
     return width > 0 && height > 0 && strideBytes >= minimumStride(width, format) &&
-           bytes.size() >= qint64(strideBytes) * height;
+           bytes.size() >= qint64(strideBytes) *
+                               (format == RawPixelFormat::Nv12
+                                    ? qint64(height) + height / 2
+                                    : height);
 }
 
 int RawFrame::minimumStride(int width, RawPixelFormat format)
@@ -95,6 +117,7 @@ int RawFrame::minimumStride(int width, RawPixelFormat format)
     {
     case RawPixelFormat::Yuy2: return ((width + 1) / 2) * 4;
     case RawPixelFormat::Y210: return ((width + 1) / 2) * 8;
+    case RawPixelFormat::Nv12: return width;
     case RawPixelFormat::Bgra8:
     case RawPixelFormat::Rgba8:
     case RawPixelFormat::Abgr2101010: return width * 4;
@@ -108,6 +131,7 @@ QString RawFrame::formatName(RawPixelFormat format)
     {
     case RawPixelFormat::Yuy2: return QStringLiteral("YUY2");
     case RawPixelFormat::Y210: return QStringLiteral("Y210");
+    case RawPixelFormat::Nv12: return QStringLiteral("NV12");
     case RawPixelFormat::Bgra8: return QStringLiteral("BGRA8");
     case RawPixelFormat::Rgba8: return QStringLiteral("RGBA8");
     case RawPixelFormat::Abgr2101010: return QStringLiteral("ABGR2101010");
@@ -150,6 +174,18 @@ RawPixelSample RawFrame::pixel(int x, int y) const
         // workaround belongs in the GVFG SDK conversion path, not the app.
         s.uValue = s.storedWords[1] >> 6;
         s.vValue = s.storedWords[3] >> 6;
+    }
+    else if (format == RawPixelFormat::Nv12)
+    {
+        const uchar *yPlane = reinterpret_cast<const uchar *>(bytes.constData());
+        const uchar *uvPlane = yPlane + qint64(strideBytes) * height;
+        const int chromaX = x & ~1;
+        s.byteOffset = quint64(y) * strideBytes + quint64(x);
+        s.chromaByteOffset = quint64(strideBytes) * height +
+                             quint64(y / 2) * strideBytes + quint64(chromaX);
+        s.yValue = yPlane[qint64(y) * strideBytes + x];
+        s.uValue = uvPlane[qint64(y / 2) * strideBytes + chromaX];
+        s.vValue = uvPlane[qint64(y / 2) * strideBytes + chromaX + 1];
     }
     else
     {
@@ -194,6 +230,8 @@ QImage RawFrame::makePreview() const
                 dst[x] = yuvToRgb(s.yValue, s.uValue, s.vValue, 8);
             else if (format == RawPixelFormat::Y210)
                 dst[x] = yuvToRgb(s.yValue, s.uValue, s.vValue, 10);
+            else if (format == RawPixelFormat::Nv12)
+                dst[x] = yuv709ToRgb(s.yValue, s.uValue, s.vValue);
             else if (format == RawPixelFormat::Bgra8 || format == RawPixelFormat::Rgba8)
                 dst[x] = qRgba(s.rValue, s.gValue, s.bValue, s.aValue);
             else
@@ -211,7 +249,8 @@ QString RawFrame::cellText(int x, int y, bool hex) const
     const RawPixelSample s = pixel(x, y);
     if (!s.valid)
         return {};
-    if (format == RawPixelFormat::Yuy2 || format == RawPixelFormat::Y210)
+    if (format == RawPixelFormat::Yuy2 || format == RawPixelFormat::Y210 ||
+        format == RawPixelFormat::Nv12)
         return QStringLiteral("Y %1\nU %2\nV %3")
             .arg(number(s.yValue, hex)).arg(number(s.uValue, hex)).arg(number(s.vValue, hex));
     return QStringLiteral("R %1\nG %2\nB %3\nA %4")
@@ -236,6 +275,10 @@ QString RawFrame::pixelText(int x, int y, bool hex) const
             .arg(number(s.yValue, hex)).arg(number(s.uValue, hex)).arg(number(s.vValue, hex))
             .arg(((s.storedWords[0] | s.storedWords[1] | s.storedWords[2] | s.storedWords[3]) & 0x3f) == 0
                      ? QStringLiteral("OK") : QStringLiteral("NON-ZERO"));
+    if (format == RawPixelFormat::Nv12)
+        return text + QStringLiteral("Y=%1 U=%2 V=%3  UVOffset=%4")
+            .arg(number(s.yValue, hex)).arg(number(s.uValue, hex)).arg(number(s.vValue, hex))
+            .arg(number(quint32(s.chromaByteOffset), true, 8));
     return text + QStringLiteral("R=%1 G=%2 B=%3 A=%4  PackedLE=%5")
         .arg(number(s.rValue, hex)).arg(number(s.gValue, hex))
         .arg(number(s.bValue, hex)).arg(number(s.aValue, hex))

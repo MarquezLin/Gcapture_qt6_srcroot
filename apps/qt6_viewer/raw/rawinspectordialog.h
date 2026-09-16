@@ -3,10 +3,12 @@
 
 #include "rawframe.h"
 #include <QDialog>
+#include <QStringList>
 
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QPushButton;
 class QSpinBox;
 class RawPreviewWidget;
 
@@ -21,8 +23,13 @@ private:
     void applyFormatDefaults();
     void loadCurrent();
     void inferFromFileName(const QString &path);
+    void chooseFile();
+    void navigateFile(int offset);
+    void refreshFileNavigation();
 
     QString path_;
+    QStringList siblingRawFiles_;
+    int currentFileIndex_ = -1;
     RawFrame frame_;
     RawPreviewWidget *viewer_ = nullptr;
     QLabel *fileLabel_ = nullptr;
@@ -33,6 +40,8 @@ private:
     QSpinBox *heightSpin_ = nullptr;
     QSpinBox *strideSpin_ = nullptr;
     QCheckBox *hexCheck_ = nullptr;
+    QPushButton *previousFileButton_ = nullptr;
+    QPushButton *nextFileButton_ = nullptr;
 };
 
 #endif

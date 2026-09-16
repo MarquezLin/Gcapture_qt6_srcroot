@@ -149,9 +149,9 @@ void MainWindow::closeCaptureSession()
     stopAudioMonitoring();
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (usingGvfg_ && gvfg_)
+    if (gvfg_ && (usingGvfg_ || gvfg_->isOpen()))
     {
-        gvfg_->stop();
+        gvfg_->close();
         usingGvfg_ = false;
     }
 #endif
@@ -517,27 +517,32 @@ void MainWindow::onStart()
             return;
         }
 
-        refreshGvfgMonitoring();
-        gvfg_->pollEvents();
-        if (!gvfg_->isOpen())
+        const bool zeroCopyEnabled = ui->checkZeroCopy && ui->checkZeroCopy->isChecked();
+        if (!gvfg_->open(deviceIndex_, zeroCopyEnabled))
         {
-            QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("GVFG device is not open."));
+            QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("Unable to open the GVFG device."));
             return;
         }
+        gvfg_->pollEvents();
         if (!gvfg_->refreshSignalStatus())
         {
             QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("Unable to query the current input signal."));
+            gvfg_->close();
             return;
         }
         if (!gvfg_->signalStatus().connected)
         {
             QMessageBox::information(this, QStringLiteral("GVFG"), QStringLiteral("No locked input signal. Connect a signal and press Start again."));
+            gvfg_->close();
             return;
         }
         const auto requestedFormat = static_cast<gvfg_pixel_format_t>(
             ui->comboPixelFormat ? ui->comboPixelFormat->currentData().toInt() : static_cast<int>(GVFG_PIXFMT_YUY2));
         if (!gvfg_->setVideoFormat(requestedFormat))
+        {
+            gvfg_->close();
             return;
+        }
 
         currentProfile_ = {};
         currentProfile_.mode = GCAP_PROFILE_DEVICE_DEFAULT;
@@ -545,12 +550,12 @@ void MainWindow::onStart()
         currentProfile_.fps_num = 0;
         currentProfile_.fps_den = 0;
 
-        const bool zeroCopyEnabled = ui->checkZeroCopy && ui->checkZeroCopy->isChecked();
         const bool audioEnabled = !ui->checkAudioMonitoring || ui->checkAudioMonitoring->isChecked();
         const bool started = gvfg_->start(hwnd, deviceIndex_, selectedPreviewBitDepthMode(),
                                           zeroCopyEnabled, audioEnabled);
         if (!started)
         {
+            gvfg_->close();
             usingGvfg_ = false;
             clearPreviewSurface();
             if (ui->statusbar)

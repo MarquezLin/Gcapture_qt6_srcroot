@@ -246,6 +246,20 @@ MainWindow::MainWindow(QWidget *parent)
     ui->controlPanel->setMaximumWidth(450);
     setWindowTitle(QStringLiteral("GIGABYTE Video Capture utility v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
 
+    if (ui->labelGvfgSnapshotFormat)
+        ui->labelGvfgSnapshotFormat->setVisible(false);
+    if (ui->comboGvfgSnapshotFormat)
+        ui->comboGvfgSnapshotFormat->setVisible(false);
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (ui->comboGvfgSnapshotFormat)
+    {
+        ui->comboGvfgSnapshotFormat->addItem(QStringLiteral("Source RAW (YUY2/Y210)"), 0);
+        ui->comboGvfgSnapshotFormat->addItem(QStringLiteral("RGB10A2"), GVFG_GPU_OUTPUT_RGB10A2);
+        ui->comboGvfgSnapshotFormat->addItem(QStringLiteral("BGRA8"), GVFG_GPU_OUTPUT_BGRA8);
+        ui->comboGvfgSnapshotFormat->addItem(QStringLiteral("NV12"), GVFG_GPU_OUTPUT_NV12);
+    }
+#endif
+
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     gvfg_ = new GvfgSource(this);
     connect(gvfg_, &GvfgSource::frameReady, this, &MainWindow::sigFrame, Qt::QueuedConnection);
@@ -587,6 +601,10 @@ void MainWindow::updateRuntimeStatusUi()
         ui->labelBitDepth->setVisible(!gvfgSelected);
     if (ui->comboPreviewBitDepth)
         ui->comboPreviewBitDepth->setVisible(!gvfgSelected);
+    if (ui->labelGvfgSnapshotFormat)
+        ui->labelGvfgSnapshotFormat->setVisible(gvfgSelected);
+    if (ui->comboGvfgSnapshotFormat)
+        ui->comboGvfgSnapshotFormat->setVisible(gvfgSelected);
     if (ui->labelinfo1)
         ui->labelinfo1->setVisible(!gvfgSelected && !previewFullscreen_);
     if (ui->metricLabel3)
@@ -1254,18 +1272,12 @@ void MainWindow::refreshGvfgMonitoring()
     if (!gvfg_ || usingGvfg_)
         return;
     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
-    if (backend != kQtViewerGvfgBackend || deviceIndex_ < 0)
-    {
-        if (gvfg_->isOpen())
-            gvfg_->close();
-        return;
-    }
-    const bool zeroCopyEnabled = ui->checkZeroCopy && ui->checkZeroCopy->isChecked();
-    if (!gvfg_->isOpen() || gvfg_->openedDeviceIndex() != deviceIndex_ ||
-        gvfg_->zeroCopyEnabled() != zeroCopyEnabled)
-        gvfg_->open(deviceIndex_, zeroCopyEnabled);
+    // Idle monitoring must not open the device. Opening a GVFG channel can
+    // prevent another process from receiving frames even when capture is stopped.
+    if (gvfg_->isOpen())
+        gvfg_->close();
     if (ui->btnStart)
-        ui->btnStart->setEnabled(gvfg_->isOpen());
+        ui->btnStart->setEnabled(backend == kQtViewerGvfgBackend && deviceIndex_ >= 0);
 }
 #endif
 
@@ -1375,8 +1387,6 @@ void MainWindow::setupConnections()
                     if (backend != kQtViewerGvfgBackend || !gvfg_ || usingGvfg_)
                         return;
                     refreshGvfgMonitoring();
-                    if (gvfg_->isOpen())
-                        gvfg_->setVideoFormat(static_cast<gvfg_pixel_format_t>(ui->comboPixelFormat->currentData().toInt()));
                 });
 #endif
 

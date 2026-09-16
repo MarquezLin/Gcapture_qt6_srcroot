@@ -566,6 +566,20 @@ QPushButton#btnStop:pressed {
              </property>
             </widget>
            </item>
+           <item row="2" column="0">
+            <widget class="QLabel" name="labelGvfgSnapshotFormat">
+             <property name="text">
+              <string>GVFG RAW output</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="1">
+            <widget class="QComboBox" name="comboGvfgSnapshotFormat">
+             <property name="toolTip">
+              <string>Source RAW preserves the received YUY2 or Y210 format. Other choices use the GVFG SDK GPU conversion APIs.</string>
+             </property>
+            </widget>
+           </item>
            <item row="3" column="0" colspan="2">
             <widget class="QPushButton" name="btnShowEdid">
              <property name="minimumSize">

@@ -4,6 +4,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFile>
 #include <QFormLayout>
@@ -13,6 +15,7 @@
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -22,14 +25,24 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
     resize(1200, 780);
 
     auto *layout = new QVBoxLayout(this);
+    auto *fileRow = new QHBoxLayout;
     fileLabel_ = new QLabel(this);
     fileLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    layout->addWidget(fileLabel_);
+    fileLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    previousFileButton_ = new QPushButton(QStringLiteral("Previous"), this);
+    nextFileButton_ = new QPushButton(QStringLiteral("Next"), this);
+    auto *openFileButton = new QPushButton(QStringLiteral("Open File..."), this);
+    fileRow->addWidget(fileLabel_, 1);
+    fileRow->addWidget(previousFileButton_);
+    fileRow->addWidget(nextFileButton_);
+    fileRow->addWidget(openFileButton);
+    layout->addLayout(fileRow);
 
     auto *settings = new QHBoxLayout;
     formatCombo_ = new QComboBox(this);
     formatCombo_->addItem(QStringLiteral("YUY2 (8-bit 4:2:2, Y0 U Y1 V)"), int(RawPixelFormat::Yuy2));
     formatCombo_->addItem(QStringLiteral("Y210 (10-bit 4:2:2)"), int(RawPixelFormat::Y210));
+    formatCombo_->addItem(QStringLiteral("NV12 (8-bit 4:2:0, Y + UV)"), int(RawPixelFormat::Nv12));
     formatCombo_->addItem(QStringLiteral("BGRA8"), int(RawPixelFormat::Bgra8));
     formatCombo_->addItem(QStringLiteral("RGBA8"), int(RawPixelFormat::Rgba8));
     formatCombo_->addItem(QStringLiteral("ABGR2101010 / R10G10B10A2"), int(RawPixelFormat::Abgr2101010));
@@ -75,6 +88,9 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
     connect(formatCombo_, &QComboBox::currentIndexChanged, this, &RawInspectorDialog::applyFormatDefaults);
     connect(widthSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &RawInspectorDialog::applyFormatDefaults);
     connect(reload, &QPushButton::clicked, this, &RawInspectorDialog::loadCurrent);
+    connect(openFileButton, &QPushButton::clicked, this, &RawInspectorDialog::chooseFile);
+    connect(previousFileButton_, &QPushButton::clicked, this, [this]() { navigateFile(-1); });
+    connect(nextFileButton_, &QPushButton::clicked, this, [this]() { navigateFile(1); });
     connect(hexCheck_, &QCheckBox::toggled, viewer_, &RawPreviewWidget::setHexadecimal);
     connect(viewer_, &RawPreviewWidget::pixelTextChanged, pixelLabel_, &QLabel::setText);
     connect(viewer_, &RawPreviewWidget::zoomChanged, this, [this](double zoom) {
@@ -86,11 +102,56 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
 
 bool RawInspectorDialog::openFile(const QString &path)
 {
-    path_ = path;
-    fileLabel_->setText(QFileInfo(path).absoluteFilePath());
-    inferFromFileName(path);
+    path_ = QFileInfo(path).absoluteFilePath();
+    fileLabel_->setText(path_);
+    fileLabel_->setToolTip(path_);
+    refreshFileNavigation();
+    inferFromFileName(path_);
     loadCurrent();
     return frame_.isValid();
+}
+
+void RawInspectorDialog::chooseFile()
+{
+    QFileDialog dialog(this,
+                       QStringLiteral("Open RAW Frame"),
+                       QFileInfo(path_).absolutePath(),
+                       QStringLiteral("RAW Frame Files (*.raw);;All Files (*.*)"));
+#ifdef _WIN32
+    dialog.setOption(QFileDialog::DontUseNativeDialog, true);
+#endif
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    if (dialog.exec() == QDialog::Accepted)
+        openFile(dialog.selectedFiles().value(0));
+}
+
+void RawInspectorDialog::navigateFile(int offset)
+{
+    const int target = currentFileIndex_ + offset;
+    if (target >= 0 && target < siblingRawFiles_.size())
+        openFile(siblingRawFiles_.at(target));
+}
+
+void RawInspectorDialog::refreshFileNavigation()
+{
+    siblingRawFiles_.clear();
+    currentFileIndex_ = -1;
+
+    const QFileInfo current(path_);
+    const QFileInfoList entries = QDir(current.absolutePath()).entryInfoList(
+        QDir::Files | QDir::Readable, QDir::Name | QDir::IgnoreCase);
+    for (const QFileInfo &entry : entries)
+    {
+        if (entry.suffix().compare(QStringLiteral("raw"), Qt::CaseInsensitive) != 0)
+            continue;
+        siblingRawFiles_.push_back(entry.absoluteFilePath());
+        if (entry.absoluteFilePath().compare(current.absoluteFilePath(), Qt::CaseInsensitive) == 0)
+            currentFileIndex_ = siblingRawFiles_.size() - 1;
+    }
+
+    previousFileButton_->setEnabled(currentFileIndex_ > 0);
+    nextFileButton_->setEnabled(currentFileIndex_ >= 0 &&
+                                currentFileIndex_ + 1 < siblingRawFiles_.size());
 }
 
 void RawInspectorDialog::inferFromFileName(const QString &path)
@@ -99,16 +160,16 @@ void RawInspectorDialog::inferFromFileName(const QString &path)
     RawPixelFormat format = RawPixelFormat::Yuy2;
     if (name.contains(QStringLiteral("y210")))
         format = RawPixelFormat::Y210;
-    else if (name.contains(QStringLiteral("abgr2101010")) || name.contains(QStringLiteral("r10g10b10a2")))
+    else if (name.contains(QStringLiteral("nv12")))
+        format = RawPixelFormat::Nv12;
+    else if (name.contains(QStringLiteral("rgb10a2")) ||
+             name.contains(QStringLiteral("abgr2101010")) ||
+             name.contains(QStringLiteral("r10g10b10a2")))
         format = RawPixelFormat::Abgr2101010;
     else if (name.contains(QStringLiteral("rgba8")))
         format = RawPixelFormat::Rgba8;
     else if (name.contains(QStringLiteral("bgra8")))
         format = RawPixelFormat::Bgra8;
-    const int idx = formatCombo_->findData(int(format));
-    if (idx >= 0)
-        formatCombo_->setCurrentIndex(idx);
-
     QFile sidecar(path + QStringLiteral(".json"));
     if (sidecar.open(QIODevice::ReadOnly))
     {
@@ -116,9 +177,15 @@ void RawInspectorDialog::inferFromFileName(const QString &path)
         const QString metadataFormat = json.value(QStringLiteral("pixelFormat")).toString().toLower();
         if (metadataFormat == QStringLiteral("y210")) format = RawPixelFormat::Y210;
         else if (metadataFormat == QStringLiteral("yuy2")) format = RawPixelFormat::Yuy2;
+        else if (metadataFormat == QStringLiteral("nv12")) format = RawPixelFormat::Nv12;
         else if (metadataFormat == QStringLiteral("bgra8")) format = RawPixelFormat::Bgra8;
         else if (metadataFormat == QStringLiteral("rgba8")) format = RawPixelFormat::Rgba8;
-        else if (metadataFormat.contains(QStringLiteral("2101010"))) format = RawPixelFormat::Abgr2101010;
+        else if (metadataFormat == QStringLiteral("rgb10a2") ||
+                 metadataFormat.contains(QStringLiteral("2101010")))
+            format = RawPixelFormat::Abgr2101010;
+
+        const QSignalBlocker blockFormat(formatCombo_);
+        const QSignalBlocker blockWidth(widthSpin_);
         const int metadataIndex = formatCombo_->findData(int(format));
         if (metadataIndex >= 0)
             formatCombo_->setCurrentIndex(metadataIndex);
@@ -132,12 +199,21 @@ void RawInspectorDialog::inferFromFileName(const QString &path)
         return;
     }
 
+    const int idx = formatCombo_->findData(int(format));
+    if (idx >= 0)
+        formatCombo_->setCurrentIndex(idx);
+
     const qint64 size = QFileInfo(path).size();
-    const int bpp = (format == RawPixelFormat::Yuy2) ? 2 : 4;
     const QList<QSize> common = {{3840, 2160}, {2560, 1440}, {1920, 1080}, {1280, 720}, {720, 480}};
     for (const QSize &s : common)
     {
-        if (qint64(s.width()) * s.height() * bpp == size)
+        qint64 expectedSize = 0;
+        if (format == RawPixelFormat::Nv12)
+            expectedSize = qint64(s.width()) * (s.height() + s.height() / 2);
+        else
+            expectedSize = qint64(s.width()) * s.height() *
+                           (format == RawPixelFormat::Yuy2 ? 2 : 4);
+        if (expectedSize == size)
         {
             widthSpin_->setValue(s.width());
             heightSpin_->setValue(s.height());

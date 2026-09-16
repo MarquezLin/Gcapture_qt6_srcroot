@@ -44,7 +44,9 @@ QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS
 - YUY2／Y210 capture 與 preview。
 - GVFG runtime FPS、signal status、frame loss 顯示。
 - 啟動 log 顯示 `gvfg_get_version()` 回傳的實際 GVFG DLL 版本。
-- GVFG snapshot：PNG/TIFF，以及原生 `_source_yuy2.raw` 或 `_source_y210.raw`。
+- GVFG snapshot：PNG/TIFF，以及可選的 Source RAW（依收到的格式輸出
+  `_source_yuy2.raw` 或 `_source_y210.raw`）、RGB10A2、BGRA8、NV12 raw data。
+  非 Source RAW 格式由 GVFG SDK GPU conversion API 轉換。
 - GPU conversion 與 FFmpeg 錄影整合。
 
 #### GVFG A/V timestamp 與同步
@@ -73,7 +75,9 @@ qt6_viewer.exe --gvfg-registers
 
 這會顯示 GVFG register 工具，供內部 read/write register 與硬體診斷使用。不要在客戶版本公開這個入口。
 
-RAW Pixel Inspector 也屬於內部分析用途，可檢查 YUY2（`Y0 U0 Y1 V0`）、Y210、BGRA8、RGBA8 與 ABGR2101010 raw frame。
+RAW Pixel Inspector 也屬於內部分析用途，可檢查 YUY2（`Y0 U0 Y1 V0`）、Y210、NV12、
+BGRA8、RGBA8 與 ABGR2101010／RGB10A2 raw frame。`Open File...` 可直接選擇另一個 raw；
+`Previous`／`Next` 會依檔名順序切換同一資料夾內的 raw，並重新套用檔名與 JSON sidecar metadata。
 
 ## 4. 建置順序
 
