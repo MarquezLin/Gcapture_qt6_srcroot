@@ -264,8 +264,7 @@ MainWindow::MainWindow(QWidget *parent)
     gvfg_ = new GvfgSource(this);
     connect(gvfg_, &GvfgSource::frameReady, this, &MainWindow::sigFrame, Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::eventOccurred, this, [](const QString &message)
-            { MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message)); },
-            Qt::QueuedConnection);
+            { MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message)); }, Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::errorOccurred, this, [this](const QString &message)
             {
                 MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message), true);
@@ -290,14 +289,14 @@ MainWindow::MainWindow(QWidget *parent)
                 const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
                 if (backend == kQtViewerGvfgBackend && !usingGvfg_ && ui->btnStart)
                     ui->btnStart->setEnabled(gvfg_ && gvfg_->isOpen());
-                updateRuntimeStatusUi();
-            });
+                updateRuntimeStatusUi(); });
 #endif
 
     setupRuntimeStatusTimer();
     setupDebugDock();
     setupProcAmpAction();
     setupRegisterTools();
+    setInspectorTools();
     setupBackendControls();
     setupPreviewBitDepthControls();
     initializeDeviceList();
@@ -474,7 +473,7 @@ void MainWindow::updateBrandDashboard()
     setLabel("statusBadge", active && !inputConnected
                                 ? tr("NO SIGNAL")
                                 : (frameStallWarningActive_ ? tr("FRAME STALL")
-                                                           : (active ? tr("CAPTURING") : tr("READY FOR SIGNAL"))));
+                                                            : (active ? tr("CAPTURING") : tr("READY FOR SIGNAL"))));
     setLabel("previewTitle", active && !inputConnected
                                  ? tr("Waiting for Signal")
                                  : (active ? tr("Capture Pipeline Active") : tr("Hardware Signal Pipeline")));
@@ -829,10 +828,10 @@ void MainWindow::setupPreviewWindow()
 
     previewWindow_ = new previewwindow(ui->previewPanel);
     previewWindow_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    connect(previewWindow_, &previewwindow::doubleClicked, this, [this]() {
+    connect(previewWindow_, &previewwindow::doubleClicked, this, [this]()
+            {
         if (previewFullscreen_)
-            setPreviewFullscreen(false);
-    });
+            setPreviewFullscreen(false); });
     ui->previewArt->hide();
     ui->previewContainerLayout->addWidget(previewWindow_);
     previewWindow_->show();
@@ -1355,8 +1354,7 @@ void MainWindow::setupConnections()
                             infoDlg_->setPropertyPages(captureInfo_.propertyPages);
                         }
                     }
-                    updateRuntimeStatusUi();
-                });
+                    updateRuntimeStatusUi(); });
     }
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
@@ -1366,8 +1364,7 @@ void MainWindow::setupConnections()
         connect(ui->sliderGvfgVolume, &QSlider::valueChanged, this, [this](int value)
                 {
                     if (gvfg_)
-                        gvfg_->setAudioVolume(static_cast<float>(value) / 100.0f);
-                });
+                        gvfg_->setAudioVolume(static_cast<float>(value) / 100.0f); });
     }
 
     if (ui->checkZeroCopy)
@@ -1377,8 +1374,7 @@ void MainWindow::setupConnections()
                         return;
                     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
                     if (backend == kQtViewerGvfgBackend)
-                        refreshGvfgMonitoring();
-                });
+                        refreshGvfgMonitoring(); });
 
     if (ui->comboPixelFormat)
         connect(ui->comboPixelFormat, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
@@ -1386,8 +1382,7 @@ void MainWindow::setupConnections()
                     const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
                     if (backend != kQtViewerGvfgBackend || !gvfg_ || usingGvfg_)
                         return;
-                    refreshGvfgMonitoring();
-                });
+                    refreshGvfgMonitoring(); });
 #endif
 
     if (ui->checkAudioMonitoring)
@@ -1409,8 +1404,7 @@ void MainWindow::setupConnections()
                     if (enabled)
                         startAudioMonitoring();
                     else
-                        stopAudioMonitoring();
-                });
+                        stopAudioMonitoring(); });
     }
 
     if (ui->comboPreviewBitDepth)
@@ -1549,6 +1543,25 @@ void MainWindow::setupRegisterTools()
                         { MainWindow::postLog(message, isError); });
                 dialog.exec(); });
 #endif
+}
+
+void MainWindow::setInspectorTools()
+{
+    const bool enabled =
+        QCoreApplication::arguments().contains(
+            QStringLiteral("--inspector"));
+
+    if (ui->actionOpenRawInspector)
+    {
+        ui->actionOpenRawInspector->setVisible(enabled);
+        ui->actionOpenRawInspector->setEnabled(enabled);
+    }
+
+    if (ui->btnOpenRawInspector)
+    {
+        ui->btnOpenRawInspector->setVisible(enabled);
+        ui->btnOpenRawInspector->setEnabled(enabled);
+    }
 }
 
 void MainWindow::on_btnPreview_clicked()

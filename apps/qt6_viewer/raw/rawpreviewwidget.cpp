@@ -12,11 +12,40 @@ RawPreviewWidget::RawPreviewWidget(QWidget *parent) : QWidget(parent)
     setFocusPolicy(Qt::StrongFocus);
 }
 
-void RawPreviewWidget::setFrame(const RawFrame *frame)
+void RawPreviewWidget::setFrame(
+    const RawFrame *frame)
 {
     frame_ = frame;
-    preview_ = frame_ ? frame_->makePreview() : QImage();
+    dicomFrame_ = nullptr;
+
+    preview_ =
+        frame_
+            ? frame_->makePreview()
+            : QImage();
+
     resetView();
+}
+
+void RawPreviewWidget::setDicomFrame(
+    const DicomFrame *frame,
+    const QImage &displayImage)
+{
+    frame_ = nullptr;
+    dicomFrame_ = frame;
+
+    preview_ = displayImage;
+
+    resetView();
+}
+
+void RawPreviewWidget::updateDicomDisplay(
+    const QImage &displayImage)
+{
+    if (!dicomFrame_)
+        return;
+
+    preview_ = displayImage;
+    update();
 }
 
 void RawPreviewWidget::setHexadecimal(bool enabled)
@@ -43,13 +72,21 @@ QPointF RawPreviewWidget::imageTopLeft() const
 
 QPoint RawPreviewWidget::imagePixelAt(const QPointF &pos) const
 {
-    if (!frame_ || preview_.isNull())
+    if ((!frame_ && !dicomFrame_) ||
+        preview_.isNull())
+    {
         return {-1, -1};
+    }
     const QPointF local = (pos - imageTopLeft()) / zoom_;
     const int x = int(std::floor(local.x()));
     const int y = int(std::floor(local.y()));
-    if (x < 0 || y < 0 || x >= frame_->width || y >= frame_->height)
+    if (x < 0 ||
+        y < 0 ||
+        x >= preview_.width() ||
+        y >= preview_.height())
+    {
         return {-1, -1};
+    }
     return {x, y};
 }
 
@@ -57,8 +94,11 @@ void RawPreviewWidget::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     p.fillRect(rect(), QColor(20, 20, 20));
-    if (!frame_ || preview_.isNull())
+    if ((!frame_ && !dicomFrame_) ||
+        preview_.isNull())
+    {
         return;
+    }
 
     const QPointF topLeft = imageTopLeft();
     p.setRenderHint(QPainter::SmoothPixmapTransform, zoom_ < 1.0);
@@ -67,10 +107,10 @@ void RawPreviewWidget::paintEvent(QPaintEvent *)
     if (zoom_ < 10.0)
         return;
 
-    const int x0 = qBound(0, int(std::floor((-topLeft.x()) / zoom_)), frame_->width - 1);
-    const int y0 = qBound(0, int(std::floor((-topLeft.y()) / zoom_)), frame_->height - 1);
-    const int x1 = qBound(0, int(std::ceil((width() - topLeft.x()) / zoom_)), frame_->width);
-    const int y1 = qBound(0, int(std::ceil((height() - topLeft.y()) / zoom_)), frame_->height);
+    const int x0 = qBound(0, int(std::floor((-topLeft.x()) / zoom_)), preview_.width() - 1);
+    const int y0 = qBound(0, int(std::floor((-topLeft.y()) / zoom_)), preview_.height() - 1);
+    const int x1 = qBound(0, int(std::ceil((width() - topLeft.x()) / zoom_)), preview_.width());
+    const int y1 = qBound(0, int(std::ceil((height() - topLeft.y()) / zoom_)), preview_.height());
 
     p.setPen(QPen(QColor(255, 255, 255, 90), 0));
     for (int x = x0; x <= x1; ++x)
@@ -93,8 +133,29 @@ void RawPreviewWidget::paintEvent(QPaintEvent *)
             const QRectF cell(topLeft.x() + x * zoom_, topLeft.y() + y * zoom_, zoom_, zoom_);
             const QColor color = preview_.pixelColor(x, y);
             p.setPen(color.lightness() < 128 ? Qt::white : Qt::black);
-            p.drawText(cell.adjusted(2, 2, -2, -2), Qt::AlignCenter,
-                       frame_->cellText(x, y, hexadecimal_));
+            QString text;
+
+            if (frame_)
+            {
+                text =
+                    frame_->cellText(
+                        x,
+                        y,
+                        hexadecimal_);
+            }
+            else if (dicomFrame_)
+            {
+                text =
+                    dicomFrame_->cellText(
+                        x,
+                        y,
+                        hexadecimal_);
+            }
+
+            p.drawText(
+                cell.adjusted(2, 2, -2, -2),
+                Qt::AlignCenter,
+                text);
         }
     }
 }
@@ -135,8 +196,31 @@ void RawPreviewWidget::mouseMoveEvent(QMouseEvent *event)
         update();
     }
     const QPoint pixel = imagePixelAt(event->position());
-    emit pixelTextChanged(pixel.x() >= 0 ? frame_->pixelText(pixel.x(), pixel.y(), hexadecimal_)
-                                         : QStringLiteral("Pixel: move cursor over image"));
+    QString text =
+        QStringLiteral(
+            "Pixel: move cursor over image");
+
+    if (pixel.x() >= 0)
+    {
+        if (frame_)
+        {
+            text =
+                frame_->pixelText(
+                    pixel.x(),
+                    pixel.y(),
+                    hexadecimal_);
+        }
+        else if (dicomFrame_)
+        {
+            text =
+                dicomFrame_->pixelText(
+                    pixel.x(),
+                    pixel.y(),
+                    hexadecimal_);
+        }
+    }
+
+    emit pixelTextChanged(text);
 }
 
 void RawPreviewWidget::mouseReleaseEvent(QMouseEvent *event)

@@ -18,10 +18,11 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
+#include <QDoubleSpinBox>
 
 RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
 {
-    setWindowTitle(QStringLiteral("RAW Pixel Inspector"));
+    setWindowTitle(QStringLiteral("Pixel Inspector"));
     resize(1200, 780);
 
     auto *layout = new QVBoxLayout(this);
@@ -56,6 +57,27 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
     strideSpin_->setValue(3840);
     hexCheck_ = new QCheckBox(QStringLiteral("Hex values"), this);
     auto *reload = new QPushButton(QStringLiteral("Load / Apply"), this);
+    windowCenterSpin_ =
+        new QDoubleSpinBox(this);
+
+    windowWidthSpin_ =
+        new QDoubleSpinBox(this);
+
+    windowCenterSpin_->setRange(
+        -1000000.0,
+        1000000.0);
+
+    windowWidthSpin_->setRange(
+        1.0,
+        2000000.0);
+
+    windowCenterSpin_->setDecimals(3);
+    windowWidthSpin_->setDecimals(3);
+
+    applyWindowButton_ =
+        new QPushButton(
+            QStringLiteral("Apply Window"),
+            this);
     settings->addWidget(new QLabel(QStringLiteral("Format:"), this));
     settings->addWidget(formatCombo_);
     settings->addWidget(new QLabel(QStringLiteral("Width:"), this));
@@ -66,6 +88,24 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
     settings->addWidget(strideSpin_);
     settings->addWidget(hexCheck_);
     settings->addWidget(reload);
+    settings->addWidget(
+        new QLabel(
+            QStringLiteral("WC:"),
+            this));
+
+    settings->addWidget(
+        windowCenterSpin_);
+
+    settings->addWidget(
+        new QLabel(
+            QStringLiteral("WW:"),
+            this));
+
+    settings->addWidget(
+        windowWidthSpin_);
+
+    settings->addWidget(
+        applyWindowButton_);
     layout->addLayout(settings);
 
     viewer_ = new RawPreviewWidget(this);
@@ -89,34 +129,73 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
     connect(widthSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &RawInspectorDialog::applyFormatDefaults);
     connect(reload, &QPushButton::clicked, this, &RawInspectorDialog::loadCurrent);
     connect(openFileButton, &QPushButton::clicked, this, &RawInspectorDialog::chooseFile);
-    connect(previousFileButton_, &QPushButton::clicked, this, [this]() { navigateFile(-1); });
-    connect(nextFileButton_, &QPushButton::clicked, this, [this]() { navigateFile(1); });
+    connect(previousFileButton_, &QPushButton::clicked, this, [this]()
+            { navigateFile(-1); });
+    connect(nextFileButton_, &QPushButton::clicked, this, [this]()
+            { navigateFile(1); });
     connect(hexCheck_, &QCheckBox::toggled, viewer_, &RawPreviewWidget::setHexadecimal);
     connect(viewer_, &RawPreviewWidget::pixelTextChanged, pixelLabel_, &QLabel::setText);
-    connect(viewer_, &RawPreviewWidget::zoomChanged, this, [this](double zoom) {
-        zoomLabel_->setText(QStringLiteral("Zoom: %1x").arg(zoom, 0, 'f', 2));
-    });
+    connect(viewer_, &RawPreviewWidget::zoomChanged, this, [this](double zoom)
+            { zoomLabel_->setText(QStringLiteral("Zoom: %1x").arg(zoom, 0, 'f', 2)); });
     connect(reset, &QPushButton::clicked, viewer_, &RawPreviewWidget::resetView);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect(
+        applyWindowButton_,
+        &QPushButton::clicked,
+        this,
+        &RawInspectorDialog::applyDicomWindow);
 }
 
-bool RawInspectorDialog::openFile(const QString &path)
+bool RawInspectorDialog::isDicomFile(
+    const QString &path) const
 {
-    path_ = QFileInfo(path).absoluteFilePath();
+    const QString suffix =
+        QFileInfo(path)
+            .suffix()
+            .toLower();
+
+    return suffix == QStringLiteral("dcm") ||
+           suffix == QStringLiteral("dicom");
+}
+
+bool RawInspectorDialog::openFile(
+    const QString &path)
+{
+    path_ =
+        QFileInfo(path)
+            .absoluteFilePath();
+
+    dicomMode_ =
+        isDicomFile(path_);
+
     fileLabel_->setText(path_);
     fileLabel_->setToolTip(path_);
+
     refreshFileNavigation();
-    inferFromFileName(path_);
+    updateModeControls();
+
+    if (!dicomMode_)
+    {
+        inferFromFileName(path_);
+    }
+
     loadCurrent();
-    return frame_.isValid();
+
+    return dicomMode_
+               ? dicomFrame_.isValid()
+               : frame_.isValid();
 }
 
 void RawInspectorDialog::chooseFile()
 {
     QFileDialog dialog(this,
-                       QStringLiteral("Open RAW Frame"),
+                       QStringLiteral("Open Pixel Data"),
                        QFileInfo(path_).absolutePath(),
-                       QStringLiteral("RAW Frame Files (*.raw);;All Files (*.*)"));
+                       QStringLiteral(
+                           "Pixel Data (*.raw *.dcm *.dicom);;"
+                           "RAW Frame Files (*.raw);;"
+                           "DICOM Files (*.dcm *.dicom);;"
+                           "All Files (*.*)"));
 #ifdef _WIN32
     dialog.setOption(QFileDialog::DontUseNativeDialog, true);
 #endif
@@ -138,8 +217,7 @@ void RawInspectorDialog::refreshFileNavigation()
     currentFileIndex_ = -1;
 
     const QFileInfo current(path_);
-    const QFileInfoList entries = QDir(current.absolutePath()).entryInfoList(
-        QDir::Files | QDir::Readable, QDir::Name | QDir::IgnoreCase);
+    const QFileInfoList entries = QDir(current.absolutePath()).entryInfoList(QDir::Files | QDir::Readable, QDir::Name | QDir::IgnoreCase);
     for (const QFileInfo &entry : entries)
     {
         if (entry.suffix().compare(QStringLiteral("raw"), Qt::CaseInsensitive) != 0)
@@ -175,11 +253,16 @@ void RawInspectorDialog::inferFromFileName(const QString &path)
     {
         const QJsonObject json = QJsonDocument::fromJson(sidecar.readAll()).object();
         const QString metadataFormat = json.value(QStringLiteral("pixelFormat")).toString().toLower();
-        if (metadataFormat == QStringLiteral("y210")) format = RawPixelFormat::Y210;
-        else if (metadataFormat == QStringLiteral("yuy2")) format = RawPixelFormat::Yuy2;
-        else if (metadataFormat == QStringLiteral("nv12")) format = RawPixelFormat::Nv12;
-        else if (metadataFormat == QStringLiteral("bgra8")) format = RawPixelFormat::Bgra8;
-        else if (metadataFormat == QStringLiteral("rgba8")) format = RawPixelFormat::Rgba8;
+        if (metadataFormat == QStringLiteral("y210"))
+            format = RawPixelFormat::Y210;
+        else if (metadataFormat == QStringLiteral("yuy2"))
+            format = RawPixelFormat::Yuy2;
+        else if (metadataFormat == QStringLiteral("nv12"))
+            format = RawPixelFormat::Nv12;
+        else if (metadataFormat == QStringLiteral("bgra8"))
+            format = RawPixelFormat::Bgra8;
+        else if (metadataFormat == QStringLiteral("rgba8"))
+            format = RawPixelFormat::Rgba8;
         else if (metadataFormat == QStringLiteral("rgb10a2") ||
                  metadataFormat.contains(QStringLiteral("2101010")))
             format = RawPixelFormat::Abgr2101010;
@@ -232,14 +315,184 @@ void RawInspectorDialog::applyFormatDefaults()
 void RawInspectorDialog::loadCurrent()
 {
     QString error;
-    const auto format = RawPixelFormat(formatCombo_->currentData().toInt());
-    if (!frame_.load(path_, widthSpin_->value(), heightSpin_->value(), strideSpin_->value(), format, &error))
+
+    //
+    // DICOM
+    //
+    if (dicomMode_)
     {
-        viewer_->setFrame(nullptr);
-        QMessageBox::warning(this, QStringLiteral("RAW Pixel Inspector"), error);
+        if (!dicomFrame_.load(
+                path_,
+                &error))
+        {
+            viewer_->setDicomFrame(
+                nullptr,
+                QImage());
+
+            QMessageBox::warning(
+                this,
+                QStringLiteral(
+                    "DICOM Pixel Inspector"),
+                error);
+
+            return;
+        }
+
+        if (dicomFrame_.hasWindow)
+        {
+            const QSignalBlocker block1(
+                windowCenterSpin_);
+
+            const QSignalBlocker block2(
+                windowWidthSpin_);
+
+            windowCenterSpin_->setValue(
+                dicomFrame_.windowCenter);
+
+            windowWidthSpin_->setValue(
+                dicomFrame_.windowWidth);
+        }
+
+        const QImage display =
+            dicomFrame_.makeDisplayImage();
+
+        if (display.isNull())
+        {
+            QMessageBox::warning(
+                this,
+                QStringLiteral(
+                    "DICOM Pixel Inspector"),
+                QStringLiteral(
+                    "Failed to render DICOM image."));
+
+            return;
+        }
+
+        viewer_->setDicomFrame(
+            &dicomFrame_,
+            display);
+
+        pixelLabel_->setText(
+            QStringLiteral(
+                "%1 × %2 | "
+                "DICOM MONOCHROME | "
+                "%3-bit stored | "
+                "WC %4 | WW %5")
+                .arg(dicomFrame_.width)
+                .arg(dicomFrame_.height)
+                .arg(dicomFrame_.bitsStored)
+                .arg(
+                    dicomFrame_.hasWindow
+                        ? QString::number(
+                              dicomFrame_
+                                  .windowCenter)
+                        : QStringLiteral("-"))
+                .arg(
+                    dicomFrame_.hasWindow
+                        ? QString::number(
+                              dicomFrame_
+                                  .windowWidth)
+                        : QStringLiteral("-")));
+
         return;
     }
+
+    //
+    // 原本 RAW
+    //
+    const auto format =
+        RawPixelFormat(
+            formatCombo_
+                ->currentData()
+                .toInt());
+
+    if (!frame_.load(
+            path_,
+            widthSpin_->value(),
+            heightSpin_->value(),
+            strideSpin_->value(),
+            format,
+            &error))
+    {
+        viewer_->setFrame(nullptr);
+
+        QMessageBox::warning(
+            this,
+            QStringLiteral(
+                "RAW Pixel Inspector"),
+            error);
+
+        return;
+    }
+
     viewer_->setFrame(&frame_);
-    pixelLabel_->setText(QStringLiteral("%1 × %2, stride %3, %4 bytes")
-                             .arg(frame_.width).arg(frame_.height).arg(frame_.strideBytes).arg(frame_.bytes.size()));
+
+    pixelLabel_->setText(
+        QStringLiteral(
+            "%1 × %2, "
+            "stride %3, "
+            "%4 bytes")
+            .arg(frame_.width)
+            .arg(frame_.height)
+            .arg(frame_.strideBytes)
+            .arg(frame_.bytes.size()));
+}
+
+void RawInspectorDialog::applyDicomWindow()
+{
+    if (!dicomMode_ ||
+        !dicomFrame_.isValid())
+    {
+        return;
+    }
+
+    const double wc =
+        windowCenterSpin_->value();
+
+    const double ww =
+        windowWidthSpin_->value();
+
+    const QImage image =
+        dicomFrame_.makeDisplayImage(
+            wc,
+            ww);
+
+    if (image.isNull())
+    {
+        QMessageBox::warning(
+            this,
+            QStringLiteral(
+                "DICOM Window"),
+            QStringLiteral(
+                "Failed to apply "
+                "Window Center / Width."));
+
+        return;
+    }
+
+    //
+    // 不 Reset Zoom
+    //
+    viewer_->updateDicomDisplay(
+        image);
+}
+
+void RawInspectorDialog::updateModeControls()
+{
+    const bool raw =
+        !dicomMode_;
+
+    formatCombo_->setEnabled(raw);
+    widthSpin_->setEnabled(raw);
+    heightSpin_->setEnabled(raw);
+    strideSpin_->setEnabled(raw);
+
+    windowCenterSpin_->setEnabled(
+        dicomMode_);
+
+    windowWidthSpin_->setEnabled(
+        dicomMode_);
+
+    applyWindowButton_->setEnabled(
+        dicomMode_);
 }

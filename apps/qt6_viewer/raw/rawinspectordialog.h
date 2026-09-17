@@ -2,6 +2,7 @@
 #define RAWINSPECTORDIALOG_H
 
 #include "rawframe.h"
+#include "dicomframe.h"
 #include <QDialog>
 #include <QStringList>
 
@@ -11,6 +12,7 @@ class QLabel;
 class QPushButton;
 class QSpinBox;
 class RawPreviewWidget;
+class QDoubleSpinBox;
 
 class RawInspectorDialog : public QDialog
 {
@@ -26,6 +28,9 @@ private:
     void chooseFile();
     void navigateFile(int offset);
     void refreshFileNavigation();
+    void applyDicomWindow();
+    bool isDicomFile(const QString &path) const;
+    void updateModeControls();
 
     QString path_;
     QStringList siblingRawFiles_;
@@ -42,6 +47,12 @@ private:
     QCheckBox *hexCheck_ = nullptr;
     QPushButton *previousFileButton_ = nullptr;
     QPushButton *nextFileButton_ = nullptr;
+    DicomFrame dicomFrame_;
+    bool dicomMode_ = false;
+
+    QDoubleSpinBox *windowCenterSpin_ = nullptr;
+    QDoubleSpinBox *windowWidthSpin_ = nullptr;
+    QPushButton *applyWindowButton_ = nullptr;
 };
 
 #endif

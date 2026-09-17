@@ -171,6 +171,7 @@ private:
     void setupDebugDock();
     void setupProcAmpAction();
     void setupRegisterTools();
+    void setInspectorTools();
     void setupBackendControls();
     void setupPreviewBitDepthControls();
     int selectedPreviewBitDepthMode() const;

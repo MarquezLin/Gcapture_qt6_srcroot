@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(QT NAMES Qt6 REQUIRED COMPONENTS Widgets Multimedia)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Multimedia)
+# DICOM support
+find_package(DCMTK CONFIG REQUIRED)
 
 set(VIEWER_SOURCES
   app/main.cpp
@@ -36,6 +38,8 @@ set(VIEWER_SOURCES
   raw/rawpreviewwidget.cpp
   raw/rawinspectordialog.h
   raw/rawinspectordialog.cpp
+  dicom/dicomframe.h
+  dicom/dicomframe.cpp
 )
 
 set(VIEWER_DESIGN_ASSETS
@@ -100,6 +104,7 @@ target_include_directories(qt6_viewer PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/info
   ${CMAKE_CURRENT_SOURCE_DIR}/preview
   ${CMAKE_CURRENT_SOURCE_DIR}/raw
+  ${CMAKE_CURRENT_SOURCE_DIR}/dicom
   ${CMAKE_SOURCE_DIR}/sdk/gcapture/include
 )
 
@@ -124,6 +129,7 @@ target_link_libraries(qt6_viewer PRIVATE
   Qt${QT_VERSION_MAJOR}::Multimedia
   gcapture
   gdisplay
+  DCMTK::DCMTK
   dxgi d3d11 d3dcompiler dwmapi windowscodecs ole32
 )
 
