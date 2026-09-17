@@ -78,6 +78,8 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
         new QPushButton(
             QStringLiteral("Apply Window"),
             this);
+    frameSpin_ = new QSpinBox(this);
+    frameSpin_->setRange(1, 1);
     settings->addWidget(new QLabel(QStringLiteral("Format:"), this));
     settings->addWidget(formatCombo_);
     settings->addWidget(new QLabel(QStringLiteral("Width:"), this));
@@ -106,6 +108,8 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
 
     settings->addWidget(
         applyWindowButton_);
+    settings->addWidget(new QLabel(QStringLiteral("Frame:"), this));
+    settings->addWidget(frameSpin_);
     layout->addLayout(settings);
 
     viewer_ = new RawPreviewWidget(this);
@@ -144,6 +148,8 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
         &QPushButton::clicked,
         this,
         &RawInspectorDialog::applyDicomWindow);
+    connect(frameSpin_, qOverload<int>(&QSpinBox::valueChanged),
+            this, &RawInspectorDialog::selectDicomFrame);
 }
 
 bool RawInspectorDialog::isDicomFile(
@@ -353,6 +359,12 @@ void RawInspectorDialog::loadCurrent()
                 dicomFrame_.windowWidth);
         }
 
+        {
+            const QSignalBlocker block(frameSpin_);
+            frameSpin_->setRange(1, qMax(1, dicomFrame_.frameCount));
+            frameSpin_->setValue(1);
+        }
+
         const QImage display =
             dicomFrame_.makeDisplayImage();
 
@@ -375,24 +387,29 @@ void RawInspectorDialog::loadCurrent()
         pixelLabel_->setText(
             QStringLiteral(
                 "%1 × %2 | "
-                "DICOM MONOCHROME | "
-                "%3-bit stored | "
-                "WC %4 | WW %5")
+                "DICOM %3 | "
+                "%4-bit stored | Frame %5/%6 | "
+                "WC %7 | WW %8")
                 .arg(dicomFrame_.width)
                 .arg(dicomFrame_.height)
+                .arg(dicomFrame_.photometricInterpretation)
                 .arg(dicomFrame_.bitsStored)
+                .arg(dicomFrame_.frameIndex() + 1)
+                .arg(dicomFrame_.frameCount)
                 .arg(
-                    dicomFrame_.hasWindow
+                    dicomFrame_.isMonochrome() && dicomFrame_.hasWindow
                         ? QString::number(
                               dicomFrame_
                                   .windowCenter)
                         : QStringLiteral("-"))
                 .arg(
-                    dicomFrame_.hasWindow
+                    dicomFrame_.isMonochrome() && dicomFrame_.hasWindow
                         ? QString::number(
                               dicomFrame_
                                   .windowWidth)
                         : QStringLiteral("-")));
+
+        updateModeControls();
 
         return;
     }
@@ -438,10 +455,31 @@ void RawInspectorDialog::loadCurrent()
             .arg(frame_.bytes.size()));
 }
 
+void RawInspectorDialog::selectDicomFrame(int oneBasedFrame)
+{
+    if (!dicomMode_ || !dicomFrame_.setFrameIndex(oneBasedFrame - 1))
+        return;
+
+    const QImage display = dicomFrame_.makeDisplayImage();
+    if (display.isNull())
+    {
+        QMessageBox::warning(this, QStringLiteral("DICOM Frame"),
+                             QStringLiteral("Failed to render frame %1.").arg(oneBasedFrame));
+        return;
+    }
+    viewer_->setDicomFrame(&dicomFrame_, display);
+    pixelLabel_->setText(QStringLiteral("%1 × %2 | DICOM %3 | %4-bit stored | Frame %5/%6")
+                             .arg(dicomFrame_.width).arg(dicomFrame_.height)
+                             .arg(dicomFrame_.photometricInterpretation)
+                             .arg(dicomFrame_.bitsStored).arg(oneBasedFrame)
+                             .arg(dicomFrame_.frameCount));
+}
+
 void RawInspectorDialog::applyDicomWindow()
 {
     if (!dicomMode_ ||
-        !dicomFrame_.isValid())
+        !dicomFrame_.isValid() ||
+        !dicomFrame_.isMonochrome())
     {
         return;
     }
@@ -487,12 +525,14 @@ void RawInspectorDialog::updateModeControls()
     heightSpin_->setEnabled(raw);
     strideSpin_->setEnabled(raw);
 
-    windowCenterSpin_->setEnabled(
-        dicomMode_);
+    const bool windowing = dicomMode_ &&
+        (!dicomFrame_.isValid() || dicomFrame_.isMonochrome());
+    windowCenterSpin_->setEnabled(windowing);
 
     windowWidthSpin_->setEnabled(
-        dicomMode_);
+        windowing);
 
     applyWindowButton_->setEnabled(
-        dicomMode_);
+        windowing);
+    frameSpin_->setEnabled(dicomMode_ && dicomFrame_.frameCount > 1);
 }

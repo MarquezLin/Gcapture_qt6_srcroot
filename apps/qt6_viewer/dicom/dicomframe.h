@@ -3,6 +3,7 @@
 
 #include <QImage>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QtGlobal>
 
@@ -23,6 +24,10 @@ struct DicomPixelSample
     // 套用 Rescale Slope / Intercept 後的值
     // 例如 CT 可能會變成 HU
     double rescaledValue = 0.0;
+
+    QStringList componentNames;
+    QVector<qint32> storedComponents;
+    QVector<quint16> displayedComponents;
 };
 
 class DicomFrame
@@ -34,6 +39,9 @@ public:
     void clear();
 
     bool isValid() const;
+    bool isMonochrome() const;
+    bool setFrameIndex(int frameIndex);
+    int frameIndex() const { return frameIndex_; }
 
     DicomPixelSample pixel(int x,
                            int y) const;
@@ -62,6 +70,7 @@ public:
     int height = 0;
 
     int samplesPerPixel = 0;
+    int planarConfiguration = 0;
 
     int bitsAllocated = 0;
     int bitsStored = 0;
@@ -88,12 +97,15 @@ public:
 
 private:
     qint32 decodeStoredSample(quint16 raw) const;
+    QVector<quint16> rawComponents(int x, int y) const;
 
     QImage renderDisplay(bool useCustomWindow,
                          double wc,
                          double ww) const;
 
     QVector<quint16> rawSamples_;
+    int frameIndex_ = 0;
+    mutable QImage lastDisplayImage_;
 };
 
 #endif

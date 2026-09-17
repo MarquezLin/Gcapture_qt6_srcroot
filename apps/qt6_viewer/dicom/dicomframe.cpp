@@ -2,9 +2,42 @@
 
 #include <dcmtk/dcmdata/dctk.h>
 #include <dcmtk/dcmdata/dcxfer.h>
+#include <dcmtk/dcmdata/dcrledrg.h>
 #include <dcmtk/dcmimgle/dcmimage.h>
+#include <dcmtk/dcmjpeg/djdecode.h>
+#include <dcmtk/dcmjpls/djdecode.h>
 
 #include <QFile>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+namespace
+{
+class DicomDecoderRegistry
+{
+public:
+    DicomDecoderRegistry()
+    {
+        DcmRLEDecoderRegistration::registerCodecs();
+        DJDecoderRegistration::registerCodecs();
+        DJLSDecoderRegistration::registerCodecs();
+    }
+
+    ~DicomDecoderRegistry()
+    {
+        DJLSDecoderRegistration::cleanup();
+        DJDecoderRegistration::cleanup();
+        DcmRLEDecoderRegistration::cleanup();
+    }
+};
+
+DicomDecoderRegistry &decoderRegistry()
+{
+    static DicomDecoderRegistry registry;
+    return registry;
+}
+}
 
 void DicomFrame::clear()
 {
@@ -14,6 +47,7 @@ void DicomFrame::clear()
     height = 0;
 
     samplesPerPixel = 0;
+    planarConfiguration = 0;
 
     bitsAllocated = 0;
     bitsStored = 0;
@@ -34,12 +68,15 @@ void DicomFrame::clear()
     hasWindow = false;
 
     rawSamples_.clear();
+    frameIndex_ = 0;
+    lastDisplayImage_ = {};
 }
 
 bool DicomFrame::load(const QString &filePath,
                       QString *error)
 {
     clear();
+    (void)decoderRegistry();
 
     const QByteArray nativePath =
         QFile::encodeName(filePath);
@@ -90,28 +127,29 @@ bool DicomFrame::load(const QString &filePath,
         }
     }
 
-    //
-    // 第一版先不處理 compressed PixelData
-    //
     DcmXfer xfer(dataset->getOriginalXfer());
 
     if (xfer.isEncapsulated())
     {
-        if (error)
+        status = dataset->chooseRepresentation(EXS_LittleEndianExplicit, nullptr);
+        if (status.bad() || !dataset->canWriteXfer(EXS_LittleEndianExplicit))
         {
-            *error =
-                QStringLiteral(
-                    "Compressed DICOM is not supported yet.\n"
-                    "Transfer Syntax: %1")
-                    .arg(transferSyntaxUid);
+            if (error)
+            {
+                *error = QStringLiteral(
+                             "No decoder is available for this compressed DICOM.\n"
+                             "Transfer Syntax: %1\n"
+                             "This build supports RLE, JPEG and JPEG-LS, but not JPEG 2000.")
+                             .arg(transferSyntaxUid);
+            }
+            return false;
         }
-
-        return false;
     }
 
     Uint16 rows = 0;
     Uint16 columns = 0;
     Uint16 spp = 0;
+    Uint16 planar = 0;
 
     Uint16 allocated = 0;
     Uint16 stored = 0;
@@ -184,6 +222,10 @@ bool DicomFrame::load(const QString &filePath,
     samplesPerPixel =
         static_cast<int>(spp);
 
+    if (samplesPerPixel > 1 &&
+        dataset->findAndGetUint16(DCM_PlanarConfiguration, planar).good())
+        planarConfiguration = static_cast<int>(planar);
+
     bitsAllocated =
         static_cast<int>(allocated);
 
@@ -222,39 +264,26 @@ bool DicomFrame::load(const QString &filePath,
             frameCount = count;
     }
 
-    //
-    // 第一版只支援 single frame grayscale
-    //
-    if (frameCount != 1)
+    if (samplesPerPixel != 1 && samplesPerPixel != 3)
     {
         if (error)
         {
             *error =
                 QStringLiteral(
-                    "Multi-frame DICOM is not supported yet. "
-                    "Frames = %1")
-                    .arg(frameCount);
+                    "Only one- or three-sample DICOM pixels are supported.");
         }
 
         return false;
     }
 
-    if (samplesPerPixel != 1)
-    {
-        if (error)
-        {
-            *error =
-                QStringLiteral(
-                    "Only grayscale DICOM is supported yet.");
-        }
-
-        return false;
-    }
-
-    if (photometricInterpretation !=
-            QStringLiteral("MONOCHROME1") &&
-        photometricInterpretation !=
-            QStringLiteral("MONOCHROME2"))
+    const QStringList supportedPhotometric = {
+        QStringLiteral("MONOCHROME1"),
+        QStringLiteral("MONOCHROME2"),
+        QStringLiteral("RGB"),
+        QStringLiteral("YBR_FULL"),
+        QStringLiteral("YBR_FULL_422"),
+        QStringLiteral("PALETTE COLOR")};
+    if (!supportedPhotometric.contains(photometricInterpretation))
     {
         if (error)
         {
@@ -363,9 +392,14 @@ bool DicomFrame::load(const QString &filePath,
     //
     // 讀原始 PixelData
     //
-    const qsizetype expectedPixels =
-        static_cast<qsizetype>(width) *
-        static_cast<qsizetype>(height);
+    const qsizetype pixelsPerFrame =
+        static_cast<qsizetype>(width) * static_cast<qsizetype>(height);
+    const bool subsampledYbr =
+        photometricInterpretation == QStringLiteral("YBR_FULL_422");
+    const qsizetype samplesPerFrame = subsampledYbr
+        ? static_cast<qsizetype>(height) * ((static_cast<qsizetype>(width) + 1) / 2) * 4
+        : pixelsPerFrame * static_cast<qsizetype>(samplesPerPixel);
+    const qsizetype expectedPixels = samplesPerFrame * static_cast<qsizetype>(frameCount);
 
     rawSamples_.resize(expectedPixels);
 
@@ -455,11 +489,23 @@ bool DicomFrame::isValid() const
         return false;
     }
 
-    const qsizetype expected =
-        static_cast<qsizetype>(width) *
-        static_cast<qsizetype>(height);
+    return frameCount > 0 && frameIndex_ >= 0 && frameIndex_ < frameCount &&
+           !rawSamples_.isEmpty();
+}
 
-    return rawSamples_.size() >= expected;
+bool DicomFrame::isMonochrome() const
+{
+    return photometricInterpretation == QStringLiteral("MONOCHROME1") ||
+           photometricInterpretation == QStringLiteral("MONOCHROME2");
+}
+
+bool DicomFrame::setFrameIndex(int frameIndex)
+{
+    if (frameIndex < 0 || frameIndex >= frameCount)
+        return false;
+    frameIndex_ = frameIndex;
+    lastDisplayImage_ = {};
+    return true;
 }
 
 qint32 DicomFrame::decodeStoredSample(
@@ -525,35 +571,103 @@ DicomPixelSample DicomFrame::pixel(
         return sample;
     }
 
-    const qsizetype index =
-        static_cast<qsizetype>(y) *
-            width +
-        x;
-
-    const quint16 raw =
-        rawSamples_[index];
-
-    const qint32 stored =
-        decodeStoredSample(raw);
+    const QVector<quint16> raw = rawComponents(x, y);
+    if (raw.isEmpty())
+        return sample;
 
     sample.valid = true;
 
     sample.x = x;
     sample.y = y;
 
-    sample.storedWord = raw;
-    sample.storedValue = stored;
+    sample.storedWord = raw.front();
+    sample.storedValue = decodeStoredSample(raw.front());
+
+    if (isMonochrome())
+        sample.componentNames = {QStringLiteral("Gray")};
+    else if (photometricInterpretation.startsWith(QStringLiteral("YBR")))
+        sample.componentNames = {QStringLiteral("Y"), QStringLiteral("Cb"), QStringLiteral("Cr")};
+    else if (photometricInterpretation == QStringLiteral("PALETTE COLOR"))
+        sample.componentNames = {QStringLiteral("Index")};
+    else
+        sample.componentNames = {QStringLiteral("R"), QStringLiteral("G"), QStringLiteral("B")};
+
+    for (quint16 word : raw)
+        sample.storedComponents.push_back(decodeStoredSample(word));
 
     //
     // 這裡只代表 Rescale Slope/Intercept 路徑。
     // 正式 Display pipeline 則完全交給 DicomImage。
     //
     sample.rescaledValue =
-        static_cast<double>(stored) *
+        static_cast<double>(sample.storedValue) *
             rescaleSlope +
         rescaleIntercept;
 
+    if (!lastDisplayImage_.isNull())
+    {
+        if (lastDisplayImage_.format() == QImage::Format_Grayscale16)
+        {
+            const auto *row = reinterpret_cast<const quint16 *>(lastDisplayImage_.constScanLine(y));
+            sample.displayedComponents = {row[x]};
+        }
+        else if (lastDisplayImage_.format() == QImage::Format_RGBA64)
+        {
+            const auto *row = reinterpret_cast<const QRgba64 *>(lastDisplayImage_.constScanLine(y));
+            const QRgba64 color = row[x];
+            sample.displayedComponents = {color.red(), color.green(), color.blue()};
+        }
+    }
+
     return sample;
+}
+
+QVector<quint16> DicomFrame::rawComponents(int x, int y) const
+{
+    const qsizetype pixelCount = static_cast<qsizetype>(width) * height;
+    const qsizetype pixelIndex = static_cast<qsizetype>(y) * width + x;
+    const bool ybr422 = photometricInterpretation == QStringLiteral("YBR_FULL_422");
+    const qsizetype samplesPerFrame = ybr422
+        ? static_cast<qsizetype>(height) * ((static_cast<qsizetype>(width) + 1) / 2) * 4
+        : pixelCount * samplesPerPixel;
+    const qsizetype frameBase = static_cast<qsizetype>(frameIndex_) * samplesPerFrame;
+
+    if (samplesPerPixel == 1)
+    {
+        const qsizetype index = frameBase + pixelIndex;
+        return index < rawSamples_.size() ? QVector<quint16>{rawSamples_[index]} : QVector<quint16>{};
+    }
+
+    if (ybr422)
+    {
+        const qsizetype groupsPerRow = (static_cast<qsizetype>(width) + 1) / 2;
+        const qsizetype group = frameBase +
+            (static_cast<qsizetype>(y) * groupsPerRow + x / 2) * 4;
+        if (group + 3 >= rawSamples_.size())
+            return {};
+        return {rawSamples_[group + (pixelIndex & 1)], rawSamples_[group + 2], rawSamples_[group + 3]};
+    }
+
+    QVector<quint16> result;
+    result.reserve(3);
+    if (planarConfiguration == 1)
+    {
+        for (int component = 0; component < 3; ++component)
+        {
+            const qsizetype index = frameBase + component * pixelCount + pixelIndex;
+            if (index >= rawSamples_.size())
+                return {};
+            result.push_back(rawSamples_[index]);
+        }
+    }
+    else
+    {
+        const qsizetype base = frameBase + pixelIndex * 3;
+        if (base + 2 >= rawSamples_.size())
+            return {};
+        result = {rawSamples_[base], rawSamples_[base + 1], rawSamples_[base + 2]};
+    }
+    return result;
 }
 
 QImage DicomFrame::makeDisplayImage() const
@@ -585,6 +699,52 @@ QImage DicomFrame::renderDisplay(
     if (!isValid())
         return {};
 
+    // Some DCMTK builds fail to produce a 16-bit output buffer for native
+    // (uncompressed) YBR_FULL_422 even though the same dataset is valid.  The
+    // stored layout is Y1 Y2 Cb Cr for each horizontal pair, so convert this
+    // one well-defined native representation directly and keep the renderer's
+    // high-precision RGBA16 contract.
+    if (photometricInterpretation == QStringLiteral("YBR_FULL_422"))
+    {
+        QImage result(width, height, QImage::Format_RGBA64);
+        if (result.isNull())
+            return {};
+
+        const double sampleMax = bitsStored >= 16
+            ? 65535.0
+            : static_cast<double>((1u << bitsStored) - 1u);
+        if (sampleMax <= 0.0)
+            return {};
+        const double chromaCenter = static_cast<double>(1u << (bitsStored - 1));
+
+        const auto toDisplay16 = [sampleMax](double value) -> quint16 {
+            value = std::clamp(value, 0.0, sampleMax);
+            return static_cast<quint16>(std::lround(value * 65535.0 / sampleMax));
+        };
+
+        for (int y = 0; y < height; ++y)
+        {
+            auto *dst = reinterpret_cast<QRgba64 *>(result.scanLine(y));
+            for (int x = 0; x < width; ++x)
+            {
+                const QVector<quint16> components = rawComponents(x, y);
+                if (components.size() != 3)
+                    return {};
+
+                const double yy = static_cast<double>(decodeStoredSample(components[0]));
+                const double cb = static_cast<double>(decodeStoredSample(components[1])) - chromaCenter;
+                const double cr = static_cast<double>(decodeStoredSample(components[2])) - chromaCenter;
+                const quint16 r = toDisplay16(yy + 1.402 * cr);
+                const quint16 g = toDisplay16(yy - 0.344136 * cb - 0.714136 * cr);
+                const quint16 b = toDisplay16(yy + 1.772 * cb);
+                dst[x] = QRgba64::fromRgba64(r, g, b, 65535);
+            }
+        }
+
+        lastDisplayImage_ = result;
+        return lastDisplayImage_;
+    }
+
     const QByteArray nativePath =
         QFile::encodeName(path);
 
@@ -605,13 +765,13 @@ QImage DicomFrame::renderDisplay(
     DicomImage image(
         dcmtkPath,
         0,
-        0,
+        static_cast<unsigned long>(frameIndex_),
         1);
 
     if (image.getStatus() != EIS_Normal)
         return {};
 
-    if (useCustomWindow)
+    if (useCustomWindow && image.isMonochrome())
     {
         //
         // 使用 UI 指定的 WC / WW
@@ -623,7 +783,7 @@ QImage DicomFrame::renderDisplay(
             return {};
         }
     }
-    else
+    else if (image.isMonochrome())
     {
         //
         // 優先使用 DICOM 原本的 Window Center / Width
@@ -674,21 +834,42 @@ QImage DicomFrame::renderDisplay(
     if (!output)
         return {};
 
-    //
-    // DCMTK 管理 output buffer，
-    // 所以 QImage 最後一定 copy()。
-    //
-    QImage result(
-        reinterpret_cast<const uchar *>(
-            output),
-        outputWidth,
-        outputHeight,
-        outputWidth *
-            static_cast<int>(
-                sizeof(quint16)),
-        QImage::Format_Grayscale16);
+    const unsigned long outputBytes = image.getOutputDataSize(16);
+    const uint64_t pixelCount = static_cast<uint64_t>(outputWidth) *
+                                static_cast<uint64_t>(outputHeight);
+    const uint64_t requiredBytes = pixelCount * (image.isMonochrome() ? 2u : 6u);
+    if (outputBytes < requiredBytes)
+        return {};
 
-    return result.copy();
+    if (image.isMonochrome())
+    {
+        QImage result(
+            reinterpret_cast<const uchar *>(output),
+            outputWidth,
+            outputHeight,
+            outputWidth * static_cast<int>(sizeof(quint16)),
+            QImage::Format_Grayscale16);
+        lastDisplayImage_ = result.copy();
+        return lastDisplayImage_;
+    }
+
+    // DCMTK planar=0 returns RGBRGB... with unsigned 16-bit samples.
+    // Expand to RGBA16 because D3D11 has a native four-component UNORM format.
+    QImage result(outputWidth, outputHeight, QImage::Format_RGBA64);
+    if (result.isNull())
+        return {};
+    const auto *rgb = reinterpret_cast<const quint16 *>(output);
+    for (int y = 0; y < outputHeight; ++y)
+    {
+        auto *dst = reinterpret_cast<QRgba64 *>(result.scanLine(y));
+        for (int x = 0; x < outputWidth; ++x)
+        {
+            const qsizetype index = (static_cast<qsizetype>(y) * outputWidth + x) * 3;
+            dst[x] = QRgba64::fromRgba64(rgb[index], rgb[index + 1], rgb[index + 2], 65535);
+        }
+    }
+    lastDisplayImage_ = result;
+    return lastDisplayImage_;
 }
 
 QString DicomFrame::summary() const
@@ -704,15 +885,19 @@ QString DicomFrame::summary() const
             "DICOM\n"
             "Size: %1 x %2\n"
             "Photometric: %3\n"
-            "BitsAllocated: %4\n"
-            "BitsStored: %5\n"
-            "HighBit: %6\n"
-            "PixelRepresentation: %7 (%8)\n"
-            "RescaleSlope: %9\n"
-            "RescaleIntercept: %10\n")
+            "SamplesPerPixel: %4\n"
+            "PlanarConfiguration: %5\n"
+            "BitsAllocated: %6\n"
+            "BitsStored: %7\n"
+            "HighBit: %8\n"
+            "PixelRepresentation: %9 (%10)\n"
+            "RescaleSlope: %11\n"
+            "RescaleIntercept: %12\n")
             .arg(width)
             .arg(height)
             .arg(photometricInterpretation)
+            .arg(samplesPerPixel)
+            .arg(planarConfiguration)
             .arg(bitsAllocated)
             .arg(bitsStored)
             .arg(highBit)
@@ -742,8 +927,9 @@ QString DicomFrame::summary() const
 
     text +=
         QStringLiteral(
-            "Frames: %1\n"
-            "TransferSyntax: %2")
+            "Frame: %1 / %2\n"
+            "TransferSyntax: %3")
+            .arg(frameIndex_ + 1)
             .arg(frameCount)
             .arg(transferSyntaxUid);
 
@@ -760,34 +946,30 @@ QString DicomFrame::pixelText(
     if (!s.valid)
         return QStringLiteral("Invalid pixel");
 
-    QString wordText;
-
-    if (hexadecimal)
+    QStringList stored;
+    for (int i = 0; i < s.storedComponents.size(); ++i)
     {
-        wordText =
-            QStringLiteral("0x%1")
-                .arg(s.storedWord,
-                     4,
-                     16,
-                     QLatin1Char('0'))
-                .toUpper();
-    }
-    else
-    {
-        wordText =
-            QString::number(s.storedWord);
+        const QString value = hexadecimal
+            ? QStringLiteral("0x%1").arg(static_cast<quint32>(s.storedComponents[i]) & 0xffffu,
+                                         4, 16, QLatin1Char('0')).toUpper()
+            : QString::number(s.storedComponents[i]);
+        stored << QStringLiteral("%1=%2").arg(s.componentNames.value(i), value);
     }
 
-    return QStringLiteral(
-               "Pixel (%1,%2) | "
-               "StoredWord=%3 | "
-               "StoredValue=%4 | "
-               "RescaledValue=%5")
-        .arg(x)
-        .arg(y)
-        .arg(wordText)
-        .arg(s.storedValue)
-        .arg(s.rescaledValue, 0, 'f', 3);
+    QString text = QStringLiteral("Pixel (%1,%2) | Stored %3")
+                       .arg(x).arg(y).arg(stored.join(QStringLiteral(" ")));
+    if (isMonochrome())
+        text += QStringLiteral(" | Rescaled=%1").arg(s.rescaledValue, 0, 'f', 3);
+    if (!s.displayedComponents.isEmpty())
+    {
+        if (s.displayedComponents.size() == 1)
+            text += QStringLiteral(" | Display Gray16=%1").arg(s.displayedComponents[0]);
+        else
+            text += QStringLiteral(" | Display RGB16=%1,%2,%3")
+                        .arg(s.displayedComponents[0]).arg(s.displayedComponents[1])
+                        .arg(s.displayedComponents[2]);
+    }
+    return text;
 }
 
 QString DicomFrame::cellText(
@@ -800,15 +982,13 @@ QString DicomFrame::cellText(
     if (!s.valid)
         return {};
 
-    if (hexadecimal)
+    QStringList values;
+    for (qint32 value : s.storedComponents)
     {
-        return QStringLiteral("0x%1")
-            .arg(s.storedWord,
-                 4,
-                 16,
-                 QLatin1Char('0'))
-            .toUpper();
+        values << (hexadecimal
+            ? QStringLiteral("0x%1").arg(static_cast<quint32>(value) & 0xffffu,
+                                         4, 16, QLatin1Char('0')).toUpper()
+            : QString::number(value));
     }
-
-    return QString::number(s.storedValue);
+    return values.join(QStringLiteral("/"));
 }

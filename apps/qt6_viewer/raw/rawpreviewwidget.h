@@ -12,6 +12,7 @@ class RawPreviewWidget : public QWidget
 
 public:
     explicit RawPreviewWidget(QWidget *parent = nullptr);
+    ~RawPreviewWidget() override;
 
     void setFrame(const RawFrame *frame);
 
@@ -31,6 +32,7 @@ signals:
 
 protected:
     void paintEvent(QPaintEvent *) override;
+    void resizeEvent(QResizeEvent *) override;
     void wheelEvent(QWheelEvent *) override;
     void mousePressEvent(QMouseEvent *) override;
     void mouseMoveEvent(QMouseEvent *) override;
@@ -42,11 +44,18 @@ private:
 
     QPointF imageTopLeft() const;
 
+    void updateD3dPreview();
+    void updateD3dSurfaceGeometry();
+
     const RawFrame *frame_ = nullptr;
 
     const DicomFrame *dicomFrame_ = nullptr;
 
     QImage preview_;
+
+    QWidget *d3dSurface_ = nullptr;
+    void *previewHandle_ = nullptr;
+    bool d3dReady_ = false;
 
     double zoom_ = 1.0;
     QPointF pan_;

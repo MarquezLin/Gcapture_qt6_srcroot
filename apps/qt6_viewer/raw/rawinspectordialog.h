@@ -29,6 +29,7 @@ private:
     void navigateFile(int offset);
     void refreshFileNavigation();
     void applyDicomWindow();
+    void selectDicomFrame(int oneBasedFrame);
     bool isDicomFile(const QString &path) const;
     void updateModeControls();
 
@@ -53,6 +54,7 @@ private:
     QDoubleSpinBox *windowCenterSpin_ = nullptr;
     QDoubleSpinBox *windowWidthSpin_ = nullptr;
     QPushButton *applyWindowButton_ = nullptr;
+    QSpinBox *frameSpin_ = nullptr;
 };
 
 #endif
