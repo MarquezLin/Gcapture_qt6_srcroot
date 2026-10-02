@@ -46,7 +46,7 @@ struct FfmpegVideoRecordConfig
     //   P010/Y210     -> HEVC when available
     //
     // Release builds are expected to use an LGPL shared FFmpeg build. Prefer
-    // Intel Quick Sync, then Media Foundation, then an LGPL software encoder.
+    // Intel Quick Sync, then an LGPL software encoder.
     bool force_hevc_main10 = false;
     bool force_h264 = false;
     bool audio_enabled = false;

@@ -3,8 +3,6 @@
 
 #include <objbase.h>
 #include <dvdmedia.h>
-#include <mfapi.h>
-#include <mfobjects.h>
 #include <wrl/client.h>
 #include <vector>
 #include <cmath>
@@ -1099,8 +1097,8 @@ static bool dshow_known_capture_subtype(const GUID &sub)
     return sub == MEDIASUBTYPE_NV12 || sub == MEDIASUBTYPE_YUY2 || sub == MEDIASUBTYPE_Y210 ||
            sub == MEDIASUBTYPE_RGB24 || sub == MEDIASUBTYPE_RGB32 || sub == MEDIASUBTYPE_ARGB32 ||
            gcap_is_dshow_fourcc_subtype(sub, gcap_make_fourcc('v', '2', '1', '0')) ||
-           sub == MFVideoFormat_NV12 || sub == MFVideoFormat_YUY2 || sub == MFVideoFormat_P010 ||
-           sub == MFVideoFormat_Y210 || sub == MFVideoFormat_ARGB32;
+           sub == MEDIASUBTYPE_NV12 || sub == MEDIASUBTYPE_YUY2 || sub == MEDIASUBTYPE_P010 ||
+           sub == MEDIASUBTYPE_Y210 || sub == MEDIASUBTYPE_ARGB32;
 }
 
 gcap_pixfmt_t gcap_subtype_to_pixfmt(const GUID &sub)
@@ -1117,16 +1115,16 @@ gcap_pixfmt_t gcap_subtype_to_pixfmt(const GUID &sub)
         return GCAP_FMT_V210;
     if (sub == MEDIASUBTYPE_RGB24 || sub == MEDIASUBTYPE_RGB32 || sub == MEDIASUBTYPE_ARGB32)
         return GCAP_FMT_ARGB;
-#ifdef MFVideoFormat_NV12
-    if (sub == MFVideoFormat_NV12)
+#ifdef MEDIASUBTYPE_NV12
+    if (sub == MEDIASUBTYPE_NV12)
         return GCAP_FMT_NV12;
-    if (sub == MFVideoFormat_YUY2)
+    if (sub == MEDIASUBTYPE_YUY2)
         return GCAP_FMT_YUY2;
-    if (sub == MFVideoFormat_P010)
+    if (sub == MEDIASUBTYPE_P010)
         return GCAP_FMT_P010;
-    if (sub == MFVideoFormat_Y210)
+    if (sub == MEDIASUBTYPE_Y210)
         return GCAP_FMT_Y210;
-    if (sub == MFVideoFormat_ARGB32)
+    if (sub == MEDIASUBTYPE_ARGB32)
         return GCAP_FMT_ARGB;
 #endif
     return GCAP_FMT_YUY2;
@@ -1193,19 +1191,19 @@ const char *gcap_subtype_name(const GUID &sub)
     if (gcap_is_dshow_fourcc_subtype(sub, gcap_make_fourcc('r', '2', '1', '0')))
         return "r210";
 
-    if (sub == MFVideoFormat_NV12)
+    if (sub == MEDIASUBTYPE_NV12)
         return "NV12";
-    if (sub == MFVideoFormat_YUY2)
+    if (sub == MEDIASUBTYPE_YUY2)
         return "YUY2";
-    if (sub == MFVideoFormat_P010)
+    if (sub == MEDIASUBTYPE_P010)
         return "P010";
-    if (sub == MFVideoFormat_Y210)
+    if (sub == MEDIASUBTYPE_Y210)
         return "Y210";
-    if (sub == MFVideoFormat_ARGB32)
+    if (sub == MEDIASUBTYPE_ARGB32)
         return "ARGB32";
-    if (sub == MFVideoFormat_RGB32)
+    if (sub == MEDIASUBTYPE_RGB32)
         return "RGB32";
-    if (sub == MFVideoFormat_MJPG)
+    if (sub == MEDIASUBTYPE_MJPG)
         return "MJPG";
 
     return "Unknown";

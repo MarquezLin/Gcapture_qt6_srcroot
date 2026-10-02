@@ -57,14 +57,10 @@ extern "C"
     /** Capture backend selection. */
     typedef enum
     {
-        /** Media Foundation CPU readback path. */
-        GCAP_BACKEND_WINMF_CPU = 0,
-        /** Media Foundation GPU/DXGI path. Recommended for WinMF preview when supported. */
-        GCAP_BACKEND_WINMF_GPU = 1,
         /** DirectShow raw-sink path. Recommended for DShow capture devices. */
-        GCAP_BACKEND_DSHOW = 2,
+        GCAP_BACKEND_DSHOW = 0,
         /** SDK chooses an available backend. Actual backend can be queried by gcap_get_active_backend(). */
-        GCAP_BACKEND_AUTO = 3
+        GCAP_BACKEND_AUTO = 1
     } gcap_backend_t;
 
     /** Profile negotiation mode. */
@@ -206,7 +202,7 @@ extern "C"
         gcap_signal_status_t negotiated;   /** Media type actually negotiated/delivered by the backend. */
         double runtime_fps;                /** Measured delivered-frame FPS. 0 means unknown/not running yet. */
         int active_backend;                /** gcap_backend_t value actually in use. */
-        char backend_name[32];             /** Display string, e.g. WinMF GPU / WinMF CPU / DShow Raw. */
+        char backend_name[32];             /** Display string, e.g. DirectShow. */
         char frame_source[32];             /** Display string, e.g. DXGI / CPU / RawSink. */
         char path_name[64];                /** Display string describing active preview/capture path. */
         char source_format[32];            /** Legacy display field: negotiated media subtype name. */
@@ -223,8 +219,8 @@ extern "C"
     /** Human-readable recording configuration currently selected by the SDK. */
     typedef struct
     {
-        char mode_name[64];       /** e.g. DShow + FFmpeg MP4 / Media Foundation Sink Writer. */
-        char encoder_name[160];   /** e.g. FFmpeg HEVC / H.265 via Media Foundation. */
+        char mode_name[64];       /** e.g. DShow + FFmpeg MP4. */
+        char encoder_name[160];   /** e.g. FFmpeg HEVC / H.265. */
         char input_format[32];    /** SDK pixel format name. */
         char output_format[32];   /** Encoder/muxer output pixel/codec description. */
         int input_bit_depth;
@@ -379,9 +375,7 @@ extern "C"
     typedef enum
     {
         GCAP_SOURCE_UNKNOWN = 0,
-        GCAP_SOURCE_WINMF_GPU = 1,
-        GCAP_SOURCE_WINMF_CPU = 2,
-        GCAP_SOURCE_DSHOW_RAWSINK = 3
+        GCAP_SOURCE_DSHOW_RAWSINK = 1
     } gcap_frame_source_kind_t;
 
     /** Preferred raw frame callback payload. Plane pointers are valid only during callback. */
@@ -424,7 +418,7 @@ extern "C"
     /**
      * Installs a process-wide SDK log callback.
      *
-     * This is intended for SDK clients to receive WinMF/DShow/snapshot/recording
+     * This is intended for SDK clients to receive DirectShow/snapshot/recording
      * diagnostics in their own logging system. Passing cb = NULL disables the
      * callback. The callback may be invoked from SDK/backend worker threads.
      * The SDK may still also send messages to OutputDebugString on Windows as

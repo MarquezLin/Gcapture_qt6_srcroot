@@ -11,7 +11,7 @@
  * @brief Abstract interface for all capture providers.
  *
  * This interface defines the common functions required for
- * any video capture backend implementation (e.g. Media Foundation, V4L2, DeckLink).
+ * a video capture backend implementation.
  */
 struct ICaptureProvider
 {

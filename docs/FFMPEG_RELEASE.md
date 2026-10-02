@@ -9,10 +9,10 @@ Required FFmpeg build properties:
 - The FFmpeg configure line does not contain `--enable-nonfree`.
 - GPL-only encoders are not used by the SDK recorder.
 
-The DShow recorder prefers the FFmpeg Media Foundation encoders:
+The DShow recorder prefers LGPL-compatible FFmpeg encoders:
 
-- `h264_mf` for 8-bit H.264/AVC output.
-- `hevc_mf` for HEVC/H.265 output from 10-bit input formats when available.
+- `h264_qsv`, then `libopenh264`, for 8-bit H.264/AVC output.
+- `hevc_qsv`, then `libkvazaar`, for HEVC/H.265 output from 10-bit input formats.
 
 Before shipping:
 

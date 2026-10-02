@@ -17,7 +17,6 @@
 #include "../audio/audio_manager.h"
 #include "gcap_audio.h"
 #include "../providers/dshow_signal_probe.h"
-#include "../providers/winmf_provider.h"
 
 #ifndef GCAPTURE_SDK_VERSION
 #define GCAPTURE_SDK_VERSION "1.0.0"
@@ -321,8 +320,6 @@ extern "C"
     {
         switch (backend)
         {
-        case GCAP_BACKEND_WINMF_CPU: return "WinMF CPU";
-        case GCAP_BACKEND_WINMF_GPU: return "WinMF GPU";
         case GCAP_BACKEND_DSHOW: return "DirectShow";
         case GCAP_BACKEND_AUTO: return "Auto";
         default: return "Unknown";
@@ -333,8 +330,6 @@ extern "C"
     {
         switch (source_kind)
         {
-        case GCAP_SOURCE_WINMF_GPU: return "WinMF GPU";
-        case GCAP_SOURCE_WINMF_CPU: return "WinMF CPU";
         case GCAP_SOURCE_DSHOW_RAWSINK: return "DShow RawSink";
         case GCAP_SOURCE_UNKNOWN:
         default: return "Unknown";
@@ -351,8 +346,6 @@ extern "C"
         switch (backend)
         {
         case GCAP_BACKEND_DSHOW: return "DShow + FFmpeg MP4";
-        case GCAP_BACKEND_WINMF_CPU:
-        case GCAP_BACKEND_WINMF_GPU: return "Media Foundation Sink Writer";
         case GCAP_BACKEND_AUTO: return "Auto Recorder";
         default: return "Recorder";
         }
@@ -472,9 +465,6 @@ extern "C"
 #ifdef _WIN32
         if (backend == GCAP_BACKEND_DSHOW)
             return dshow_enum_video_caps_by_index(device_index, out_caps, max_caps);
-        // Current WinMF helper exposes unique pixel formats only. Keep this API backend-aware and conservative.
-        if (backend == GCAP_BACKEND_WINMF_CPU || backend == GCAP_BACKEND_WINMF_GPU || backend == GCAP_BACKEND_AUTO)
-            return 0;
         return 0;
 #else
         (void)backend; (void)device_index; (void)out_caps; (void)max_caps;
@@ -526,29 +516,6 @@ extern "C"
             return GCAP_OK;
         }
 
-        if (backend == GCAP_BACKEND_WINMF_CPU || backend == GCAP_BACKEND_WINMF_GPU || backend == GCAP_BACKEND_AUTO)
-        {
-            gcap_pixfmt_t formats[16] = {};
-            const int n = winmf_enum_supported_pixel_formats_by_index(device_index, formats, 16);
-            if (n <= 0)
-                return GCAP_ENOTSUP;
-            int best = -1;
-            int bestScore = -1;
-            for (int i = 0; i < n; ++i)
-            {
-                const int score = format_rank_for_backend(backend, formats[i]);
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    best = i;
-                }
-            }
-            if (best < 0)
-                return GCAP_ENOTSUP;
-            out_profile->format = formats[best];
-            out_profile->mode = GCAP_PROFILE_DEVICE_DEFAULT;
-            return GCAP_OK;
-        }
 #else
         (void)backend; (void)device_index;
 #endif
@@ -584,8 +551,6 @@ extern "C"
                 out_formats[i] = uniq[static_cast<size_t>(i)];
             return n;
         }
-        if (backend == GCAP_BACKEND_WINMF_CPU || backend == GCAP_BACKEND_WINMF_GPU || backend == GCAP_BACKEND_AUTO)
-            return winmf_enum_supported_pixel_formats_by_index(device_index, out_formats, max_formats);
         return 0;
 #else
         (void)backend;
@@ -662,7 +627,6 @@ extern "C"
 
         const char *fmtName = gcap_pixfmt_name(fmt);
         const int inputDepth = gcap_pixfmt_bit_depth(fmt);
-        const int hevcMain10 = gcap_recording_uses_hevc_main10(fmt);
 
         copy_cstr(out->mode_name, sizeof(out->mode_name), gcap_recording_mode_name(backend));
         copy_cstr(out->input_format, sizeof(out->input_format), fmtName);
@@ -678,14 +642,14 @@ extern "C"
             if (fmt == GCAP_FMT_P010)
             {
                 copy_cstr(out->encoder_name, sizeof(out->encoder_name),
-                          "FFmpeg HEVC / H.265 via Media Foundation (input P010 10-bit, LGPL-friendly video-only path)");
+                          "FFmpeg HEVC / H.265 (input P010 10-bit, video-only path)");
                 copy_cstr(out->output_format, sizeof(out->output_format), "HEVC");
                 out->output_bit_depth = 8;
             }
             else if (fmt == GCAP_FMT_Y210)
             {
                 copy_cstr(out->encoder_name, sizeof(out->encoder_name),
-                          "FFmpeg HEVC / H.265 via Media Foundation (input Y210 10-bit 4:2:2, LGPL-friendly video-only path)");
+                          "FFmpeg HEVC / H.265 (input Y210 10-bit 4:2:2, video-only path)");
                 copy_cstr(out->output_format, sizeof(out->output_format), "HEVC");
                 out->output_bit_depth = 8;
             }
@@ -693,7 +657,7 @@ extern "C"
             {
                 char label[160] = {};
                 std::snprintf(label, sizeof(label),
-                              "FFmpeg H.264 / AVC via Media Foundation (input %s, LGPL-friendly video-only path)", fmtName);
+                              "FFmpeg H.264 / AVC (input %s, video-only path)", fmtName);
                 copy_cstr(out->encoder_name, sizeof(out->encoder_name), label);
                 copy_cstr(out->output_format, sizeof(out->output_format), "H.264");
                 out->output_bit_depth = 8;
@@ -704,26 +668,7 @@ extern "C"
             return GCAP_OK;
         }
 
-        out->video_only = 0;
-        if (hevcMain10)
-        {
-            char label[160] = {};
-            std::snprintf(label, sizeof(label),
-                          "Media Foundation HEVC / H.265 Encoder (Sink Writer, input %s / 10-bit)", fmtName);
-            copy_cstr(out->encoder_name, sizeof(out->encoder_name), label);
-            copy_cstr(out->output_format, sizeof(out->output_format), "HEVC Main10");
-            out->output_bit_depth = 10;
-        }
-        else
-        {
-            char label[160] = {};
-            std::snprintf(label, sizeof(label),
-                          "Media Foundation H.264 / AVC Encoder (Sink Writer, input %s / 8-bit)", fmtName);
-            copy_cstr(out->encoder_name, sizeof(out->encoder_name), label);
-            copy_cstr(out->output_format, sizeof(out->output_format), "H.264 8-bit");
-            out->output_bit_depth = 8;
-        }
-        return GCAP_OK;
+        return GCAP_ENOTSUP;
     }
 
     GCAP_API gcap_status_t gcap_get_recording_stats(gcap_handle h, gcap_recording_stats_t *out)

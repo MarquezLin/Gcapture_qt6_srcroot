@@ -1,7 +1,7 @@
 # SDK Refactor Phase 3-2: SDK Log Callback
 
 This phase adds a public SDK logging callback so applications can receive
-WinMF/DShow/snapshot/recording diagnostic messages without depending on the Qt
+DirectShow/snapshot/recording diagnostic messages without depending on the Qt
 viewer's debug window.
 
 ## Public API

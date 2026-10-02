@@ -88,7 +88,6 @@ static const AVCodec *findReleaseEncoder(bool useHevc)
 {
     static const char *const h264Encoders[] = {
         "h264_qsv",
-        "h264_mf",
         "libopenh264",
         nullptr,
     };
@@ -125,14 +124,6 @@ static const char *pixFmtName(AVPixelFormat fmt)
 
 static AVPixelFormat chooseOutputFormat(const AVCodec *codec, bool useHevc)
 {
-    if (codecNameEquals(codec, "h264_mf"))
-    {
-        if (codecSupportsPixFmt(codec, AV_PIX_FMT_NV12))
-            return AV_PIX_FMT_NV12;
-        if (codecSupportsPixFmt(codec, AV_PIX_FMT_YUV420P))
-            return AV_PIX_FMT_YUV420P;
-    }
-
     static const AVPixelFormat hevcPrefs[] = {
         AV_PIX_FMT_YUV420P10LE,
         AV_PIX_FMT_P010LE,
@@ -278,7 +269,7 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
         setErr(error,
                useHevc
                    ? "HEVC Main10 encoder not found. Install an LGPL shared FFmpeg build with hevc_qsv or libkvazaar."
-                   : "H.264 encoder not found. Install an LGPL shared FFmpeg build with h264_qsv, h264_mf, or libopenh264.");
+                   : "H.264 encoder not found. Install an LGPL shared FFmpeg build with h264_qsv or libopenh264.");
         close();
         return false;
     }
@@ -313,23 +304,15 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     if (impl_->fmt->oformat->flags & AVFMT_GLOBALHEADER)
         impl_->codec->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-    if (codecNameEquals(codec, "h264_mf") || codecNameEquals(codec, "hevc_mf"))
+    av_opt_set(impl_->codec->priv_data, "preset", "veryfast", 0);
+    if (useHevc)
     {
-        av_opt_set_int(impl_->codec->priv_data, "rate_control", 0, 0); // cbr
-        av_opt_set_int(impl_->codec->priv_data, "scenario", 5, 0);     // camera_record
+        av_opt_set(impl_->codec->priv_data, "profile", "main10", 0);
+        av_opt_set(impl_->codec->priv_data, "x265-params", "repeat-headers=1", 0);
     }
     else
     {
-        av_opt_set(impl_->codec->priv_data, "preset", "veryfast", 0);
-        if (useHevc)
-        {
-            av_opt_set(impl_->codec->priv_data, "profile", "main10", 0);
-            av_opt_set(impl_->codec->priv_data, "x265-params", "repeat-headers=1", 0);
-        }
-        else
-        {
-            av_opt_set(impl_->codec->priv_data, "tune", "zerolatency", 0);
-        }
+        av_opt_set(impl_->codec->priv_data, "tune", "zerolatency", 0);
     }
 
     ret = avcodec_open2(impl_->codec, codec, nullptr);

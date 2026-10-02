@@ -31,6 +31,7 @@ signals:
     void zoomChanged(double zoom);
 
 protected:
+    void showEvent(QShowEvent *) override;
     void paintEvent(QPaintEvent *) override;
     void resizeEvent(QResizeEvent *) override;
     void wheelEvent(QWheelEvent *) override;

@@ -5,10 +5,6 @@ static QString pipelineToString(const DisplayOutputInfo::Pipeline &p)
     using Path = DisplayOutputInfo::Pipeline::Path;
     switch (p.path)
     {
-    case Path::WinMFGpu:
-        return QStringLiteral("NV12 -> RGBA: GPU path (WinMF GPU)");
-    case Path::WinMFCpu:
-        return QStringLiteral("NV12 -> RGBA: CPU path (WinMF CPU)");
     case Path::DirectShow:
         return QStringLiteral("DirectShow preview path");
     case Path::Gvfg:
@@ -31,14 +27,10 @@ static QString previewGpuToString(const DisplayOutputInfo::Pipeline &p)
 
     switch (p.path)
     {
-    case Path::WinMFCpu:
-        return QStringLiteral("Preview GPU: none (WinMF CPU path)");
     case Path::Gvfg:
         return QStringLiteral("Preview GPU: not reported by GVFG preview helper");
     case Path::DirectShow:
         return QStringLiteral("Preview GPU: not reported by active DirectShow renderer");
-    case Path::WinMFGpu:
-        return QStringLiteral("Preview GPU: system default (adapter name unavailable)");
     default:
         return QStringLiteral("Preview GPU: unknown");
     }

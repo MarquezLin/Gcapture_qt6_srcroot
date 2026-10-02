@@ -6,7 +6,7 @@
 
 `srcroot` 是完整的 Qt viewer 應用程式專案，主要包含：
 
-- `sdk/gcapture`：Windows Media Foundation／DirectShow capture SDK。
+- `sdk/gcapture`：DirectShow capture SDK。
 - `sdk/gdisplay`：display 與 EDID 功能。
 - `apps/qt6_viewer`：正式 viewer GUI。
 - 外部 `GVFG_Standalone`：GVFG direct capture、preview 與 GPU conversion。

@@ -42,6 +42,10 @@ public:
     bool isMonochrome() const;
     bool setFrameIndex(int frameIndex);
     int frameIndex() const { return frameIndex_; }
+    bool hasNativeYbrFull422Frame() const;
+    const quint16 *nativeYbrFull422FrameData() const;
+    qsizetype nativeYbrFull422FrameBytes() const;
+    int nativeYbrFull422RowBytes() const;
 
     DicomPixelSample pixel(int x,
                            int y) const;

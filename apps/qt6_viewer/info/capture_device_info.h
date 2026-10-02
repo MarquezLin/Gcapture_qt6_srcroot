@@ -6,7 +6,7 @@
 struct CaptureDeviceInfo
 {
     gcap_signal_status_t signal{};       // best-effort signal info
-    gcap_signal_status_t signalProbe{};  // raw DShow/MF probe result
+    gcap_signal_status_t signalProbe{};  // backend-specific signal/probe result
     gcap_signal_status_t negotiated{};   // actual format delivered to app
     QString deviceName;
     QString backendName;

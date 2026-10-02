@@ -3,9 +3,12 @@
 This repository contains the Qt 6 viewer and the local capture/display SDK code
 used by the viewer.
 
+Backend ownership and maintenance status are documented in
+[`docs/BACKEND_BOUNDARIES.md`](docs/BACKEND_BOUNDARIES.md).
+
 The source tree is intentionally limited to these runtime paths:
 
-- `sdk/gcapture`: local capture SDK for Windows Media Foundation and DirectShow.
+- `sdk/gcapture`: local DirectShow capture SDK.
 - `sdk/gdisplay`: local display / EDID helper SDK used by the viewer.
 - `apps/qt6_viewer`: Qt viewer application.
 - External `GVFG_Standalone`: GVFG capture SDK imported as prebuilt `gvfg*.dll`

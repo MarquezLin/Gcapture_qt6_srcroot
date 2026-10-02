@@ -1,5 +1,11 @@
 #include "mainwindow.h"
 #include "gcapture.h"
+#include "backend/capture_backend_catalog.h"
+#include "backend/capture_source.h"
+#include "dshow/directshow_source.h"
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+#include "gvfg/gvfg_source.h"
+#endif
 
 #include "./ui_mainwindow.h"
 #include <QVBoxLayout>
@@ -21,10 +27,13 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <vector>
-#include <set>
 #include <QSignalBlocker>
 #include "edid_reader.h"
 #include "rawinspectordialog.h"
+#include "procamp.h"
+#include "previewwindow.h"
+#include "displayinfodialog.h"
+#include "inputinfodialog.h"
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS)
 #include "registerdialog.h"
 #endif
@@ -86,158 +95,8 @@ static void sdkLogCallback(gcap_log_level_t level, const char *message_utf8, voi
     }
 }
 
-namespace
-{
-    static const char *packetFmtName(int fmt)
-    {
-        return gcap_pixfmt_name(static_cast<gcap_pixfmt_t>(fmt));
-    }
-
-    static QString formatVideoCapDisplay(const gcap_video_cap_t &cap)
-    {
-        const double fps = (cap.fps_den > 0) ? (double(cap.fps_num) / double(cap.fps_den)) : 0.0;
-        const QString nativeName = cap.subtype_name[0]
-                                       ? QString::fromUtf8(cap.subtype_name)
-                                       : QString::fromLatin1(packetFmtName(cap.pixfmt));
-        QString text = QStringLiteral("%1 %2x%3")
-                           .arg(nativeName)
-                           .arg(cap.width)
-                           .arg(cap.height);
-        if (fps > 0.0)
-            text += QStringLiteral(" %1 fps").arg(fps, 0, 'f', 2);
-        if (cap.bit_depth > 0)
-            text += QStringLiteral(" (%1-bit)").arg(cap.bit_depth);
-        return text;
-    }
-
-    static QString pixelFormatComboLabel(gcap_pixfmt_t fmt)
-    {
-        if (gcap_pixfmt_bit_depth(fmt) <= 0)
-            return QString();
-        if (fmt == GCAP_FMT_YUY2)
-            return QStringLiteral("Format: YUY2/HDYC/UYVY");
-        return QStringLiteral("Format: %1").arg(QString::fromUtf8(gcap_pixfmt_name(fmt)));
-    }
-
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    static QString formatGvfgStatusLogLine(const gvfg_runtime_info_t &rt, const gvfg_signal_status_t &signal)
-    {
-        return QStringLiteral("[GVFG][signal]\n"
-                              "  input: connected=%1 channel=%2 width=%3 height=%4 format=%5 bit_depth=%6\n"
-                              "  runtime: fps=%7 frames=%8")
-            .arg(signal.connected)
-            .arg(signal.channel)
-            .arg(signal.width)
-            .arg(signal.height)
-            .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
-            .arg(signal.bit_depth)
-            .arg(rt.capture_fps > 0.0 ? QString::number(rt.capture_fps, 'f', 2) : QStringLiteral("--"))
-            .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)));
-    }
-
-    static QString formatGvfgStatusStateKey(const gvfg_signal_status_t &signal)
-    {
-        // Runtime counters change continuously and are displayed in the status
-        // bar. Keep them out of the key so logs only record signal/format changes.
-        return QStringLiteral("%1|%2|%3|%4|%5|%6")
-            .arg(signal.connected)
-            .arg(signal.channel)
-            .arg(signal.width)
-            .arg(signal.height)
-            .arg(signal.pixel_format)
-            .arg(signal.bit_depth);
-    }
-#endif
-
-    static std::vector<gcap_pixfmt_t> enumerateSupportedPixelFormats(int backend, int deviceIndex)
-    {
-        std::vector<gcap_pixfmt_t> result;
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-        if (backend == kQtViewerGvfgBackend)
-        {
-            Q_UNUSED(deviceIndex);
-            result.push_back(GCAP_FMT_YUY2);
-            return result;
-        }
-#endif
-        const int fmtCount = gcap_enum_supported_pixel_formats(backend, deviceIndex, nullptr, 0);
-        if (fmtCount <= 0)
-            return result;
-
-        std::vector<gcap_pixfmt_t> formats(static_cast<size_t>(fmtCount));
-        const int written = gcap_enum_supported_pixel_formats(backend, deviceIndex, formats.data(), static_cast<int>(formats.size()));
-        std::set<int> seen;
-        for (int i = 0; i < written; ++i)
-        {
-            const auto fmt = formats[static_cast<size_t>(i)];
-            switch (fmt)
-            {
-            case GCAP_FMT_NV12:
-            case GCAP_FMT_YUY2:
-            case GCAP_FMT_Y210:
-            case GCAP_FMT_V210:
-            case GCAP_FMT_P010:
-            case GCAP_FMT_ARGB:
-                if (seen.insert(static_cast<int>(fmt)).second)
-                    result.push_back(fmt);
-                break;
-            default:
-                break;
-            }
-        }
-        return result;
-    }
-
-    static QString formatPropertyPageDisplay(const gcap_property_page_t &page)
-    {
-        return QStringLiteral("%1 - %2")
-            .arg(QString::fromUtf8(page.page_name))
-            .arg(page.capture_pin ? QStringLiteral("Capture Pin") : QStringLiteral("Filter"));
-    }
-
-    static void fillDeviceCapabilitiesFromSdk(int deviceIndex, CaptureDeviceInfo &info)
-    {
-        info.supportedFormats.clear();
-        info.propertyPages.clear();
-
-        const int capCount = gcap_enum_video_caps(deviceIndex, nullptr, 0);
-        if (capCount > 0)
-        {
-            std::vector<gcap_video_cap_t> caps(static_cast<size_t>(capCount));
-            const int written = gcap_enum_video_caps(deviceIndex, caps.data(), static_cast<int>(caps.size()));
-            for (int i = 0; i < written; ++i)
-                info.supportedFormats << formatVideoCapDisplay(caps[static_cast<size_t>(i)]);
-        }
-
-        const int pageCount = gcap_enum_property_pages(deviceIndex, nullptr, 0);
-        if (pageCount > 0)
-        {
-            std::vector<gcap_property_page_t> pages(static_cast<size_t>(pageCount));
-            const int written = gcap_enum_property_pages(deviceIndex, pages.data(), static_cast<int>(pages.size()));
-            for (int i = 0; i < written; ++i)
-                info.propertyPages << formatPropertyPageDisplay(pages[static_cast<size_t>(i)]);
-        }
-    }
-
-    static QImage framePacketToQImage(const gcap_frame_packet_t &pkt)
-    {
-        if (pkt.width <= 0 || pkt.height <= 0 || pkt.plane_count <= 0 || !pkt.data[0])
-            return {};
-
-        QImage img(pkt.width, pkt.height, QImage::Format_ARGB32);
-        if (img.isNull())
-            return {};
-
-        const gcap_status_t st = gcap_frame_to_bgra8(&pkt, img.bits(), img.bytesPerLine());
-        if (st != GCAP_OK)
-            return {};
-        return img;
-    }
-
-}
-
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), ui(new Ui::MainWindow)
+    : QMainWindow(parent), ui(new Ui::MainWindow), directShow_(std::make_unique<DirectShowSource>())
 {
     ui->setupUi(this);
     resize(1180, 740);
@@ -281,15 +140,19 @@ MainWindow::MainWindow(QWidget *parent)
                 } }, Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::signalStatusChanged, this, [this](bool connected)
             {
-                if (!connected && usingGvfg_)
+                if (!connected && gvfg_ && gvfg_->isRunning())
                 {
                     gvfg_->clearPreview();
                     clearPreviewSurface();
                 }
-                const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
-                if (backend == kQtViewerGvfgBackend && !usingGvfg_ && ui->btnStart)
+                if (selectedBackend() == CaptureBackend::Gvfg && gvfg_ && !gvfg_->isRunning() && ui->btnStart)
                     ui->btnStart->setEnabled(gvfg_ && gvfg_->isOpen());
                 updateRuntimeStatusUi(); });
+#endif
+
+    backendCatalogs_.push_back(createDirectShowBackendCatalog());
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    backendCatalogs_.push_back(createGvfgBackendCatalog());
 #endif
 
     setupRuntimeStatusTimer();
@@ -318,13 +181,7 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     stopRecordingSession(false);
-    if (h_)
-        gcap_stop(h_);
     closeCaptureSession();
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (gvfg_)
-        gvfg_->close();
-#endif
     if (g_mainWindow == this)
     {
         gcap_set_log_callback(nullptr, nullptr);
@@ -346,153 +203,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 
     stopRecordingSession(false);
-    if (h_)
-        gcap_stop(h_);
     closeCaptureSession();
 
     QMainWindow::closeEvent(event);
-}
-
-void MainWindow::updateBrandDashboard()
-{
-    const auto setLabel = [this](const char *name, const QString &text)
-    {
-        if (QLabel *label = findChild<QLabel *>(QString::fromLatin1(name)))
-            label->setText(text);
-    };
-
-    const bool active = h_
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-                        || usingGvfg_
-#endif
-        ;
-
-    QString backendText = tr("Idle");
-    QString renderPathText;
-    bool previewActive = false;
-    QString signalText = (lastFrameWidth_ > 0 && lastFrameHeight_ > 0)
-                             ? QStringLiteral("%1 x %2").arg(lastFrameWidth_).arg(lastFrameHeight_)
-                             : (active ? tr("Active") : tr("Waiting"));
-    double dashboardFps = avgFps_;
-    QString colorText = selectedPreviewBitDepthText();
-    uint64_t frameCounter = deliveredFrameCount_;
-    bool inputConnected = active;
-
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (usingGvfg_ && gvfg_)
-    {
-        const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
-        const gvfg_signal_status_t signal = gvfg_->signalStatus();
-        const gvfg_preview_info_t pv = gvfg_->previewInfo();
-        inputConnected = signal.connected != 0;
-        backendText = QStringLiteral("GVFG");
-        previewActive = inputConnected && pv.active != 0;
-        renderPathText = previewActive
-                             ? QStringLiteral("gvfg_preview %1x%2 %3 %4bit")
-                                   .arg(pv.width)
-                                   .arg(pv.height)
-                                   .arg(QString::fromUtf8(pv.pixel_format))
-                                   .arg(pv.bit_depth)
-                             : tr("preview inactive");
-        frameCounter = rt.delivered_frames;
-        if (inputConnected)
-        {
-            dashboardFps = (rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps;
-            if (signal.width > 0 && signal.height > 0)
-            {
-                signalText = QStringLiteral("%1 x %2").arg(signal.width).arg(signal.height);
-                if (signal.bit_depth > 0)
-                    colorText = QStringLiteral("%1 · %2-bit")
-                                    .arg(QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format)))
-                                    .arg(signal.bit_depth);
-            }
-        }
-        else
-        {
-            signalText = tr("Disconnected");
-            dashboardFps = 0.0;
-            colorText = QStringLiteral("--");
-        }
-    }
-#endif
-
-    if (h_)
-    {
-        gcap_runtime_info_t rt{};
-        if (gcap_get_runtime_info(h_, &rt) == GCAP_OK)
-        {
-            backendText = QString::fromUtf8(rt.backend_name);
-            renderPathText = QString::fromUtf8(rt.render_format);
-            previewActive = true;
-            dashboardFps = (rt.runtime_fps > 0.0) ? rt.runtime_fps : dashboardFps;
-            if (rt.negotiated.width > 0 && rt.negotiated.height > 0)
-                signalText = QStringLiteral("%1 x %2").arg(rt.negotiated.width).arg(rt.negotiated.height);
-            if (rt.render_format[0])
-                colorText = QString::fromUtf8(rt.render_format);
-        }
-    }
-
-    if (active && inputConnected && frameCounter > 0)
-    {
-        if (frameCounter == lastWatchdogFrameCounter_)
-        {
-            ++frameStallTicks_;
-            if (frameStallTicks_ >= 6 && !frameStallWarningActive_)
-            {
-                frameStallWarningActive_ = true;
-                MainWindow::postLog(QStringLiteral("[Watchdog] frame counter stalled for %1 ms | backend=%2 | counter=%3 | fps=%4 | previewActive=%5 | render=%6")
-                                        .arg(frameStallTicks_ * (runtimeStatusTimer_ ? runtimeStatusTimer_->interval() : 500))
-                                        .arg(backendText)
-                                        .arg(QString::number(static_cast<qulonglong>(frameCounter)))
-                                        .arg(dashboardFps > 0.0 ? QString::number(dashboardFps, 'f', 2) : QStringLiteral("--"))
-                                        .arg(previewActive ? QStringLiteral("yes") : QStringLiteral("no"))
-                                        .arg(renderPathText.isEmpty() ? QStringLiteral("--") : renderPathText),
-                                    true);
-            }
-        }
-        else
-        {
-            if (frameStallWarningActive_)
-            {
-                MainWindow::postLog(QStringLiteral("[Watchdog] frame counter recovered | backend=%1 | counter=%2")
-                                        .arg(backendText)
-                                        .arg(QString::number(static_cast<qulonglong>(frameCounter))));
-            }
-            frameStallTicks_ = 0;
-            frameStallWarningActive_ = false;
-            lastWatchdogFrameCounter_ = frameCounter;
-        }
-    }
-    else
-    {
-        frameStallTicks_ = 0;
-        frameStallWarningActive_ = false;
-        lastWatchdogFrameCounter_ = frameCounter;
-    }
-
-    setLabel("statusBadge", active && !inputConnected
-                                ? tr("NO SIGNAL")
-                                : (frameStallWarningActive_ ? tr("FRAME STALL")
-                                                            : (active ? tr("CAPTURING") : tr("READY FOR SIGNAL"))));
-    setLabel("previewTitle", active && !inputConnected
-                                 ? tr("Waiting for Signal")
-                                 : (active ? tr("Capture Pipeline Active") : tr("Hardware Signal Pipeline")));
-    setLabel("previewHint", active && !inputConnected
-                                ? tr("Capture is active and waiting for the input signal.")
-                                : (active ? tr("Live render is active in the center preview.")
-                                          : tr("No active capture session.")));
-
-    const QString fpsText = (dashboardFps > 0.0)
-                                ? QStringLiteral("%1 fps").arg(QString::number(dashboardFps, 'f', 2))
-                                : QStringLiteral("-- fps");
-    const QString frameSuffix = frameCounter > 0
-                                    ? QStringLiteral(" | #%1").arg(QString::number(static_cast<qulonglong>(frameCounter)))
-                                    : QString();
-
-    setLabel("metricValue", signalText);
-    setLabel("metricValue2", fpsText + frameSuffix);
-    setLabel("metricValue3", colorText.isEmpty() ? tr("10-bit Ready") : colorText);
-    setLabel("metricValue4", recording_ ? tr("Recording") : tr("Standby"));
 }
 
 void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
@@ -512,7 +225,7 @@ void MainWindow::s_vcb(const gcap_frame_t *f, void *u)
         self,
         [self, ptsNs, frameId, width, height, safeImg]()
         {
-            self->updateFrameSourceState(ptsNs, frameId, width, height, self->lastVideoCallbackPtsNs_);
+            self->runtime_.onFrame(CaptureRuntimeTracker::Stream::Video, ptsNs, frameId, width, height);
             self->dispatchFrameImage(safeImg);
         },
         Qt::QueuedConnection);
@@ -526,29 +239,13 @@ void MainWindow::s_pcb(const gcap_frame_packet_t *pkt, void *u)
 
     const gcap_frame_packet_t pktCopy = *pkt;
     if (pkt->data[0] && pkt->stride[0] > 0 && pkt->height > 0)
-    {
-        QMutexLocker lock(&self->rawSnapshotMutex_);
-        if (self->rawSnapshotPending_ &&
-            (pkt->format == GCAP_FMT_YUY2 || pkt->format == GCAP_FMT_Y210 ||
-             pkt->format == GCAP_FMT_ARGB))
-        {
-            self->latestRawFrame_.resize(pkt->stride[0] * pkt->height);
-            std::memcpy(self->latestRawFrame_.data(), pkt->data[0],
-                        static_cast<size_t>(self->latestRawFrame_.size()));
-            self->latestRawWidth_ = pkt->width;
-            self->latestRawHeight_ = pkt->height;
-            self->latestRawStride_ = pkt->stride[0];
-            self->latestRawFormat_ = pkt->format;
-            self->rawSnapshotPending_ = false;
-            self->rawSnapshotCv_.wakeAll();
-        }
-    }
+    self->rawSnapshot_.submit(*pkt);
 
     QMetaObject::invokeMethod(
         self,
         [self, pktCopy]()
         {
-            self->updateFrameSourceState(pktCopy.pts_ns, pktCopy.frame_id, pktCopy.width, pktCopy.height, self->lastPacketCallbackPtsNs_);
+            self->runtime_.onFrame(CaptureRuntimeTracker::Stream::Packet, pktCopy.pts_ns, pktCopy.frame_id, pktCopy.width, pktCopy.height);
             self->logFramePacketIfNeeded(pktCopy);
         },
         Qt::QueuedConnection);
@@ -580,146 +277,6 @@ void MainWindow::s_ecb(gcap_status_t c, const char *m, void *u)
                 QMessageBox::warning(nullptr, "gcapture", msg);
             },
             Qt::QueuedConnection);
-    }
-}
-
-void MainWindow::updateRuntimeStatusUi()
-{
-    bool gvfgStreamActive = false;
-    bool gvfgSelected = false;
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    const int selectedBackend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
-    gvfgSelected = selectedBackend == kQtViewerGvfgBackend;
-    gvfgStreamActive = selectedBackend == kQtViewerGvfgBackend && usingGvfg_;
-#endif
-    if (ui->comboPixelFormat)
-        ui->comboPixelFormat->setEnabled(!gvfgStreamActive);
-    // GVFG preview always uses gvfg_preview's native render path. The generic
-    // DirectShow preview bit-depth selector is intentionally not applied there.
-    if (ui->labelBitDepth)
-        ui->labelBitDepth->setVisible(!gvfgSelected);
-    if (ui->comboPreviewBitDepth)
-        ui->comboPreviewBitDepth->setVisible(!gvfgSelected);
-    if (ui->labelGvfgSnapshotFormat)
-        ui->labelGvfgSnapshotFormat->setVisible(gvfgSelected);
-    if (ui->comboGvfgSnapshotFormat)
-        ui->comboGvfgSnapshotFormat->setVisible(gvfgSelected);
-    if (ui->labelinfo1)
-        ui->labelinfo1->setVisible(!gvfgSelected && !previewFullscreen_);
-    if (ui->metricLabel3)
-        ui->metricLabel3->setText(gvfgSelected ? tr("Format") : tr("Color Path"));
-    if (ui->checkZeroCopy)
-    {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-        ui->checkZeroCopy->setVisible(gvfgSelected);
-        ui->checkZeroCopy->setEnabled(gvfgSelected && !usingGvfg_);
-#else
-        ui->checkZeroCopy->setVisible(false);
-#endif
-    }
-    if (ui->checkAudioMonitoring)
-        ui->checkAudioMonitoring->setEnabled(!gvfgStreamActive);
-    if (ui->labelGvfgVolume)
-        ui->labelGvfgVolume->setVisible(gvfgSelected);
-    if (ui->sliderGvfgVolume)
-    {
-        ui->sliderGvfgVolume->setVisible(gvfgSelected);
-        ui->sliderGvfgVolume->setEnabled(gvfgSelected && ui->checkAudioMonitoring &&
-                                         ui->checkAudioMonitoring->isChecked());
-    }
-
-    updateBrandDashboard();
-
-    if (!ui->statusbar)
-        return;
-
-    if (!h_)
-    {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-        if (usingGvfg_ && gvfg_)
-        {
-            const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
-            const gvfg_signal_status_t signal = gvfg_->signalStatus();
-            const QString rawStateKey = formatGvfgStatusStateKey(signal);
-            const bool waitingForFirstFrame = rt.delivered_frames == 0 &&
-                                              !signal.connected &&
-                                              signal.width == 0 &&
-                                              signal.height == 0;
-            if (!waitingForFirstFrame && lastGvfgRawStateKey_ != rawStateKey)
-            {
-                MainWindow::postLog(formatGvfgStatusLogLine(rt, signal));
-                lastGvfgRawStateKey_ = rawStateKey;
-            }
-            const double runtimeFps = (rt.capture_fps > 0.0) ? rt.capture_fps : avgFps_;
-            const QString transferMode = ui->checkZeroCopy && ui->checkZeroCopy->isChecked()
-                                             ? QStringLiteral("Zero-copy")
-                                             : QStringLiteral("Copy");
-            const QString sb = QStringLiteral("GVFG | %1 fps | frames=%2 | %3")
-                                   .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"))
-                                   .arg(QString::number(static_cast<qulonglong>(rt.delivered_frames)))
-                                   .arg(transferMode);
-            if (lastRuntimeStatusText_ != sb)
-            {
-                ui->statusbar->showMessage(sb);
-                lastRuntimeStatusText_ = sb;
-            }
-            return;
-        }
-#endif
-        const QString sb = QStringLiteral("Idle");
-        if (lastRuntimeStatusText_ != sb)
-        {
-            ui->statusbar->showMessage(sb);
-            lastRuntimeStatusText_ = sb;
-        }
-        return;
-    }
-
-    gcap_runtime_info_t rt{};
-    if (gcap_get_runtime_info(h_, &rt) != GCAP_OK)
-        return;
-
-    const double negotiatedFps = (rt.negotiated.fps_den > 0) ? (double(rt.negotiated.fps_num) / double(rt.negotiated.fps_den)) : 0.0;
-    const double runtimeFps = (rt.runtime_fps > 0.0) ? rt.runtime_fps : avgFps_;
-    const QString backend = QString::fromUtf8(rt.backend_name);
-    const QString source = QString::fromUtf8(rt.frame_source);
-
-    QString negotiatedFmt;
-    const QString backendLower = QString::fromUtf8(rt.backend_name).toLower();
-    if (backendLower.contains(QStringLiteral("dshow")) && rt.source_format[0])
-        negotiatedFmt = QString::fromUtf8(rt.source_format);
-    else if (rt.negotiated_desc[0])
-        negotiatedFmt = QString::fromUtf8(rt.negotiated_desc);
-    else if (rt.source_format[0])
-        negotiatedFmt = QString::fromUtf8(rt.source_format);
-    else
-        negotiatedFmt = QString::fromUtf8(packetFmtName(rt.negotiated.pixfmt));
-    const QString renderFmt = QString::fromUtf8(rt.render_format);
-    const auto statusBlock = [](const char *label, const gcap_signal_status_t &s, double fps, const QString &fmt)
-    {
-        if (s.width <= 0 || s.height <= 0)
-            return QStringLiteral("%1 --").arg(QString::fromUtf8(label));
-        return QStringLiteral("%1 %2x%3 %4fps %5")
-            .arg(QString::fromUtf8(label))
-            .arg(s.width)
-            .arg(s.height)
-            .arg(QString::number(fps, 'f', 2))
-            .arg(fmt);
-    };
-    QString probeFmt = QString::fromUtf8(packetFmtName(rt.signal_probe.pixfmt));
-    const double probeFps = (rt.signal_probe.fps_den > 0) ? (double(rt.signal_probe.fps_num) / double(rt.signal_probe.fps_den)) : 0.0;
-
-    const QString sb = QStringLiteral("Backend: %1 | Source: %2 | %3 | %4 | AppInternal %5 | Runtime %6fps")
-                           .arg(backend)
-                           .arg(source)
-                           .arg(statusBlock("InputProbe", rt.signal_probe, probeFps, probeFmt))
-                           .arg(statusBlock("BackendFmt", rt.negotiated, negotiatedFps, negotiatedFmt))
-                           .arg(renderFmt.isEmpty() ? QStringLiteral("--") : renderFmt)
-                           .arg(runtimeFps > 0.0 ? QString::number(runtimeFps, 'f', 2) : QStringLiteral("--"));
-    if (lastRuntimeStatusText_ != sb)
-    {
-        ui->statusbar->showMessage(sb);
-        lastRuntimeStatusText_ = sb;
     }
 }
 
@@ -915,14 +472,14 @@ void MainWindow::setupRuntimeStatusTimer()
 
                 if (!suppressAuxDialogRefresh_)
                 {
-                    if (infoDlg_ && infoDlg_->isVisible())
+                    if (signalInfoDialog_ && signalInfoDialog_->isVisible())
                     {
-                        infoDlg_->setInfoText(lastInfoText_);
-                        infoDlg_->setPropertyPages(captureInfo_.propertyPages);
+                        signalInfoDialog_->setInfoText(lastInfoText_);
+                        signalInfoDialog_->setPropertyPages(captureInfo_.propertyPages);
                     }
 
-                    if (DpinfoDlg_ && DpinfoDlg_->isVisible())
-                        DpinfoDlg_->setInfoText(formatDisplayOutputInfo(displayInfo_));
+                    if (displayInfoDialog_ && displayInfoDialog_->isVisible())
+                        displayInfoDialog_->setInfoText(formatDisplayOutputInfo(displayInfo_));
                 } });
     runtimeStatusTimer_->start();
 }
@@ -950,79 +507,53 @@ void MainWindow::setupDebugDock()
 
 void MainWindow::setupProcAmpAction()
 {
-    m_currentProcAmp = {128, 128, 128, 128, 128};
+    procAmpSettings_ = {128, 128, 128, 128, 128};
     if (!ui->actionProcAmp)
         return;
 
     connect(ui->actionProcAmp, &QAction::triggered, this, [this]()
             {
-                if (!procampDlg_)
+                if (!procAmpDialog_)
                 {
-                    procampDlg_ = new ProcAmp(this);
-                    procampDlg_->setWindowTitle(tr("ProcAmp"));
-                    procampDlg_->setValues(m_currentProcAmp);
-                    connect(procampDlg_, &ProcAmp::valuesChanged,
+                    procAmpDialog_ = new ProcAmp(this);
+                    procAmpDialog_->setWindowTitle(tr("ProcAmp"));
+                    procAmpDialog_->setValues(procAmpSettings_);
+                    connect(procAmpDialog_, &ProcAmp::valuesChanged,
                             this,
                             [this](const gcap_procamp_t &p)
                             {
-                                m_currentProcAmp = p;
-                                if (h_)
-                                    gcap_set_procamp(h_, &p);
+                                procAmpSettings_ = p;
+                                if (directShow_ && directShow_->isOpen())
+                                    directShow_->setProcAmp(p);
                             });
                 }
 
                 bool supported = false;
-                if (h_)
+                if (directShow_ && directShow_->isOpen())
                 {
                     gcap_procamp_caps_t caps{};
-                    if (gcap_get_procamp_caps(h_, &caps) == GCAP_OK)
+                    if (directShow_->procAmpCapabilities(&caps) == GCAP_OK)
                     {
-                        procampDlg_->setCaps(caps);
+                        procAmpDialog_->setCaps(caps);
                         supported = true;
 
                         gcap_procamp_t current{};
-                        if (gcap_get_procamp(h_, &current) == GCAP_OK)
-                            m_currentProcAmp = current;
+                        if (directShow_->procAmp(&current) == GCAP_OK)
+                            procAmpSettings_ = current;
                     }
                 }
                 else
                 {
                     // No active SDK handle yet. Keep the dialog usable for pre-start values;
                     // the values are applied in startCapture() after gcap_open().
-                    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
-                    supported = (backend == 0 || backend == 1 || backend == 3);
+                    supported = selectedBackend() == CaptureBackend::DirectShow;
                 }
 
-                procampDlg_->setControlsEnabled(supported);
-                procampDlg_->setValues(m_currentProcAmp);
-                procampDlg_->show();
-                procampDlg_->raise();
-                procampDlg_->activateWindow(); });
-}
-
-void MainWindow::setupBackendControls()
-{
-    if (!ui->comboBackend)
-        return;
-
-    const QSignalBlocker blocker(ui->comboBackend);
-    ui->comboBackend->clear();
-    ui->comboBackend->addItem("DirectShow", 2);
-
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    ui->comboBackend->addItem("GVFG Direct", kQtViewerGvfgBackend);
-#endif
-
-    const int dsIndex = ui->comboBackend->findData(2);
-    ui->comboBackend->setCurrentIndex(dsIndex >= 0 ? dsIndex : 0);
-    if (ui->checkZeroCopy)
-        ui->checkZeroCopy->setVisible(false);
-    if (ui->labelGvfgVolume)
-        ui->labelGvfgVolume->setVisible(false);
-    if (ui->sliderGvfgVolume)
-        ui->sliderGvfgVolume->setVisible(false);
-
-    refreshPixelFormatOptions(false);
+                procAmpDialog_->setControlsEnabled(supported);
+                procAmpDialog_->setValues(procAmpSettings_);
+                procAmpDialog_->show();
+                procAmpDialog_->raise();
+                procAmpDialog_->activateWindow(); });
 }
 
 void MainWindow::setupPreviewBitDepthControls()
@@ -1063,7 +594,7 @@ QString MainWindow::selectedPreviewBitDepthText() const
 void MainWindow::applyPreviewSettingsToActiveSession()
 {
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (usingGvfg_ && gvfg_)
+    if (gvfg_ && gvfg_->isRunning())
     {
         const bool ok = gvfg_->setPreview(previewWindow_ ? previewWindow_->previewHwnd() : nullptr,
                                           selectedPreviewBitDepthMode());
@@ -1075,7 +606,7 @@ void MainWindow::applyPreviewSettingsToActiveSession()
         return;
     }
 #endif
-    if (!h_)
+    if (!directShow_ || !directShow_->isRunning())
         return;
 
     void *hwnd = previewWindow_ ? previewWindow_->previewHwnd() : nullptr;
@@ -1086,7 +617,7 @@ void MainWindow::applyPreviewSettingsToActiveSession()
     pv.use_fp16_pipeline = 1;
     pv.swapchain_10bit = selectedPreviewBitDepthMode();
 
-    const gcap_status_t st = gcap_set_preview(h_, &pv);
+    const gcap_status_t st = directShow_->setPreview(pv);
     if (st != GCAP_OK)
     {
         MainWindow::postLog(QStringLiteral("[Preview] apply bit depth failed: mode=%1 status=%2")
@@ -1101,184 +632,6 @@ void MainWindow::applyPreviewSettingsToActiveSession()
                             .arg(pv.swapchain_10bit));
     updateRuntimeStatusUi();
 }
-
-void MainWindow::notifyPixelFormatEnumerationFailure(int backend)
-{
-    if (!ui->comboBackend)
-        return;
-
-    QString title = QStringLiteral("Pixel Format");
-    QString message;
-    bool showDialog = true;
-    switch (backend)
-    {
-    case GCAP_BACKEND_DSHOW:
-        message = QStringLiteral("DirectShow format enumeration failed; keeping Format: Auto.");
-        showDialog = false;
-        break;
-    case GCAP_BACKEND_WINMF_CPU:
-    case GCAP_BACKEND_WINMF_GPU:
-        message = QStringLiteral("This device may not support Media Foundation. Please use DirectShow instead.");
-        break;
-    default:
-        return;
-    }
-
-    const QString warningKey = QStringLiteral("%1:%2").arg(deviceIndex_).arg(backend);
-    if (lastPixelFormatWarningKey_ == warningKey)
-        return;
-
-    lastPixelFormatWarningKey_ = warningKey;
-    if (showDialog)
-    {
-        QMessageBox::warning(this, title, message);
-    }
-    else
-    {
-        MainWindow::postLog(QStringLiteral("[PixelFormat] %1").arg(message), true);
-        if (ui->statusbar)
-            ui->statusbar->showMessage(message, 6000);
-    }
-}
-
-void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
-{
-    if (!ui->comboPixelFormat)
-        return;
-
-    const QSignalBlocker blocker(ui->comboPixelFormat);
-    const int previousData = ui->comboPixelFormat->currentData().toInt();
-    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
-    bool gvfgStreamActive = false;
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    gvfgStreamActive = backend == kQtViewerGvfgBackend && usingGvfg_;
-#endif
-
-    ui->comboPixelFormat->clear();
-
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (backend == kQtViewerGvfgBackend)
-    {
-        ui->comboPixelFormat->addItem(QStringLiteral("YUY2 (8-bit 4:2:2)"), static_cast<int>(GVFG_PIXFMT_YUY2));
-        ui->comboPixelFormat->addItem(QStringLiteral("Y210 (10-bit 4:2:2)"), static_cast<int>(GVFG_PIXFMT_Y210));
-        const int restoreIndex = ui->comboPixelFormat->findData(previousData);
-        ui->comboPixelFormat->setCurrentIndex(restoreIndex >= 0 ? restoreIndex : 0);
-        ui->comboPixelFormat->setToolTip(tr("GVFG output format controlled through the SDK API (register 0x80)."));
-        ui->comboPixelFormat->setEnabled(!gvfgStreamActive);
-        lastPixelFormatWarningKey_.clear();
-        return;
-    }
-#endif
-
-    ui->comboPixelFormat->setEnabled(true);
-    ui->comboPixelFormat->setToolTip(tr("Requested capture format for the next Start. The actual negotiated format is shown in BackendFmt."));
-    ui->comboPixelFormat->addItem(QStringLiteral("Format: Auto"), -1);
-
-    const auto supported = (deviceIndex_ >= 0)
-                               ? enumerateSupportedPixelFormats(backend, deviceIndex_)
-                               : std::vector<gcap_pixfmt_t>{};
-    for (const auto fmt : supported)
-    {
-        const QString label = pixelFormatComboLabel(fmt);
-        if (!label.isEmpty())
-            ui->comboPixelFormat->addItem(label, static_cast<int>(fmt));
-    }
-
-    if (!supported.empty())
-        lastPixelFormatWarningKey_.clear();
-    else if (showFailurePrompt && deviceIndex_ >= 0)
-        notifyPixelFormatEnumerationFailure(backend);
-
-    int restoreIndex = ui->comboPixelFormat->findData(previousData);
-    if (restoreIndex < 0)
-        restoreIndex = 0;
-    ui->comboPixelFormat->setCurrentIndex(restoreIndex);
-}
-
-void MainWindow::initializeDeviceList()
-{
-    if (!ui->comboDevice)
-        return;
-
-    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
-    const QString previousDeviceName = ui->comboDevice->currentText();
-
-    // gcap_enumerate() uses CaptureManager's currently selected backend.
-    // Keep the SDK backend in sync with the UI before rebuilding the device list,
-    // otherwise WinMF and DirectShow indexes can be mixed up.
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (backend != kQtViewerGvfgBackend)
-#endif
-        gcap_set_backend(backend);
-
-    const QSignalBlocker blocker(ui->comboDevice);
-    ui->comboDevice->clear();
-
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (backend == kQtViewerGvfgBackend)
-    {
-        const QStringList devices = GvfgSource::enumerateDevices();
-        for (int i = 0; i < devices.size(); ++i)
-            ui->comboDevice->addItem(devices.at(i), i);
-    }
-    else
-#endif
-    {
-        gcap_device_info_t list[16];
-        int n = 0;
-        if (gcap_enumerate(list, 16, &n) == GCAP_OK)
-        {
-            for (int i = 0; i < n; ++i)
-                ui->comboDevice->addItem(QString::fromUtf8(list[i].name), i);
-        }
-    }
-
-    int restoreIndex = -1;
-    if (!previousDeviceName.isEmpty())
-        restoreIndex = ui->comboDevice->findText(previousDeviceName);
-    if (restoreIndex < 0 && ui->comboDevice->count() > 0)
-        restoreIndex = 0;
-
-    if (restoreIndex >= 0)
-    {
-        ui->comboDevice->setCurrentIndex(restoreIndex);
-        deviceIndex_ = ui->comboDevice->itemData(restoreIndex).toInt();
-    }
-    else
-    {
-        deviceIndex_ = -1;
-    }
-    ui->comboDevice->setToolTip(ui->comboDevice->currentText());
-
-    invalidateDeviceCapabilityCache();
-    lastPixelFormatWarningKey_.clear();
-
-    MainWindow::postLog(QStringLiteral("[DeviceList] backend=%1 devices=%2 selectedIndex=%3 selectedName=%4")
-                            .arg(backend)
-                            .arg(ui->comboDevice->count())
-                            .arg(deviceIndex_)
-                            .arg(ui->comboDevice->currentText()));
-
-    refreshPixelFormatOptions(true);
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    refreshGvfgMonitoring();
-#endif
-}
-
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-void MainWindow::refreshGvfgMonitoring()
-{
-    if (!gvfg_ || usingGvfg_)
-        return;
-    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
-    // Idle monitoring must not open the device. Opening a GVFG channel can
-    // prevent another process from receiving frames even when capture is stopped.
-    if (gvfg_->isOpen())
-        gvfg_->close();
-    if (ui->btnStart)
-        ui->btnStart->setEnabled(backend == kQtViewerGvfgBackend && deviceIndex_ >= 0);
-}
-#endif
 
 void MainWindow::setupConnections()
 {
@@ -1305,10 +658,10 @@ void MainWindow::setupConnections()
                     refreshGvfgMonitoring();
 #endif
                     refreshCaptureInfoFromSdkAndRuntime(false);
-                    if (infoDlg_ && infoDlg_->isVisible())
+                    if (signalInfoDialog_ && signalInfoDialog_->isVisible())
                     {
-                        infoDlg_->setInfoText(lastInfoText_);
-                        infoDlg_->setPropertyPages(captureInfo_.propertyPages);
+                        signalInfoDialog_->setInfoText(lastInfoText_);
+                        signalInfoDialog_->setPropertyPages(captureInfo_.propertyPages);
                     } });
     }
 
@@ -1317,42 +670,27 @@ void MainWindow::setupConnections()
         connect(ui->comboBackend, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this](int)
                 {
-                    const int backend = ui->comboBackend->currentData().toInt();
-                    const bool isGvfgBackend =
+                    bool gvfgRunning = false;
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-                        (backend == kQtViewerGvfgBackend);
-#else
-                        false;
+                    gvfgRunning = gvfg_ && gvfg_->isRunning();
 #endif
+                    const bool isGvfgBackend = selectedBackend() == CaptureBackend::Gvfg;
                     if (ui->comboDevice)
                         ui->comboDevice->setEnabled(true);
                     if (ui->checkZeroCopy)
                     {
                         ui->checkZeroCopy->setVisible(isGvfgBackend);
-                        ui->checkZeroCopy->setEnabled(isGvfgBackend && !usingGvfg_);
+                        ui->checkZeroCopy->setEnabled(isGvfgBackend && !gvfgRunning);
                     }
 
                     // Re-enumerate devices when backend changes. Device index is only
                     // meaningful within the backend that produced the list.
-                    if (!isGvfgBackend)
+                    initializeDeviceList();
+                    refreshCaptureInfoFromSdkAndRuntime(false);
+                    if (signalInfoDialog_ && signalInfoDialog_->isVisible())
                     {
-                        initializeDeviceList();
-                        refreshCaptureInfoFromSdkAndRuntime(false);
-                        if (infoDlg_ && infoDlg_->isVisible())
-                        {
-                            infoDlg_->setInfoText(lastInfoText_);
-                            infoDlg_->setPropertyPages(captureInfo_.propertyPages);
-                        }
-                    }
-                    else
-                    {
-                        initializeDeviceList();
-                        refreshCaptureInfoFromSdkAndRuntime(false);
-                        if (infoDlg_ && infoDlg_->isVisible())
-                        {
-                            infoDlg_->setInfoText(lastInfoText_);
-                            infoDlg_->setPropertyPages(captureInfo_.propertyPages);
-                        }
+                        signalInfoDialog_->setInfoText(lastInfoText_);
+                        signalInfoDialog_->setPropertyPages(captureInfo_.propertyPages);
                     }
                     updateRuntimeStatusUi(); });
     }
@@ -1370,17 +708,15 @@ void MainWindow::setupConnections()
     if (ui->checkZeroCopy)
         connect(ui->checkZeroCopy, &QCheckBox::toggled, this, [this](bool)
                 {
-                    if (usingGvfg_)
+                    if (gvfg_ && gvfg_->isRunning())
                         return;
-                    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
-                    if (backend == kQtViewerGvfgBackend)
+                    if (selectedBackend() == CaptureBackend::Gvfg)
                         refreshGvfgMonitoring(); });
 
     if (ui->comboPixelFormat)
         connect(ui->comboPixelFormat, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
                 {
-                    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
-                    if (backend != kQtViewerGvfgBackend || !gvfg_ || usingGvfg_)
+                    if (selectedBackend() != CaptureBackend::Gvfg || !gvfg_ || gvfg_->isRunning())
                         return;
                     refreshGvfgMonitoring(); });
 #endif
@@ -1390,15 +726,10 @@ void MainWindow::setupConnections()
         connect(ui->checkAudioMonitoring, &QCheckBox::toggled, this, [this](bool enabled)
                 {
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-                    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
                     if (ui->sliderGvfgVolume)
-                        ui->sliderGvfgVolume->setEnabled(backend == kQtViewerGvfgBackend && enabled);
+                        ui->sliderGvfgVolume->setEnabled(selectedBackend() == CaptureBackend::Gvfg && enabled);
 #endif
-                    const bool captureRunning = h_
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-                                                || usingGvfg_
-#endif
-                        ;
+                    const bool captureRunning = activeCaptureSource() != nullptr;
                     if (!captureRunning)
                         return;
                     if (enabled)
@@ -1496,19 +827,14 @@ void MainWindow::onOpenRawInspect()
     if (wasTimerActive)
         runtimeStatusTimer_->stop();
 
-    QString path;
-    {
-        QFileDialog dlg(this,
-                        tr("Open RAW Frame"),
-                        QString(),
-                        tr("RAW Frame Files (*.raw);;All Files (*.*)"));
-#ifdef _WIN32
-        dlg.setOption(QFileDialog::DontUseNativeDialog, true);
-#endif
-        dlg.setFileMode(QFileDialog::ExistingFile);
-        if (dlg.exec() == QDialog::Accepted)
-            path = dlg.selectedFiles().value(0);
-    }
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        tr("Open Pixel Data"),
+        QString(),
+        tr("Pixel Data (*.raw *.dcm *.dicom);;"
+           "RAW Frame Files (*.raw);;"
+           "DICOM Files (*.dcm *.dicom);;"
+           "All Files (*.*)"));
 
     if (wasTimerActive && runtimeStatusTimer_)
         runtimeStatusTimer_->start();

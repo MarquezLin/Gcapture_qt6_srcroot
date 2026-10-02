@@ -5,8 +5,40 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QShowEvent>
 #include <QWheelEvent>
 #include <cmath>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+namespace
+{
+class MouseTransparentNativeSurface final : public QWidget
+{
+public:
+    using QWidget::QWidget;
+
+protected:
+    bool nativeEvent(const QByteArray &eventType, void *message,
+                     qintptr *result) override
+    {
+#ifdef Q_OS_WIN
+        const auto *msg = static_cast<const MSG *>(message);
+        if (msg && msg->message == WM_NCHITTEST)
+        {
+            *result = HTTRANSPARENT;
+            return true;
+        }
+#endif
+        return QWidget::nativeEvent(eventType, message, result);
+    }
+};
+}
 
 RawPreviewWidget::RawPreviewWidget(QWidget *parent) : QWidget(parent)
 {
@@ -14,7 +46,7 @@ RawPreviewWidget::RawPreviewWidget(QWidget *parent) : QWidget(parent)
     setMinimumSize(480, 360);
     setFocusPolicy(Qt::StrongFocus);
 
-    d3dSurface_ = new QWidget(this);
+    d3dSurface_ = new MouseTransparentNativeSurface(this);
     d3dSurface_->setAttribute(Qt::WA_NativeWindow);
     d3dSurface_->setAttribute(Qt::WA_TransparentForMouseEvents);
     d3dSurface_->setAutoFillBackground(false);
@@ -67,7 +99,8 @@ void RawPreviewWidget::setDicomFrame(
     preview_ = displayImage;
 
     resetView();
-    updateD3dPreview();
+    if (isVisible())
+        updateD3dPreview();
 }
 
 void RawPreviewWidget::updateDicomDisplay(
@@ -98,10 +131,11 @@ void RawPreviewWidget::resetView()
 
 void RawPreviewWidget::updateD3dPreview()
 {
+    const bool nativeYbr422 = dicomFrame_ && dicomFrame_->hasNativeYbrFull422Frame();
     const bool gray16 = preview_.format() == QImage::Format_Grayscale16;
     const bool rgba16 = preview_.format() == QImage::Format_RGBA64;
     if (!d3dReady_ || !previewHandle_ || !dicomFrame_ || preview_.isNull() ||
-        (!gray16 && !rgba16))
+        (!nativeYbr422 && !gray16 && !rgba16))
     {
         if (d3dSurface_)
             d3dSurface_->hide();
@@ -112,24 +146,32 @@ void RawPreviewWidget::updateD3dPreview()
     // frame; otherwise the first present can use the child's default size.
     updateD3dSurfaceGeometry();
     auto handle = static_cast<gvfg_preview_handle>(previewHandle_);
+    const int sourceBitDepth = nativeYbr422 ? dicomFrame_->bitsStored : 16;
     if (gvfg_preview_wait_idle(handle, 1000) != GVFG_PREVIEW_OK ||
-        gvfg_preview_prepare(handle, preview_.width(), preview_.height(), 16) != GVFG_PREVIEW_OK)
+        gvfg_preview_prepare(handle, preview_.width(), preview_.height(), sourceBitDepth) != GVFG_PREVIEW_OK)
     {
         d3dSurface_->hide();
         return;
     }
 
     gvfg_preview_frame_t frame{};
-    frame.data = preview_.constBits();
-    frame.data_size = static_cast<uint64_t>(preview_.bytesPerLine()) *
-                      static_cast<uint64_t>(preview_.height());
+    frame.data = nativeYbr422
+                     ? static_cast<const void *>(dicomFrame_->nativeYbrFull422FrameData())
+                     : static_cast<const void *>(preview_.constBits());
+    frame.data_size = nativeYbr422
+                          ? static_cast<uint64_t>(dicomFrame_->nativeYbrFull422FrameBytes())
+                          : static_cast<uint64_t>(preview_.bytesPerLine()) *
+                                static_cast<uint64_t>(preview_.height());
     frame.width = preview_.width();
     frame.height = preview_.height();
-    frame.pixel_format = gray16
-                             ? GVFG_PREVIEW_PIXFMT_GRAY16
-                             : GVFG_PREVIEW_PIXFMT_RGBA16;
-    frame.bit_depth = 16;
-    frame.row_bytes = preview_.bytesPerLine();
+    frame.pixel_format = nativeYbr422
+                             ? GVFG_PREVIEW_PIXFMT_DICOM_YBR_FULL_422
+                         : gray16 ? GVFG_PREVIEW_PIXFMT_GRAY16
+                                  : GVFG_PREVIEW_PIXFMT_RGBA16;
+    frame.bit_depth = sourceBitDepth;
+    frame.row_bytes = nativeYbr422
+                          ? dicomFrame_->nativeYbrFull422RowBytes()
+                          : preview_.bytesPerLine();
 
     if (gvfg_preview_render_frame(handle, &frame) != GVFG_PREVIEW_OK)
     {
@@ -146,7 +188,8 @@ void RawPreviewWidget::updateD3dSurfaceGeometry()
 
     // A native child covers its parent's QPainter output. Keep the existing
     // high-zoom grid/value renderer available once pixel inspection begins.
-    const bool useD3d = d3dReady_ && dicomFrame_ && !preview_.isNull() && zoom_ < 10.0;
+    const bool useD3d = isVisible() && d3dReady_ && dicomFrame_ &&
+                        !preview_.isNull() && zoom_ < 10.0;
     if (!useD3d)
     {
         d3dSurface_->hide();
@@ -158,6 +201,15 @@ void RawPreviewWidget::updateD3dSurfaceGeometry()
     d3dSurface_->setGeometry(QRectF(topLeft, scaled).toAlignedRect());
     d3dSurface_->show();
     d3dSurface_->raise();
+}
+
+void RawPreviewWidget::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // openFile() runs before the Inspector dialog is shown.  Do not create or
+    // present a swapchain while Qt is still realizing and laying out this
+    // native child HWND.
+    updateD3dPreview();
 }
 
 QPointF RawPreviewWidget::imageTopLeft() const
@@ -272,8 +324,6 @@ void RawPreviewWidget::wheelEvent(QWheelEvent *event)
     pan_ = anchor - imagePoint * zoom_ - centered;
     emit zoomChanged(zoom_);
     updateD3dSurfaceGeometry();
-    if (zoom_ < 10.0 && dicomFrame_)
-        updateD3dPreview();
     update();
     event->accept();
 }

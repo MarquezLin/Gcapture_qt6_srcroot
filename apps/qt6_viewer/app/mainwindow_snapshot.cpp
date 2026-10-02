@@ -1,4 +1,9 @@
 #include "mainwindow.h"
+#include "dshow/directshow_source.h"
+#include "previewwindow.h"
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+#include "gvfg/gvfg_source.h"
+#endif
 
 #include "./ui_mainwindow.h"
 #include <QCoreApplication>
@@ -162,33 +167,6 @@ void MainWindow::applyInitialPreviewSizeFromSource(int width, int height)
                             .arg(previewWindow_->height()));
 }
 
-void MainWindow::updateFrameSourceState(uint64_t ptsNs, uint64_t frameId, int width, int height, uint64_t &lastPtsTracker)
-{
-    lastFramePtsNs_ = ptsNs;
-    if (frameId != 0)
-    {
-        if (firstFrameId_ == 0)
-            firstFrameId_ = frameId;
-        if (frameId >= firstFrameId_)
-            deliveredFrameCount_ = std::max(deliveredFrameCount_, frameId - firstFrameId_ + 1);
-    }
-    else
-    {
-        ++deliveredFrameCount_;
-    }
-    lastFrameWidth_ = width;
-    lastFrameHeight_ = height;
-
-    if (lastPtsTracker != 0 && lastFramePtsNs_ > lastPtsTracker)
-    {
-        const uint64_t delta = lastFramePtsNs_ - lastPtsTracker;
-        const double fps = 1e9 / double(delta);
-        if (fps > 0.0)
-            avgFps_ = (avgFps_ <= 0.0) ? fps : (avgFps_ * 0.9 + fps * 0.1);
-    }
-    lastPtsTracker = lastFramePtsNs_;
-}
-
 void MainWindow::dispatchFrameImage(const QImage &img)
 {
     sigFrame(img.copy());
@@ -201,9 +179,7 @@ void MainWindow::refreshFrameDependentUi(const QImage &img)
 
 void MainWindow::logFramePacketIfNeeded(const gcap_frame_packet_t &pkt)
 {
-    ++framePacketLogCount_;
-    const bool shouldLogPacket = (framePacketLogCount_ <= 5) || ((framePacketLogCount_ % 60) == 0);
-    if (!shouldLogPacket)
+    if (!runtime_.shouldLogPacket())
         return;
 
     const auto sourceName = [](int s) -> const char *
@@ -212,18 +188,14 @@ void MainWindow::logFramePacketIfNeeded(const gcap_frame_packet_t &pkt)
         {
         case GCAP_SOURCE_DSHOW_RAWSINK:
             return "DShowRawSink";
-        case GCAP_SOURCE_WINMF_GPU:
-            return "WinMFGPU";
-        case GCAP_SOURCE_WINMF_CPU:
-            return "WinMFCPU";
         default:
             return "Unknown";
         }
     };
 
     const QString line = QStringLiteral("[FramePacket] session=%1 #%2 backend=%3 source=%4 fmt=%5 %6x%7 planes=%8 gpu=%9 pts=%10")
-                             .arg(framePacketSessionId_)
-                             .arg(framePacketLogCount_)
+                             .arg(runtime_.sessionId())
+                             .arg(runtime_.packetLogCount())
                              .arg(pkt.backend)
                              .arg(QString::fromLatin1(sourceName(pkt.source_kind)))
                              .arg(QString::fromLatin1(packetFmtNameFrame(pkt.format)))
@@ -264,7 +236,7 @@ bool MainWindow::saveSnapshotImage(QString *outPath, const QString &fullPath)
 
 bool MainWindow::saveSceneExports(const QString &basePath, gcap_snapshot_export_result_t *result)
 {
-    if (!h_ || basePath.isEmpty() || !result)
+    if (!directShow_ || !directShow_->isOpen() || basePath.isEmpty() || !result)
         return false;
 
     const QByteArray baseUtf8 = QDir::toNativeSeparators(basePath).toUtf8();
@@ -274,7 +246,7 @@ bool MainWindow::saveSceneExports(const QString &basePath, gcap_snapshot_export_
                  GCAP_EXPORT_TIFF | GCAP_EXPORT_STATS | GCAP_EXPORT_PNG;
 
     std::memset(result, 0, sizeof(*result));
-    const gcap_status_t st = gcap_export_snapshot(h_, &desc, result);
+    const gcap_status_t st = directShow_->exportSnapshot(desc, result);
     return st == GCAP_OK;
 }
 
@@ -282,7 +254,7 @@ void MainWindow::onFrameArrived(const QImage &img)
 {
     lastFrameImage_ = img;
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (usingGvfg_)
+    if (gvfg_ && gvfg_->isRunning())
     {
         if (!img.isNull())
             applyInitialPreviewSizeFromSource(img.width(), img.height());
@@ -297,39 +269,30 @@ void MainWindow::onFrameArrived(const QImage &img)
 
 QString MainWindow::saveLatestSourceRaw(const QString &basePath)
 {
-    QByteArray data;
-    int width = 0, height = 0, stride = 0, format = -1;
-    {
-        QMutexLocker lock(&rawSnapshotMutex_);
-        data = latestRawFrame_;
-        width = latestRawWidth_;
-        height = latestRawHeight_;
-        stride = latestRawStride_;
-        format = latestRawFormat_;
-    }
-    if (data.isEmpty() || width <= 0 || height <= 0 || stride <= 0)
+    const RawSnapshotFrame frame = rawSnapshot_.latest();
+    if (!frame.isValid())
         return {};
 
     QString formatName;
-    if (format == GCAP_FMT_YUY2)
+    if (frame.format == GCAP_FMT_YUY2)
         formatName = QStringLiteral("yuy2");
-    else if (format == GCAP_FMT_Y210)
+    else if (frame.format == GCAP_FMT_Y210)
         formatName = QStringLiteral("y210");
-    else if (format == GCAP_FMT_ARGB)
+    else if (frame.format == GCAP_FMT_ARGB)
         formatName = QStringLiteral("bgra8");
     else
         return {};
 
     const QString rawPath = basePath + QStringLiteral("_source_%1.raw").arg(formatName);
     QFile raw(rawPath);
-    if (!raw.open(QIODevice::WriteOnly) || raw.write(data) != data.size())
+    if (!raw.open(QIODevice::WriteOnly) || raw.write(frame.data) != frame.data.size())
         return {};
     raw.close();
 
     QJsonObject metadata;
-    metadata.insert(QStringLiteral("width"), width);
-    metadata.insert(QStringLiteral("height"), height);
-    metadata.insert(QStringLiteral("strideBytes"), stride);
+    metadata.insert(QStringLiteral("width"), frame.width);
+    metadata.insert(QStringLiteral("height"), frame.height);
+    metadata.insert(QStringLiteral("strideBytes"), frame.stride);
     metadata.insert(QStringLiteral("pixelFormat"), formatName.toUpper());
     metadata.insert(QStringLiteral("endianness"), QStringLiteral("little"));
     metadata.insert(QStringLiteral("dataOffset"), 0);
@@ -343,15 +306,8 @@ QString MainWindow::saveLatestSourceRaw(const QString &basePath)
 void MainWindow::onSnapshot()
 {
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (usingGvfg_)
+    if (gvfg_ && gvfg_->isRunning())
     {
-        if (!gvfg_ || !gvfg_->isRunning())
-        {
-            QMessageBox::information(this, "Snapshot",
-                                     "There is currently no screenshot available (please start capturing first).");
-            return;
-        }
-
         QString error;
         const GvfgSource::Snapshot snapshot = gvfg_->captureSnapshotData(2000, &error);
         if (snapshot.image.isNull() || snapshot.rawData.isEmpty())
@@ -494,15 +450,8 @@ void MainWindow::onSnapshot()
     }
 
     const QString basePath = buildSnapshotBasePath();
-    if (rawPacketCallbackEnabled_)
-    {
-        rawSnapshotMutex_.lock();
-        latestRawFrame_.clear();
-        rawSnapshotPending_ = true;
-        rawSnapshotCv_.wait(&rawSnapshotMutex_, 1000);
-        rawSnapshotPending_ = false;
-        rawSnapshotMutex_.unlock();
-    }
+    if (directShow_ && directShow_->isRunning())
+        rawSnapshot_.waitForNextFrame(1000);
     const QString sourceRawPath = saveLatestSourceRaw(basePath);
     gcap_snapshot_export_result_t result{};
     const bool sceneOk = saveSceneExports(basePath, &result);

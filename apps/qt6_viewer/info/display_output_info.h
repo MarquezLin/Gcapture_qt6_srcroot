@@ -9,7 +9,7 @@ struct DisplayOutputInfo
     struct Video
     {
         QSize size;       // img.size()
-        double fps = 0.0; // avgFps_
+        double fps = 0.0;
     } video;
 
     // ---- Desktop / Screen (Qt QScreen) ----
@@ -36,10 +36,8 @@ struct DisplayOutputInfo
         enum class Path
         {
             Unknown = -1,
-            WinMFCpu = 0,
-            WinMFGpu = 1,
-            DirectShow = 2,
-            Gvfg = 3
+            DirectShow = 0,
+            Gvfg = 1
         };
 
         Path path = Path::Unknown;

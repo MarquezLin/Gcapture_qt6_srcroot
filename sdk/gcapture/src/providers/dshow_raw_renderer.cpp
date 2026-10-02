@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <mfapi.h>
 #include <chrono>
 #include <atomic>
 
@@ -109,10 +108,10 @@ namespace
 
 const char *DShowRawRenderer::subtypeName(const GUID &g)
 {
-    if (g == MEDIASUBTYPE_NV12 || g == MFVideoFormat_NV12) return "NV12";
-    if (g == MFVideoFormat_P010) return "P010";
-    if (g == MEDIASUBTYPE_YUY2 || g == MFVideoFormat_YUY2) return "YUY2";
-    if (g == MEDIASUBTYPE_Y210 || g == MFVideoFormat_Y210) return "Y210";
+    if (g == MEDIASUBTYPE_NV12 || g == MEDIASUBTYPE_NV12) return "NV12";
+    if (g == MEDIASUBTYPE_P010) return "P010";
+    if (g == MEDIASUBTYPE_YUY2 || g == MEDIASUBTYPE_YUY2) return "YUY2";
+    if (g == MEDIASUBTYPE_Y210 || g == MEDIASUBTYPE_Y210) return "Y210";
     if (g == MEDIASUBTYPE_MJPG) return "MJPG";
     if (isHDYC(g)) return "HDYC";
     if (isUYVY(g)) return "UYVY";
@@ -187,7 +186,7 @@ void DShowRawRenderer::setNegotiated(const GUID &subtype, int width, int height,
 
 bool DShowRawRenderer::isSupportedSubtype() const
 {
-    return subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MFVideoFormat_P010 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210 ||
+    return subtype_ == MEDIASUBTYPE_NV12 || subtype_ == MEDIASUBTYPE_P010 || subtype_ == MEDIASUBTYPE_YUY2 || subtype_ == MEDIASUBTYPE_Y210 ||
            isV210(subtype_) ||
            isHDYC(subtype_) || isUYVY(subtype_) ||
            subtype_ == MEDIASUBTYPE_RGB24 || subtype_ == MEDIASUBTYPE_RGB32 || subtype_ == MEDIASUBTYPE_ARGB32;
@@ -196,7 +195,7 @@ bool DShowRawRenderer::isSupportedSubtype() const
 GUID DShowRawRenderer::negotiatedFormat() const
 {
     if (subtype_ == MEDIASUBTYPE_NV12) return MEDIASUBTYPE_NV12;
-    if (subtype_ == MFVideoFormat_P010) return MFVideoFormat_P010;
+    if (subtype_ == MEDIASUBTYPE_P010) return MEDIASUBTYPE_P010;
     if (subtype_ == MEDIASUBTYPE_YUY2) return MEDIASUBTYPE_YUY2;
     if (isHDYC(subtype_) || isUYVY(subtype_)) return subtype_;
     if (subtype_ == MEDIASUBTYPE_Y210) return MEDIASUBTYPE_Y210;
@@ -286,7 +285,7 @@ bool DShowRawRenderer::copyLatestRaw(std::vector<uint8_t> &out, int &w, int &h, 
     {
         stride = ((width_ + 5) / 6) * 16;
     }
-    else if (subtype_ == MFVideoFormat_P010)
+    else if (subtype_ == MEDIASUBTYPE_P010)
     {
         // P010 is 4:2:0, 16 bits per sample; one luma row is width * 2 bytes.
         stride = width_ * 2;

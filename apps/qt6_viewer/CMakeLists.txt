@@ -6,8 +6,8 @@ project(qt6_viewer VERSION ${_QT6_VIEWER_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 REQUIRED COMPONENTS Widgets Multimedia)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Multimedia)
+find_package(QT NAMES Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 # DICOM support
 find_package(DCMTK CONFIG REQUIRED)
 
@@ -16,7 +16,17 @@ set(VIEWER_SOURCES
   app/mainwindow.cpp
   app/mainwindow_capture.cpp
   app/mainwindow_info.cpp
-  app/mainwindow_frame.cpp
+  backend/capture_backend_catalog.h
+  backend/capture_backend.h
+  backend/capture_source.h
+  backend/dshow_backend_catalog.cpp
+  dshow/directshow_source.h
+  dshow/directshow_source.cpp
+  state/raw_snapshot_buffer.h
+  state/raw_snapshot_buffer.cpp
+  state/capture_runtime_tracker.h
+  state/capture_runtime_tracker.cpp
+  app/mainwindow_snapshot.cpp
   app/mainwindow.h
   app/mainwindow.ui
   dialogs/inputinfo/inputinfodialog.h
@@ -58,18 +68,16 @@ list(APPEND VIEWER_SOURCES ${VIEWER_DESIGN_ASSETS})
 
 if (WIN32)
   list(APPEND VIEWER_SOURCES
+    app/mainwindow_dshow.cpp
+    app/mainwindow_gvfg.cpp
+    backend/gvfg_backend_catalog.cpp
     gvfg/gvfg_source.h
     gvfg/gvfg_source.cpp
+    gvfg/gvfg_source_recording.cpp
     dialogs/register/registerdialog.h
     dialogs/register/registerdialog.cpp
     dialogs/register/registerdialog.ui
   )
-  set(QT6_VIEWER_GVFG_RECORDING_SOURCE "${CMAKE_SOURCE_DIR}/sdk/gcapture/src/providers/ffmpeg_video_recorder.cpp")
-  if (EXISTS "${QT6_VIEWER_GVFG_RECORDING_SOURCE}")
-    list(APPEND VIEWER_SOURCES
-      ${QT6_VIEWER_GVFG_RECORDING_SOURCE}
-    )
-  endif()
 endif()
 
 if (QT_VERSION_MAJOR GREATER_EQUAL 6)
@@ -97,6 +105,9 @@ endif()
 target_include_directories(qt6_viewer PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/app
+  ${CMAKE_CURRENT_SOURCE_DIR}/backend
+  ${CMAKE_CURRENT_SOURCE_DIR}/dshow
+  ${CMAKE_CURRENT_SOURCE_DIR}/state
   ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/displayinfo
   ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/inputinfo
   ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/procamp
@@ -113,9 +124,10 @@ if (WIN32)
   if (TARGET gvfg_preview)
     target_link_libraries(qt6_viewer PRIVATE gvfg_preview)
   endif()
-  target_include_directories(qt6_viewer PRIVATE
-    ${CMAKE_SOURCE_DIR}/sdk/gcapture/src/providers
-  )
+  if (TARGET gvfg_audio_playback)
+    target_link_libraries(qt6_viewer PRIVATE gvfg_audio_playback)
+  endif()
+  target_link_libraries(qt6_viewer PRIVATE gcapture_ffmpeg_recorder)
 endif()
 
 target_compile_definitions(qt6_viewer PRIVATE
@@ -126,7 +138,6 @@ target_compile_definitions(qt6_viewer PRIVATE
 # NOTE: do NOT use $<TARGET_LINKER_FILE:...> here; link targets directly.
 target_link_libraries(qt6_viewer PRIVATE
   Qt${QT_VERSION_MAJOR}::Widgets
-  Qt${QT_VERSION_MAJOR}::Multimedia
   gcapture
   gdisplay
   DCMTK::DCMTK
@@ -140,28 +151,11 @@ if (EXISTS "${NVAPI_ROOT}/include" AND EXISTS "${NVAPI_ROOT}/lib/x64/nvapi64.lib
   target_compile_definitions(qt6_viewer PRIVATE GCAP_ENABLE_NVAPI)
 endif()
 
-# Required FFmpeg recorder support for GVFG's pull-based frame path.
+# The recording helper owns FFmpeg headers and libraries. The viewer sees only
+# its small C++ interface and the feature flag used by GvfgSource.
 if (WIN32)
-  find_path(QT6_VIEWER_FFMPEG_INCLUDE_DIR libavformat/avformat.h PATHS "${FFMPEG_ROOT}/include" NO_DEFAULT_PATH)
-  find_library(QT6_VIEWER_FFMPEG_AVFORMAT_LIB avformat PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
-  find_library(QT6_VIEWER_FFMPEG_AVCODEC_LIB avcodec PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
-  find_library(QT6_VIEWER_FFMPEG_AVUTIL_LIB avutil PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
-  find_library(QT6_VIEWER_FFMPEG_SWSCALE_LIB swscale PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
-  find_library(QT6_VIEWER_FFMPEG_SWRESAMPLE_LIB swresample PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH)
-  if (QT6_VIEWER_FFMPEG_INCLUDE_DIR AND QT6_VIEWER_FFMPEG_AVFORMAT_LIB AND QT6_VIEWER_FFMPEG_AVCODEC_LIB AND QT6_VIEWER_FFMPEG_AVUTIL_LIB AND QT6_VIEWER_FFMPEG_SWSCALE_LIB AND QT6_VIEWER_FFMPEG_SWRESAMPLE_LIB)
-    target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_GVFG_RECORDING GCAP_ENABLE_FFMPEG)
-    target_include_directories(qt6_viewer PRIVATE "${QT6_VIEWER_FFMPEG_INCLUDE_DIR}")
-    target_link_libraries(qt6_viewer PRIVATE
-      ${QT6_VIEWER_FFMPEG_AVFORMAT_LIB}
-      ${QT6_VIEWER_FFMPEG_AVCODEC_LIB}
-      ${QT6_VIEWER_FFMPEG_AVUTIL_LIB}
-      ${QT6_VIEWER_FFMPEG_SWSCALE_LIB}
-      ${QT6_VIEWER_FFMPEG_SWRESAMPLE_LIB}
-    )
-    message(STATUS "qt6_viewer: GVFG FFmpeg recording enabled: ${FFMPEG_ROOT}")
-  else()
-    message(FATAL_ERROR "qt6_viewer: Required FFmpeg headers/libs were not found under FFMPEG_ROOT: ${FFMPEG_ROOT}")
-  endif()
+  target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_GVFG_RECORDING)
+  message(STATUS "qt6_viewer: GVFG recording uses gcapture_ffmpeg_recorder")
 endif()
 
 if (MSVC)
@@ -193,6 +187,13 @@ if (WIN32)
     add_custom_command(TARGET qt6_viewer POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:gvfg_preview>
+        $<TARGET_FILE_DIR:qt6_viewer>
+    )
+  endif()
+  if (TARGET gvfg_audio_playback)
+    add_custom_command(TARGET qt6_viewer POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:gvfg_audio_playback>
         $<TARGET_FILE_DIR:qt6_viewer>
     )
   endif()

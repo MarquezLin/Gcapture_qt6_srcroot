@@ -3,7 +3,6 @@
 
 #include <QMainWindow>
 #include <QImage>
-#include <QLabel>
 #include <QDateTime>
 #include <QString>
 #include <QDockWidget>
@@ -12,21 +11,21 @@
 #include <QByteArray>
 #include <QFrame>
 #include <QMargins>
-#include <QMutex>
-#include <QWaitCondition>
 #include <gcapture.h>
 #include <cstdint>
-#include "inputinfodialog.h"
-#include "displayinfodialog.h"
-#include "procamp.h"
+#include <memory>
+#include <optional>
+#include <vector>
+#include "backend/capture_backend.h"
+#include "state/raw_snapshot_buffer.h"
+#include "state/capture_runtime_tracker.h"
 #include "info/capture_device_info.h"
 #include "info/display_output_info.h"
-#include "previewwindow.h"
 
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-#include "gvfg/gvfg_source.h"
-static constexpr int kQtViewerGvfgBackend = 100;
-#endif
+class CaptureBackendCatalog;
+class CaptureSource;
+class DirectShowSource;
+class GvfgSource;
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -36,6 +35,8 @@ namespace Ui
 QT_END_NAMESPACE
 
 class inputinfodialog;
+class DisplayInfoDialog;
+class ProcAmp;
 class previewwindow;
 
 class MainWindow : public QMainWindow
@@ -69,22 +70,16 @@ private slots:
 
 private:
     Ui::MainWindow *ui;
-    gcap_handle h_{};
+    std::unique_ptr<DirectShowSource> directShow_;
     int deviceIndex_ = 0;
     bool recording_ = false;
     bool audioMonitoringActive_ = false;
+    std::vector<std::unique_ptr<CaptureBackendCatalog>> backendCatalogs_;
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     GvfgSource *gvfg_ = nullptr;
-    bool usingGvfg_ = false;
 #endif
 
-    // Frame-source state updated by arriving frames.
-    uint64_t lastFramePtsNs_ = 0;
-    uint64_t firstFrameId_ = 0;
-    uint64_t deliveredFrameCount_ = 0;
-    int lastFrameWidth_ = 0;
-    int lastFrameHeight_ = 0;
-    double avgFps_ = 0.0;
+    CaptureRuntimeTracker runtime_;
 
     // Recording state shown in the UI.
     gcap_profile_t currentProfile_{};
@@ -103,10 +98,10 @@ private:
     // Shared log entry point for UI and DLL callbacks.
     static void postLog(const QString &line, bool isError = false);
 
-    inputinfodialog *infoDlg_ = nullptr;
-    DisplayInfoDialog *DpinfoDlg_ = nullptr;
-    ProcAmp *procampDlg_ = nullptr;
-    gcap_procamp_t m_currentProcAmp{};
+    inputinfodialog *signalInfoDialog_ = nullptr;
+    DisplayInfoDialog *displayInfoDialog_ = nullptr;
+    ProcAmp *procAmpDialog_ = nullptr;
+    gcap_procamp_t procAmpSettings_{};
     QString lastInfoText_;
     CaptureDeviceInfo captureInfo_;
     DisplayOutputInfo displayInfo_;
@@ -114,26 +109,11 @@ private:
     class RawInspectorDialog *rawInspectorDlg_ = nullptr;
 
     qint64 lastPropsQueryMs_ = 0;
-    int cachedDeviceCapsBackend_ = -1;
+    std::optional<CaptureBackend> cachedDeviceCapsBackend_;
     int cachedDeviceCapsIndex_ = -1;
     QStringList cachedSupportedFormats_;
     QStringList cachedPropertyPages_;
-    bool rawPacketCallbackEnabled_ = false;
-    uint64_t lastVideoCallbackPtsNs_ = 0;
-    uint64_t lastPacketCallbackPtsNs_ = 0;
-    uint64_t framePacketLogCount_ = 0;
-    uint64_t framePacketSessionId_ = 0;
-    QMutex rawSnapshotMutex_;
-    QWaitCondition rawSnapshotCv_;
-    bool rawSnapshotPending_ = false;
-    QByteArray latestRawFrame_;
-    int latestRawWidth_ = 0;
-    int latestRawHeight_ = 0;
-    int latestRawStride_ = 0;
-    int latestRawFormat_ = -1;
-    uint64_t lastWatchdogFrameCounter_ = 0;
-    int frameStallTicks_ = 0;
-    bool frameStallWarningActive_ = false;
+    RawSnapshotBuffer rawSnapshot_;
     bool previewFullscreen_ = false;
     bool previewRestoreMaximized_ = false;
     QMargins previewPanelMargins_;
@@ -155,8 +135,12 @@ private:
     void ensureSignalInfoDialog();
     void ensureDisplayInfoDialog();
     void showAndActivateDialog(QWidget *dialog);
-    void refreshCaptureRuntimeInfo();
-    void refreshCaptureDeviceProps(bool throttleDeviceProps);
+    void refreshDirectShowCaptureInfo(bool throttleDeviceProps);
+    void refreshDirectShowDisplayPipeline();
+    CaptureBackend selectedBackend() const;
+    CaptureBackendCatalog *backendCatalog(CaptureBackend backend) const;
+    CaptureSource *activeCaptureSource() const;
+    CaptureSource *selectedCaptureSource() const;
     void ensureDeviceCapabilityCache(int deviceIndex);
     void invalidateDeviceCapabilityCache();
     void updateCapabilityLabel();
@@ -178,11 +162,16 @@ private:
     QString selectedPreviewBitDepthText() const;
     void applyPreviewSettingsToActiveSession();
     void refreshPixelFormatOptions(bool showFailurePrompt = false);
-    void notifyPixelFormatEnumerationFailure(int backend);
+    void notifyPixelFormatEnumerationFailure(CaptureBackend backend);
     void initializeDeviceList();
     void setupConnections();
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     void refreshGvfgMonitoring();
+    void refreshGvfgCaptureInfo();
+    void refreshGvfgDisplayPipeline();
+    bool startGvfgCapture(void *previewHwnd);
+    void toggleGvfgRecording();
+    void stopGvfgRecording(bool showSummary);
 #endif
     void logStartupInfo();
     void resetRuntimeTracking();
@@ -190,11 +179,13 @@ private:
     void closeCaptureSession();
     void startAudioMonitoring();
     void stopAudioMonitoring();
+    bool startDirectShowCapture(void *previewHwnd);
+    void toggleDirectShowRecording();
+    void stopDirectShowRecording(bool showSummary);
     void setAudioMonitoringStatus(const QString &status, const QString &detail = QString());
     bool showCaptureErrorAndClose(const QString &action, gcap_status_t st, const char *apiName = nullptr);
     void stopRecordingSession(bool showSummary);
-    QString buildRecordingPath(const QDateTime &now) const;
-    void updateFrameSourceState(uint64_t ptsNs, uint64_t frameId, int width, int height, uint64_t &lastPtsTracker);
+    QString chooseRecordingPath(const QDateTime &suggestedTime);
     void dispatchFrameImage(const QImage &img);
     void refreshFrameDependentUi(const QImage &img);
     void logFramePacketIfNeeded(const gcap_frame_packet_t &pkt);

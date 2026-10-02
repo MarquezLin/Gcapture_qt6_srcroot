@@ -1,137 +1,29 @@
 #include "mainwindow.h"
+#include "backend/capture_source.h"
+#include "backend/capture_backend_catalog.h"
+#include "dshow/directshow_source.h"
+#include "previewwindow.h"
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+#include "gvfg/gvfg_source.h"
+#endif
 
 #include "./ui_mainwindow.h"
-#include "ffmpeg_video_recorder.h"
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
+#include <QFileDialog>
 #include <QMessageBox>
+#include <QSignalBlocker>
 #include <QUrl>
-#include <array>
-#include <cmath>
-#include <vector>
-namespace
-{
-QString recordInputFormatName(gcap_pixfmt_t fmt)
-{
-    return QString::fromUtf8(gcap_pixfmt_name(fmt));
-}
-
-gcap_pixfmt_t effectiveRecordingFormat(gcap_handle h, gcap_pixfmt_t fallback)
-{
-    if (!h)
-        return fallback;
-    gcap_runtime_info_t rt{};
-    if (gcap_get_runtime_info(h, &rt) == GCAP_OK && gcap_pixfmt_bit_depth(rt.negotiated.pixfmt) > 0)
-        return rt.negotiated.pixfmt;
-    return fallback;
-}
-
-QString buildRecordEncoderLabel(gcap_handle h, int backend, gcap_pixfmt_t fallbackFmt)
-{
-    gcap_recording_info_t info{};
-    if (h && gcap_get_recording_info(h, &info) == GCAP_OK && info.encoder_name[0])
-        return QString::fromUtf8(info.encoder_name);
-
-    const gcap_pixfmt_t fmt = fallbackFmt;
-    const QString inFmt = recordInputFormatName(fmt);
-    if (backend == GCAP_BACKEND_DSHOW)
-    {
-        if (fmt == GCAP_FMT_P010)
-            return QStringLiteral("FFmpeg HEVC / H.265 via Media Foundation (input P010 10-bit, video-only)");
-        if (fmt == GCAP_FMT_Y210)
-            return QStringLiteral("FFmpeg HEVC / H.265 via Media Foundation (input Y210 10-bit 4:2:2, video-only)");
-        return QStringLiteral("FFmpeg H.264 / AVC via Media Foundation (input %1, video-only)").arg(inFmt);
-    }
-    if (gcap_recording_uses_hevc_main10(fmt))
-        return QStringLiteral("Media Foundation HEVC / H.265 Encoder (Sink Writer, input %1 / 10-bit)").arg(inFmt);
-    return QStringLiteral("Media Foundation H.264 / AVC Encoder (Sink Writer, input %1 / 8-bit)").arg(inFmt);
-}
-
-QString buildRecordModeLabel(gcap_handle h, int backend)
-{
-    gcap_recording_info_t info{};
-    if (h && gcap_get_recording_info(h, &info) == GCAP_OK && info.mode_name[0])
-        return QString::fromUtf8(info.mode_name);
-    return QString::fromUtf8(gcap_recording_mode_name(backend));
-}
-
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-void gvfgRecordingRate(double measuredFps, int &fpsNum, int &fpsDen)
-{
-    struct StandardRate
-    {
-        int num;
-        int den;
-    };
-    static constexpr std::array<StandardRate, 10> rates{{
-        {24000, 1001}, {24, 1}, {25, 1}, {30000, 1001}, {30, 1},
-        {50, 1}, {60000, 1001}, {60, 1}, {120000, 1001}, {120, 1},
-    }};
-
-    if (!(measuredFps > 0.0) || !std::isfinite(measuredFps))
-    {
-        fpsNum = 30;
-        fpsDen = 1;
-        return;
-    }
-
-    const StandardRate *best = &rates.front();
-    double bestDifference = std::abs(measuredFps - static_cast<double>(best->num) / best->den);
-    for (const auto &rate : rates)
-    {
-        const double difference = std::abs(measuredFps - static_cast<double>(rate.num) / rate.den);
-        if (difference < bestDifference)
-        {
-            best = &rate;
-            bestDifference = difference;
-        }
-    }
-
-    if (bestDifference <= 1.0)
-    {
-        fpsNum = best->num;
-        fpsDen = best->den;
-    }
-    else
-    {
-        fpsNum = qMax(1, qRound(measuredFps * 1000.0));
-        fpsDen = 1000;
-    }
-}
-
-#endif
-}
-
-
 void MainWindow::resetRuntimeTracking()
 {
-    avgFps_ = 0.0;
-    lastFramePtsNs_ = 0;
-    firstFrameId_ = 0;
-    deliveredFrameCount_ = 0;
-    lastFrameWidth_ = 0;
-    lastFrameHeight_ = 0;
-    lastVideoCallbackPtsNs_ = 0;
-    lastPacketCallbackPtsNs_ = 0;
-    framePacketLogCount_ = 0;
+    runtime_.reset();
     lastGvfgRawStateKey_.clear();
-    ++framePacketSessionId_;
-    lastWatchdogFrameCounter_ = 0;
-    frameStallTicks_ = 0;
-    frameStallWarningActive_ = false;
     initialPreviewSizeApplied_ = false;
     lastFrameImage_ = QImage();
-    {
-        QMutexLocker lock(&rawSnapshotMutex_);
-        latestRawFrame_.clear();
-        latestRawWidth_ = latestRawHeight_ = latestRawStride_ = 0;
-        latestRawFormat_ = -1;
-        rawSnapshotPending_ = false;
-        rawSnapshotCv_.wakeAll();
-    }
+    rawSnapshot_.reset();
 }
 
 void MainWindow::clearPreviewSurface()
@@ -147,22 +39,12 @@ void MainWindow::clearPreviewSurface()
 void MainWindow::closeCaptureSession()
 {
     stopAudioMonitoring();
-
+    if (directShow_ && directShow_->isOpen())
+        directShow_->close();
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (gvfg_ && (usingGvfg_ || gvfg_->isOpen()))
-    {
+    if (gvfg_ && gvfg_->isOpen())
         gvfg_->close();
-        usingGvfg_ = false;
-    }
 #endif
-
-    if (!h_)
-        return;
-
-    gcap_set_frame_packet_callback(h_, nullptr, nullptr);
-    gcap_set_callbacks(h_, nullptr, nullptr, nullptr);
-    gcap_close(h_);
-    h_ = nullptr;
 }
 
 bool MainWindow::showCaptureErrorAndClose(const QString &action, gcap_status_t st, const char *apiName)
@@ -184,292 +66,39 @@ void MainWindow::stopRecordingSession(bool showSummary)
     if (!recording_)
         return;
 
+    CaptureSource *source = activeCaptureSource();
+    if (!source)
+        source = selectedCaptureSource();
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (usingGvfg_ && gvfg_)
+    if (source && source->backend() == CaptureBackend::Gvfg)
     {
-        const gvfg_signal_status_t signal = gvfg_->signalStatus();
-        gvfg_->stopRecording();
-        const uint64_t framesWritten = gvfg_->recordingFrames();
-        const uint64_t framesDropped = gvfg_->recordingDroppedFrames();
-        recording_ = false;
-        ui->btnRecord->setText(QStringLiteral("Record"));
-        MainWindow::postLog(QStringLiteral("[GVFG][record] stopped frames_written=%1 frames_dropped=%2")
-                                .arg(static_cast<qulonglong>(framesWritten))
-                                .arg(static_cast<qulonglong>(framesDropped)),
-                            framesDropped > 0);
-
-        if (showSummary && !recordPath_.isEmpty() && recordStartTime_.isValid())
-        {
-            QFileInfo fi(recordPath_);
-            const qint64 sizeBytes = fi.size();
-            if (framesWritten == 0 || !fi.exists() || sizeBytes <= 0)
-            {
-                const QString info = QStringLiteral(
-                                         "No frames were written.\n"
-                                         "file:%1\n"
-                                         "frames written:%2\n"
-                                         "recording frames dropped:%3\n"
-                                         "The recording was stopped before the GVFG recorder wrote its first frame.")
-                                         .arg(recordPath_)
-                                         .arg(QString::number(static_cast<qulonglong>(framesWritten)))
-                                         .arg(QString::number(static_cast<qulonglong>(framesDropped)));
-                QMessageBox::warning(this, QStringLiteral("Record"), info);
-
-                if (ui->statusbar)
-                    ui->statusbar->showMessage(QStringLiteral("Record stopped: no frames were written"), 8000);
-                return;
-            }
-
-            const qint64 ms = recordStartTime_.msecsTo(QDateTime::currentDateTime());
-            const double seconds = ms / 1000.0;
-            const double bitrateKbps = seconds > 0.0 ? (sizeBytes * 8.0 / 1000.0) / seconds : 0.0;
-            const double captureFps = seconds > 0.0 ? double(framesWritten) / seconds : avgFps_;
-            const int srcW = signal.width > 0
-                                 ? signal.width
-                                 : (lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width);
-            const int srcH = signal.height > 0
-                                 ? signal.height
-                                 : (lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height);
-
-            const QString info = QStringLiteral(
-                                     "Record done\n"
-                                     "file:%1\n"
-                                     "size:%2 MB\n"
-                                     "Actual resolution:%3 x %4\n"
-                                     "Capture FPS:%5\n"
-                                     "record mode:%6\n"
-                                     "encoder:%7\n"
-                                     "frames written:%8\n"
-                                     "recording frames dropped:%9\n"
-                                     "file avg bit rate:%10 kbps")
-                                     .arg(recordPath_)
-                                     .arg(QString::number(sizeBytes / (1024.0 * 1024.0), 'f', 2))
-                                     .arg(srcW)
-                                     .arg(srcH)
-                                     .arg(QString::number(captureFps, 'f', 2))
-                                     .arg(QStringLiteral("GVFG + FFmpeg MP4"))
-                                     .arg(recordEncoderName_.isEmpty() ? QStringLiteral("FFmpeg") : recordEncoderName_)
-                                     .arg(QString::number(static_cast<qulonglong>(framesWritten)))
-                                     .arg(QString::number(static_cast<qulonglong>(framesDropped)))
-                                     .arg(QString::number(bitrateKbps, 'f', 1));
-            QMessageBox::information(this, QStringLiteral("Record"), info);
-
-            if (ui->statusbar)
-            {
-                ui->statusbar->showMessage(QStringLiteral("Record done: GVFG + FFmpeg MP4 | file:%1 | avg %2 kbps | dropped:%3")
-                                               .arg(fi.fileName())
-                                               .arg(QString::number(bitrateKbps, 'f', 1))
-                                               .arg(static_cast<qulonglong>(framesDropped)));
-            }
-        }
+        stopGvfgRecording(showSummary);
         return;
     }
 #endif
 
-    if (!h_)
-        return;
-
-    gcap_stop_recording(h_);
-    recording_ = false;
-    ui->btnRecord->setText(QStringLiteral("Record"));
-
-    if (!showSummary)
-        return;
-
-    if (!recordPath_.isEmpty() && recordStartTime_.isValid())
-    {
-        QFileInfo fi(recordPath_);
-        const qint64 sizeBytes = fi.size();
-        const qint64 ms = recordStartTime_.msecsTo(QDateTime::currentDateTime());
-        const double seconds = ms / 1000.0;
-        double bitrateKbps = 0.0;
-        if (seconds > 0.0)
-            bitrateKbps = (sizeBytes * 8.0 / 1000.0) / seconds;
-
-        const double captureFps = (avgFps_ > 0.0)
-                               ? avgFps_
-                               : (currentProfile_.fps_den
-                                      ? static_cast<double>(currentProfile_.fps_num) / currentProfile_.fps_den
-                                      : static_cast<double>(currentProfile_.fps_num));
-
-        const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
-        const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
-        const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
-        gcap_recording_info_t sdkRecInfo{};
-        const bool hasSdkRecInfo = (h_ && gcap_get_recording_info(h_, &sdkRecInfo) == GCAP_OK);
-        gcap_recording_stats_t sdkRecStats{};
-        const bool hasSdkRecStats = (h_ && gcap_get_recording_stats(h_, &sdkRecStats) == GCAP_OK);
-        const QString modeLabel = (hasSdkRecInfo && sdkRecInfo.mode_name[0])
-                                    ? QString::fromUtf8(sdkRecInfo.mode_name)
-                                    : buildRecordModeLabel(h_, backend);
-        const QString codecLabel = recordEncoderName_.isEmpty()
-                                     ? ((hasSdkRecInfo && sdkRecInfo.encoder_name[0])
-                                           ? QString::fromUtf8(sdkRecInfo.encoder_name)
-                                           : buildRecordEncoderLabel(h_, backend, effectiveRecordingFormat(h_, currentProfile_.format)))
-                                     : recordEncoderName_;
-
-        double recordOutputFps = currentProfile_.fps_den
-                                     ? static_cast<double>(currentProfile_.fps_num) / currentProfile_.fps_den
-                                     : static_cast<double>(currentProfile_.fps_num);
-        if (hasSdkRecInfo && sdkRecInfo.output_fps_num > 0 && sdkRecInfo.output_fps_den > 0)
-            recordOutputFps = static_cast<double>(sdkRecInfo.output_fps_num) / sdkRecInfo.output_fps_den;
-
-        QString info = QStringLiteral(
-                           "Record done\n"
-                           "file:%1\n"
-                           "size:%2 MB\n"
-                           "Actual resolution:%3 x %4\n"
-                           "Capture FPS:%5\n"
-                           "Record output FPS:%6\n"
-                           "record mode:%7\n"
-                           "encoder:%8\n"
-                           "file avg bit rate:%9 kbps")
-                           .arg(recordPath_)
-                           .arg(QString::number(sizeBytes / (1024.0 * 1024.0), 'f', 2))
-                           .arg(srcW)
-                           .arg(srcH)
-                           .arg(QString::number(captureFps, 'f', 2))
-                           .arg(QString::number(recordOutputFps, 'f', 2))
-                           .arg(modeLabel)
-                           .arg(codecLabel)
-                           .arg(QString::number(bitrateKbps, 'f', 1));
-
-        if (hasSdkRecStats)
-        {
-            info += QStringLiteral("\nframes written:%1\nframes dropped:%2\ninput frames:%3")
-                        .arg(QString::number(static_cast<qulonglong>(sdkRecStats.frames_written)))
-                        .arg(QString::number(static_cast<qulonglong>(sdkRecStats.frames_dropped)))
-                        .arg(QString::number(static_cast<qulonglong>(sdkRecStats.input_frames)));
-        }
-
-        QMessageBox::information(this, QStringLiteral("Record"), info);
-
-        if (ui->statusbar)
-        {
-            const QString sb = QStringLiteral("Record done: %1 | file:%2 | avg %3 kbps")
-                                   .arg(modeLabel)
-                                   .arg(fi.fileName())
-                                   .arg(QString::number(bitrateKbps, 'f', 1));
-            ui->statusbar->showMessage(sb);
-        }
-    }
+    if (source && source->backend() == CaptureBackend::DirectShow)
+        stopDirectShowRecording(showSummary);
 }
-QString MainWindow::buildRecordingPath(const QDateTime &now) const
+QString MainWindow::chooseRecordingPath(const QDateTime &suggestedTime)
 {
-    const QString baseDir = QCoreApplication::applicationDirPath() + QStringLiteral("/recordings");
+    QString baseDir = QCoreApplication::applicationDirPath() + QStringLiteral("/recordings");
+    if (!recordPath_.isEmpty())
+        baseDir = QFileInfo(recordPath_).absolutePath();
     QDir().mkpath(baseDir);
-    const QString ts = now.toString(QStringLiteral("yyyyMMdd_HHmmss"));
-    return baseDir + QStringLiteral("/capture_") + ts + QStringLiteral(".mp4");
-}
 
-void MainWindow::startAudioMonitoring()
-{
-    stopAudioMonitoring();
-
-    if (ui->checkAudioMonitoring && !ui->checkAudioMonitoring->isChecked())
-    {
-        setAudioMonitoringStatus(QStringLiteral("Disabled"), QStringLiteral("Audio monitoring is disabled by the user."));
-        MainWindow::postLog(QStringLiteral("[AudioMonitoring] disabled by user"));
-        return;
-    }
-
-    const QString videoDeviceName = currentDeviceText();
-    if (videoDeviceName.isEmpty())
-    {
-        setAudioMonitoringStatus(QStringLiteral("No Video Source"));
-        return;
-    }
-
-    gcap_audio_device_t audio{};
-    const QByteArray videoNameUtf8 = videoDeviceName.toUtf8();
-    const bool found = gcap_audio_find_device_for_capture(videoNameUtf8.constData(), &audio) != 0;
-
-    if (!found)
-    {
-        const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : -1;
-        if (backend == GCAP_BACKEND_DSHOW)
-        {
-            gcap_audio_device_t dshowAudio{};
-            const QByteArray videoNameUtf8 = videoDeviceName.toUtf8();
-            const int st = gcap_start_dshow_audio_monitoring(videoNameUtf8.constData(), &dshowAudio);
-            if (st == GCAP_OK)
-            {
-                audioMonitoringActive_ = true;
-                const QString format = (dshowAudio.sample_rate > 0 && dshowAudio.channels > 0)
-                                           ? QStringLiteral("%1 Hz, %2 channels, %3-bit PCM")
-                                                 .arg(dshowAudio.sample_rate)
-                                                 .arg(dshowAudio.channels)
-                                                 .arg(dshowAudio.bits_per_sample)
-                                           : QStringLiteral("PCM format reported by DirectShow");
-                setAudioMonitoringStatus(QStringLiteral("Monitoring (DirectShow)"),
-                                      QStringLiteral("%1\n%2")
-                                          .arg(QString::fromUtf8(dshowAudio.name), format));
-                MainWindow::postLog(QStringLiteral("[AudioMonitoring][DShow] started filter=%1 (%2)")
-                                        .arg(QString::fromUtf8(dshowAudio.name), format));
-                return;
-            }
-
-            setAudioMonitoringStatus(QStringLiteral("Start Failed"),
-                                  QStringLiteral("DirectShow audio filter matching/start failed for %1 (status %2).")
-                                      .arg(videoDeviceName)
-                                      .arg(st));
-            MainWindow::postLog(QStringLiteral("[AudioMonitoring][DShow] matching/start failed for video device=%1 status=%2")
-                                    .arg(videoDeviceName)
-                                    .arg(st),
-                                true);
-            return;
-        }
-
-        setAudioMonitoringStatus(QStringLiteral("No Endpoint"),
-                              QStringLiteral("No matching Windows audio capture endpoint for %1.").arg(videoDeviceName));
-        MainWindow::postLog(QStringLiteral("[AudioMonitoring] no matching WASAPI capture endpoint for video device=%1")
-                                .arg(videoDeviceName));
-        return;
-    }
-
-    gcap_audio_monitor_config_t cfg{};
-    cfg.device_id = audio.id;
-    cfg.sample_rate = audio.sample_rate;
-    cfg.channels = audio.channels;
-
-    const int st = gcap_start_audio_monitoring(&cfg);
-    if (st != GCAP_OK)
-    {
-        setAudioMonitoringStatus(QStringLiteral("Start Failed"),
-                              QStringLiteral("%1 (status %2)")
-                                  .arg(QString::fromUtf8(audio.name))
-                                  .arg(st));
-        MainWindow::postLog(QStringLiteral("[AudioMonitoring] start failed for endpoint=%1 status=%2")
-                                .arg(QString::fromUtf8(audio.name))
-                                .arg(st),
-                            true);
-        return;
-    }
-
-    audioMonitoringActive_ = true;
-    setAudioMonitoringStatus(QStringLiteral("Monitoring (WASAPI)"),
-                          QStringLiteral("%1\n%2 Hz, %3 channels")
-                              .arg(QString::fromUtf8(audio.name))
-                              .arg(audio.sample_rate)
-                              .arg(audio.channels));
-    MainWindow::postLog(QStringLiteral("[AudioMonitoring] started endpoint=%1 (%2 Hz, %3 ch)")
-                            .arg(QString::fromUtf8(audio.name))
-                            .arg(audio.sample_rate)
-                            .arg(audio.channels));
-}
-
-void MainWindow::stopAudioMonitoring()
-{
-    const bool wasActive = audioMonitoringActive_;
-    gcap_stop_audio_monitoring();
-    audioMonitoringActive_ = false;
-    if (wasActive)
-        MainWindow::postLog(QStringLiteral("[AudioMonitoring] stopped"));
-
-    if (ui && ui->checkAudioMonitoring && ui->checkAudioMonitoring->isChecked())
-        setAudioMonitoringStatus(QStringLiteral("Standby"), QStringLiteral("Audio monitoring is enabled but not running."));
-    else
-        setAudioMonitoringStatus(QStringLiteral("Disabled"), QStringLiteral("Audio monitoring is disabled by the user."));
+    const QString suggestedName = QStringLiteral("capture_%1.mp4")
+                                      .arg(suggestedTime.toString(QStringLiteral("yyyyMMdd_HHmmss")));
+    QString path = QFileDialog::getSaveFileName(
+        this,
+        tr("Choose Recording File"),
+        QDir(baseDir).filePath(suggestedName),
+        tr("MP4 Video (*.mp4)"));
+    if (path.isEmpty())
+        return {};
+    if (!path.endsWith(QStringLiteral(".mp4"), Qt::CaseInsensitive))
+        path += QStringLiteral(".mp4");
+    return QDir::toNativeSeparators(path);
 }
 
 void MainWindow::setAudioMonitoringStatus(const QString &status, const QString &detail)
@@ -483,11 +112,7 @@ void MainWindow::setAudioMonitoringStatus(const QString &status, const QString &
 
 void MainWindow::onStart()
 {
-    if (h_
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-        || usingGvfg_
-#endif
-    )
+    if (activeCaptureSource())
     {
         MainWindow::postLog(QStringLiteral("[Start] ignored: capture session is already running."));
         if (ui->statusbar)
@@ -505,220 +130,32 @@ void MainWindow::onStart()
 
     void *hwnd = previewWindow_ ? previewWindow_->previewHwnd() : nullptr;
 
-    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : 1;
-    rawPacketCallbackEnabled_ = (backend == 2);
-
+    CaptureSource *source = selectedCaptureSource();
+    if (!source)
+        return;
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (backend == kQtViewerGvfgBackend)
+    if (source->backend() == CaptureBackend::Gvfg)
     {
-        if (!gvfg_)
-        {
-            QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("GVFG source is not available."));
-            return;
-        }
-
-        const bool zeroCopyEnabled = ui->checkZeroCopy && ui->checkZeroCopy->isChecked();
-        if (!gvfg_->open(deviceIndex_, zeroCopyEnabled))
-        {
-            QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("Unable to open the GVFG device."));
-            return;
-        }
-        gvfg_->pollEvents();
-        if (!gvfg_->refreshSignalStatus())
-        {
-            QMessageBox::warning(this, QStringLiteral("GVFG"), QStringLiteral("Unable to query the current input signal."));
-            gvfg_->close();
-            return;
-        }
-        if (!gvfg_->signalStatus().connected)
-        {
-            QMessageBox::information(this, QStringLiteral("GVFG"), QStringLiteral("No locked input signal. Connect a signal and press Start again."));
-            gvfg_->close();
-            return;
-        }
-        const auto requestedFormat = static_cast<gvfg_pixel_format_t>(
-            ui->comboPixelFormat ? ui->comboPixelFormat->currentData().toInt() : static_cast<int>(GVFG_PIXFMT_YUY2));
-        if (!gvfg_->setVideoFormat(requestedFormat))
-        {
-            gvfg_->close();
-            return;
-        }
-
-        currentProfile_ = {};
-        currentProfile_.mode = GCAP_PROFILE_DEVICE_DEFAULT;
-        currentProfile_.format = GCAP_FMT_YUY2;
-        currentProfile_.fps_num = 0;
-        currentProfile_.fps_den = 0;
-
-        const bool audioEnabled = !ui->checkAudioMonitoring || ui->checkAudioMonitoring->isChecked();
-        const bool started = gvfg_->start(hwnd, deviceIndex_, selectedPreviewBitDepthMode(),
-                                          zeroCopyEnabled, audioEnabled);
-        if (!started)
-        {
-            gvfg_->close();
-            usingGvfg_ = false;
-            clearPreviewSurface();
-            if (ui->statusbar)
-                ui->statusbar->showMessage(QStringLiteral("GVFG start failed"), 5000);
-            return;
-        }
-
-        usingGvfg_ = true;
-        if (ui->checkZeroCopy)
-            ui->checkZeroCopy->setEnabled(false);
-        const gvfg_signal_status_t sig = gvfg_->signalStatus();
-        if (sig.width > 0)
-            currentProfile_.width = sig.width;
-        if (sig.height > 0)
-            currentProfile_.height = sig.height;
-
-        if (sig.bit_depth >= 10)
-            currentProfile_.format = GCAP_FMT_Y210;
-
-        MainWindow::postLog(QStringLiteral("[GVFG] started deviceIndex=%1 channel=%2; waiting for first frame")
-                                .arg(deviceIndex_)
-                                .arg(GVFG_CHANNEL_0));
-        if (gvfg_->audioEnabled())
-        {
-            const gvfg_audio_format_t audio = gvfg_->audioFormat();
-            setAudioMonitoringStatus(QStringLiteral("Monitoring (GVFG Qt)"),
-                                     QStringLiteral("Default Qt audio output\n%1 Hz, %2 channels, %3-bit PCM\nA/V synchronization is not enabled.")
-                                         .arg(audio.sample_rate)
-                                         .arg(audio.channels)
-                                         .arg(audio.bits_per_sample));
-            MainWindow::postLog(QStringLiteral("[GVFG][Audio] Qt playback requested: %1 Hz, %2 ch, %3-bit PCM; A/V sync disabled")
-                                    .arg(audio.sample_rate)
-                                    .arg(audio.channels)
-                                    .arg(audio.bits_per_sample));
-        }
-        else
-        {
-            setAudioMonitoringStatus(QStringLiteral("Disabled"),
-                                     QStringLiteral("GVFG audio playback is disabled by the user."));
-        }
-        updateRuntimeStatusUi();
-        refreshCaptureInfoFromSdkAndRuntime(false);
-        refreshDisplayInfoFromCurrentState();
+        startGvfgCapture(hwnd);
         return;
     }
 #endif
 
-    gcap_set_backend(backend);
-    gcap_set_d3d_adapter(-1);
-
-    gcap_status_t st = gcap_create(&h_);
-    if (st != GCAP_OK || !h_)
-    {
-        QMessageBox::warning(this, QStringLiteral("gcapture"),
-                             QStringLiteral("create fail: %1").arg(QString::fromUtf8(gcap_strerror(st))));
-        h_ = nullptr;
-        return;
-    }
-
-    st = gcap_set_buffers(h_, 6, 0);
-    if (st != GCAP_OK)
-    {
-        showCaptureErrorAndClose(QStringLiteral("set buffers"), st, "gcap_set_buffers");
-        return;
-    }
-
-    st = gcap_set_callbacks(h_, &MainWindow::s_vcb, &MainWindow::s_ecb, this);
-    if (st == GCAP_OK && rawPacketCallbackEnabled_)
-    {
-        st = gcap_set_frame_packet_callback(h_, &MainWindow::s_pcb, this);
-        if (st == GCAP_OK)
-        {
-            appendDebugLog(QStringLiteral("[MainWindow] packet callback registered backend=%1 h_=%2")
-                               .arg(backend)
-                               .arg(reinterpret_cast<quintptr>(h_), 0, 16));
-        }
-    }
-    if (st != GCAP_OK)
-    {
-        showCaptureErrorAndClose(QStringLiteral("set callbacks"), st,
-                                 rawPacketCallbackEnabled_ ? "gcap_set_frame_packet_callback" : "gcap_set_callbacks");
-        return;
-    }
-
-    if (backend == 0 || backend == 1 || backend == 3)
-        gcap_set_procamp(h_, &m_currentProcAmp);
-
-    gcap_preview_desc_t pv{};
-    pv.hwnd = hwnd;
-    pv.enable_preview = (hwnd != nullptr) ? 1 : 0;
-    pv.use_fp16_pipeline = 1;
-    pv.swapchain_10bit = selectedPreviewBitDepthMode();
-    appendDebugLog(QStringLiteral("[Preview] requested bit depth: %1 mode=%2")
-                       .arg(selectedPreviewBitDepthText())
-                       .arg(pv.swapchain_10bit));
-
-    st = gcap_set_preview(h_, &pv);
-    if (st != GCAP_OK)
-    {
-        showCaptureErrorAndClose(QStringLiteral("set preview"), st, "gcap_set_preview");
-        return;
-    }
-
-    const int selectedPixfmt = ui->comboPixelFormat ? ui->comboPixelFormat->currentData().toInt() : -1;
-    currentProfile_ = {};
-    currentProfile_.mode = (selectedPixfmt >= 0) ? GCAP_PROFILE_CUSTOM : GCAP_PROFILE_DEVICE_DEFAULT;
-    currentProfile_.width = 0;
-    currentProfile_.height = 0;
-    currentProfile_.fps_num = 0;
-    currentProfile_.fps_den = 0;
-    // Keep format enum valid across all backends; Auto is expressed by mode, not by an invalid format value.
-    currentProfile_.format = static_cast<gcap_pixfmt_t>((selectedPixfmt >= 0) ? selectedPixfmt : GCAP_FMT_NV12);
-
-    st = gcap_set_profile(h_, &currentProfile_);
-    if (st != GCAP_OK)
-    {
-        showCaptureErrorAndClose(QStringLiteral("set profile"), st, "gcap_set_profile");
-        return;
-    }
-
-    const QString prefText = ui->comboPixelFormat ? ui->comboPixelFormat->currentText() : QStringLiteral("Format: Auto");
-    appendDebugLog(QStringLiteral("[Start] user negotiation preference=%1 profile.format=%2")
-                       .arg(prefText)
-                       .arg(static_cast<int>(currentProfile_.format)));
-
-    st = gcap_open2(h_, deviceIndex_);
-    if (st != GCAP_OK)
-    {
-        showCaptureErrorAndClose(QStringLiteral("open"), st, "gcap_open2");
-        return;
-    }
-
-    st = gcap_start(h_);
-    if (st != GCAP_OK)
-    {
-        showCaptureErrorAndClose(QStringLiteral("start"), st, "gcap_start");
-        return;
-    }
-
-    startAudioMonitoring();
-    updateRuntimeStatusUi();
-    refreshCaptureInfoFromSdkAndRuntime(false);
-    refreshDisplayInfoFromCurrentState();
+    startDirectShowCapture(hwnd);
 }
 
 void MainWindow::onStop()
 {
-    if (!h_
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-        && !usingGvfg_
-#endif
-    )
+    CaptureSource *source = activeCaptureSource();
+    if (!source)
         return;
 
     stopRecordingSession(false);
     stopAudioMonitoring();
-    if (h_)
-        gcap_stop(h_);
+    source->stop();
     closeCaptureSession();
     clearPreviewSurface();
-    lastVideoCallbackPtsNs_ = 0;
-    lastPacketCallbackPtsNs_ = 0;
-    framePacketLogCount_ = 0;
+    runtime_.stopCallbacks();
     invalidateDeviceCapabilityCache();
     refreshCaptureInfoFromSdkAndRuntime(false);
     refreshDisplayInfoFromCurrentState();
@@ -727,7 +164,9 @@ void MainWindow::onStop()
 
 void MainWindow::onOpenRecordFolder()
 {
-    QString baseDir = QCoreApplication::applicationDirPath() + "/recordings";
+    QString baseDir = recordPath_.isEmpty()
+                          ? QCoreApplication::applicationDirPath() + QStringLiteral("/recordings")
+                          : QFileInfo(recordPath_).absolutePath();
 
     QDir dir(baseDir);
     if (!dir.exists())
@@ -764,120 +203,216 @@ void MainWindow::onOpenSnapshot()
 
 void MainWindow::onRecord()
 {
+    CaptureSource *source = activeCaptureSource();
+    if (!source)
+        source = selectedCaptureSource();
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (usingGvfg_)
+    if (source && source->backend() == CaptureBackend::Gvfg)
     {
-        if (!gvfg_ || !gvfg_->isRunning())
-        {
-            QMessageBox::warning(this, QStringLiteral("Record"),
-                                 QStringLiteral("Please press Start to begin GVFG capture before recording."));
-            return;
-        }
-
-        if (recording_)
-        {
-            stopRecordingSession(true);
-            return;
-        }
-
-        const QDateTime now = QDateTime::currentDateTime();
-        const QString fullPath = buildRecordingPath(now);
-        const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
-        const gvfg_signal_status_t signal = gvfg_->signalStatus();
-        int fpsNum = 30;
-        int fpsDen = 1;
-        gvfgRecordingRate(rt.capture_fps, fpsNum, fpsDen);
-        currentProfile_.fps_num = fpsNum;
-        currentProfile_.fps_den = fpsDen;
-        MainWindow::postLog(QStringLiteral("[GVFG][record] source_fps=%1 configured_fps=%2/%3")
-                                .arg(rt.capture_fps, 0, 'f', 3)
-                                .arg(fpsNum)
-                                .arg(fpsDen));
-        // GVFG frames are converted by the SDK to 8-bit NV12 before entering
-        // the recorder, including 10-bit Y210 sources, so this path is always H.264.
-        const int width = signal.width > 0
-                              ? signal.width
-                              : (lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width);
-        const int height = signal.height > 0
-                               ? signal.height
-                               : (lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height);
-        currentProfile_.width = width;
-        currentProfile_.height = height;
-        const int bitrateKbps = gcap_ffmpeg_recommended_bitrate_kbps(
-            width, height, fpsNum, fpsDen, GCAP_FMT_NV12);
-
-        QString error;
-        if (!gvfg_->startRecording(fullPath, fpsNum, fpsDen, bitrateKbps, &error))
-        {
-            QMessageBox::warning(this, QStringLiteral("Record"),
-                                 QStringLiteral("Start GVFG recording failed: %1").arg(error));
-            return;
-        }
-
-        recording_ = true;
-        ui->btnRecord->setText(QStringLiteral("Stop Rec"));
-        recordStartTime_ = now;
-        recordPath_ = fullPath;
-        recordEncoderName_ = gvfg_->audioEnabled()
-                                 ? QStringLiteral("FFmpeg H.264 + AAC")
-                                 : QStringLiteral("FFmpeg H.264 / AVC Compatible");
-
-        if (ui->statusbar)
-        {
-            const int srcW = width;
-            const int srcH = height;
-            ui->statusbar->showMessage(QStringLiteral("Record mode: GVFG + FFmpeg MP4 | Encoder: %1 | %2 x %3")
-                                           .arg(recordEncoderName_)
-                                           .arg(srcW)
-                                           .arg(srcH));
-        }
+        toggleGvfgRecording();
         return;
     }
 #endif
 
-    if (!h_)
+    if (source && source->backend() == CaptureBackend::DirectShow)
+        toggleDirectShowRecording();
+}
+
+void MainWindow::setupBackendControls()
+{
+    if (!ui->comboBackend)
+        return;
+
+    const QSignalBlocker blocker(ui->comboBackend);
+    ui->comboBackend->clear();
+    for (const auto &backend : backendCatalogs_)
+        ui->comboBackend->addItem(backend->displayName(), captureBackendUiValue(backend->backend()));
+
+    int defaultIndex = ui->comboBackend->findData(captureBackendUiValue(CaptureBackend::Gvfg));
+    if (defaultIndex < 0)
+        defaultIndex = ui->comboBackend->findData(captureBackendUiValue(CaptureBackend::DirectShow));
+    ui->comboBackend->setCurrentIndex(defaultIndex >= 0 ? defaultIndex : 0);
+
+    const bool gvfgSelected = selectedBackend() == CaptureBackend::Gvfg;
+    if (ui->checkZeroCopy)
+        ui->checkZeroCopy->setVisible(gvfgSelected);
+    if (ui->labelGvfgVolume)
+        ui->labelGvfgVolume->setVisible(gvfgSelected);
+    if (ui->sliderGvfgVolume)
     {
-        QMessageBox::warning(this, QStringLiteral("Record"),
-                             QStringLiteral("Please press Start to begin capturing the screen before recording."));
+        ui->sliderGvfgVolume->setVisible(gvfgSelected);
+        ui->sliderGvfgVolume->setEnabled(gvfgSelected && ui->checkAudioMonitoring &&
+                                         ui->checkAudioMonitoring->isChecked());
+    }
+
+    refreshPixelFormatOptions(false);
+}
+
+CaptureBackend MainWindow::selectedBackend() const
+{
+    if (!ui || !ui->comboBackend)
+        return CaptureBackend::DirectShow;
+    return captureBackendFromUiValue(ui->comboBackend->currentData().toInt());
+}
+
+CaptureBackendCatalog *MainWindow::backendCatalog(CaptureBackend selected) const
+{
+    for (const auto &backend : backendCatalogs_)
+    {
+        if (backend->backend() == selected)
+            return backend.get();
+    }
+    return nullptr;
+}
+
+CaptureSource *MainWindow::selectedCaptureSource() const
+{
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (selectedBackend() == CaptureBackend::Gvfg)
+        return gvfg_;
+#endif
+    return directShow_.get();
+}
+
+CaptureSource *MainWindow::activeCaptureSource() const
+{
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (gvfg_ && (gvfg_->isRunning() || gvfg_->isOpen()))
+        return gvfg_;
+#endif
+    if (directShow_ && (directShow_->isRunning() || directShow_->isOpen()))
+        return directShow_.get();
+    return nullptr;
+}
+
+void MainWindow::notifyPixelFormatEnumerationFailure(CaptureBackend backend)
+{
+    if (!ui->comboBackend)
+        return;
+
+    QString title = QStringLiteral("Pixel Format");
+    QString message;
+    bool showDialog = true;
+    switch (backend)
+    {
+    case CaptureBackend::DirectShow:
+        message = QStringLiteral("DirectShow format enumeration failed; keeping Format: Auto.");
+        showDialog = false;
+        break;
+    default:
         return;
     }
 
-    if (recording_)
-    {
-        stopRecordingSession(true);
+    const QString warningKey = QStringLiteral("%1:%2").arg(deviceIndex_).arg(captureBackendUiValue(backend));
+    if (lastPixelFormatWarningKey_ == warningKey)
         return;
-    }
 
-    const QDateTime now = QDateTime::currentDateTime();
-    const QString fullPath = buildRecordingPath(now);
-
-    const gcap_status_t st = gcap_start_recording(h_, fullPath.toUtf8().constData());
-    if (st != GCAP_OK)
+    lastPixelFormatWarningKey_ = warningKey;
+    if (showDialog)
     {
-        QMessageBox::warning(this, QStringLiteral("Record"),
-                             QStringLiteral("Start recording failed: %1").arg(QString::fromUtf8(gcap_strerror(st))));
-        return;
+        QMessageBox::warning(this, title, message);
     }
-
-    recording_ = true;
-    ui->btnRecord->setText(QStringLiteral("Stop Rec"));
-    recordStartTime_ = now;
-    recordPath_ = fullPath;
-
-    const int backend = ui->comboBackend ? ui->comboBackend->currentData().toInt() : GCAP_BACKEND_DSHOW;
-    const gcap_pixfmt_t recFmt = effectiveRecordingFormat(h_, currentProfile_.format);
-    const QString modeLabel = buildRecordModeLabel(h_, backend);
-    recordEncoderName_ = buildRecordEncoderLabel(h_, backend, recFmt);
-
-    if (ui->statusbar)
+    else
     {
-        const int srcW = lastFrameWidth_ > 0 ? lastFrameWidth_ : currentProfile_.width;
-        const int srcH = lastFrameHeight_ > 0 ? lastFrameHeight_ : currentProfile_.height;
-        const QString sb = QStringLiteral("Record mode: %1 | Encoder: %2 | %3 x %4")
-                               .arg(modeLabel)
-                               .arg(recordEncoderName_)
-                               .arg(srcW)
-                               .arg(srcH);
-        ui->statusbar->showMessage(sb);
+        MainWindow::postLog(QStringLiteral("[PixelFormat] %1").arg(message), true);
+        if (ui->statusbar)
+            ui->statusbar->showMessage(message, 6000);
     }
 }
+
+void MainWindow::refreshPixelFormatOptions(bool showFailurePrompt)
+{
+    if (!ui->comboPixelFormat)
+        return;
+
+    const QSignalBlocker blocker(ui->comboPixelFormat);
+    const int previousData = ui->comboPixelFormat->currentData().toInt();
+    const CaptureBackend backend = selectedBackend();
+    ui->comboPixelFormat->clear();
+
+    CaptureBackendCatalog *catalog = backendCatalog(backend);
+    if (!catalog)
+        return;
+
+    const CaptureBackendFormats formats = catalog->formats(deviceIndex_);
+    for (const auto &format : formats.items)
+        ui->comboPixelFormat->addItem(format.label, format.value);
+    ui->comboPixelFormat->setToolTip(catalog->formatToolTip());
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    ui->comboPixelFormat->setEnabled(!(backend == CaptureBackend::Gvfg && gvfg_ && gvfg_->isRunning()));
+#else
+    ui->comboPixelFormat->setEnabled(true);
+#endif
+    if (formats.querySucceeded)
+        lastPixelFormatWarningKey_.clear();
+    else if (showFailurePrompt && deviceIndex_ >= 0)
+        notifyPixelFormatEnumerationFailure(backend);
+
+    const int restoreIndex = ui->comboPixelFormat->findData(previousData);
+    ui->comboPixelFormat->setCurrentIndex(restoreIndex >= 0 ? restoreIndex : 0);
+}
+
+void MainWindow::initializeDeviceList()
+{
+    if (!ui->comboDevice)
+        return;
+
+    const CaptureBackend backend = selectedBackend();
+    const QString previousDeviceName = ui->comboDevice->currentText();
+
+    const QSignalBlocker blocker(ui->comboDevice);
+    ui->comboDevice->clear();
+
+    if (CaptureBackendCatalog *catalog = backendCatalog(backend))
+    {
+        const QList<CaptureBackendDevice> devices = catalog->devices();
+        for (const auto &device : devices)
+            ui->comboDevice->addItem(device.name, device.index);
+    }
+
+    int restoreIndex = -1;
+    if (!previousDeviceName.isEmpty())
+        restoreIndex = ui->comboDevice->findText(previousDeviceName);
+    if (restoreIndex < 0 && ui->comboDevice->count() > 0)
+        restoreIndex = 0;
+
+    if (restoreIndex >= 0)
+    {
+        ui->comboDevice->setCurrentIndex(restoreIndex);
+        deviceIndex_ = ui->comboDevice->itemData(restoreIndex).toInt();
+    }
+    else
+    {
+        deviceIndex_ = -1;
+    }
+    ui->comboDevice->setToolTip(ui->comboDevice->currentText());
+
+    invalidateDeviceCapabilityCache();
+    lastPixelFormatWarningKey_.clear();
+
+    MainWindow::postLog(QStringLiteral("[DeviceList] backend=%1 devices=%2 selectedIndex=%3 selectedName=%4")
+                            .arg(captureBackendUiValue(backend))
+                            .arg(ui->comboDevice->count())
+                            .arg(deviceIndex_)
+                            .arg(ui->comboDevice->currentText()));
+
+    refreshPixelFormatOptions(true);
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    refreshGvfgMonitoring();
+#endif
+}
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+void MainWindow::refreshGvfgMonitoring()
+{
+    if (!gvfg_ || gvfg_->isRunning())
+        return;
+    // Idle monitoring must not open the device. Opening a GVFG channel can
+    // prevent another process from receiving frames even when capture is stopped.
+    if (gvfg_->isOpen())
+        gvfg_->close();
+    if (ui->btnStart)
+        ui->btnStart->setEnabled(selectedBackend() == CaptureBackend::Gvfg && deviceIndex_ >= 0);
+}
+#endif

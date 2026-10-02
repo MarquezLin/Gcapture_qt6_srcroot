@@ -4,12 +4,11 @@
 #include <dcmtk/dcmdata/dcxfer.h>
 #include <dcmtk/dcmdata/dcrledrg.h>
 #include <dcmtk/dcmimgle/dcmimage.h>
+#include <dcmtk/dcmimage/diregist.h>
 #include <dcmtk/dcmjpeg/djdecode.h>
 #include <dcmtk/dcmjpls/djdecode.h>
 
 #include <QFile>
-#include <algorithm>
-#include <cmath>
 #include <cstdint>
 
 namespace
@@ -508,6 +507,39 @@ bool DicomFrame::setFrameIndex(int frameIndex)
     return true;
 }
 
+bool DicomFrame::hasNativeYbrFull422Frame() const
+{
+    return isValid() &&
+           photometricInterpretation == QStringLiteral("YBR_FULL_422") &&
+           samplesPerPixel == 3 &&
+           pixelRepresentation == 0 &&
+           highBit == bitsStored - 1;
+}
+
+int DicomFrame::nativeYbrFull422RowBytes() const
+{
+    if (!hasNativeYbrFull422Frame())
+        return 0;
+    return ((width + 1) / 2) * 4 * static_cast<int>(sizeof(quint16));
+}
+
+qsizetype DicomFrame::nativeYbrFull422FrameBytes() const
+{
+    return static_cast<qsizetype>(nativeYbrFull422RowBytes()) * height;
+}
+
+const quint16 *DicomFrame::nativeYbrFull422FrameData() const
+{
+    if (!hasNativeYbrFull422Frame())
+        return nullptr;
+    const qsizetype wordsPerFrame = nativeYbrFull422FrameBytes() /
+                                    static_cast<qsizetype>(sizeof(quint16));
+    const qsizetype offset = static_cast<qsizetype>(frameIndex_) * wordsPerFrame;
+    if (offset < 0 || offset + wordsPerFrame > rawSamples_.size())
+        return nullptr;
+    return rawSamples_.constData() + offset;
+}
+
 qint32 DicomFrame::decodeStoredSample(
     quint16 raw) const
 {
@@ -698,52 +730,6 @@ QImage DicomFrame::renderDisplay(
 {
     if (!isValid())
         return {};
-
-    // Some DCMTK builds fail to produce a 16-bit output buffer for native
-    // (uncompressed) YBR_FULL_422 even though the same dataset is valid.  The
-    // stored layout is Y1 Y2 Cb Cr for each horizontal pair, so convert this
-    // one well-defined native representation directly and keep the renderer's
-    // high-precision RGBA16 contract.
-    if (photometricInterpretation == QStringLiteral("YBR_FULL_422"))
-    {
-        QImage result(width, height, QImage::Format_RGBA64);
-        if (result.isNull())
-            return {};
-
-        const double sampleMax = bitsStored >= 16
-            ? 65535.0
-            : static_cast<double>((1u << bitsStored) - 1u);
-        if (sampleMax <= 0.0)
-            return {};
-        const double chromaCenter = static_cast<double>(1u << (bitsStored - 1));
-
-        const auto toDisplay16 = [sampleMax](double value) -> quint16 {
-            value = std::clamp(value, 0.0, sampleMax);
-            return static_cast<quint16>(std::lround(value * 65535.0 / sampleMax));
-        };
-
-        for (int y = 0; y < height; ++y)
-        {
-            auto *dst = reinterpret_cast<QRgba64 *>(result.scanLine(y));
-            for (int x = 0; x < width; ++x)
-            {
-                const QVector<quint16> components = rawComponents(x, y);
-                if (components.size() != 3)
-                    return {};
-
-                const double yy = static_cast<double>(decodeStoredSample(components[0]));
-                const double cb = static_cast<double>(decodeStoredSample(components[1])) - chromaCenter;
-                const double cr = static_cast<double>(decodeStoredSample(components[2])) - chromaCenter;
-                const quint16 r = toDisplay16(yy + 1.402 * cr);
-                const quint16 g = toDisplay16(yy - 0.344136 * cb - 0.714136 * cr);
-                const quint16 b = toDisplay16(yy + 1.772 * cb);
-                dst[x] = QRgba64::fromRgba64(r, g, b, 65535);
-            }
-        }
-
-        lastDisplayImage_ = result;
-        return lastDisplayImage_;
-    }
 
     const QByteArray nativePath =
         QFile::encodeName(path);

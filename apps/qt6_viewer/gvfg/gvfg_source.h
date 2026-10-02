@@ -8,9 +8,12 @@
 
 #include <gvfg_capture.h>
 #include <gvfg_preview.h>
+#include <gvfg_audio_playback.h>
+#include "backend/capture_source.h"
 
 #include <atomic>
 #include <condition_variable>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -24,7 +27,7 @@
 class FfmpegVideoRecorder;
 #endif
 
-class GvfgSource : public QObject
+class GvfgSource final : public QObject, public CaptureSource
 {
     Q_OBJECT
 
@@ -47,19 +50,20 @@ public:
     static QStringList enumerateDevices();
 
     bool open(int deviceIndex, bool zeroCopyEnabled);
-    void close();
+    CaptureBackend backend() const override { return CaptureBackend::Gvfg; }
+    void close() override;
     bool start(void *previewHwnd, int deviceIndex, int previewBitDepthMode,
                bool zeroCopyEnabled, bool audioEnabled);
     bool setPreview(void *previewHwnd, int previewBitDepthMode);
-    void stop();
-    bool isOpen() const { return handle_ != nullptr; }
+    void stop() override;
+    bool isOpen() const override { return handle_ != nullptr; }
     int openedDeviceIndex() const { return openedDeviceIndex_; }
     bool zeroCopyEnabled() const { return zeroCopyEnabled_; }
     bool setVideoFormat(gvfg_pixel_format_t format);
     void clearPreview();
     void pollEvents();
     bool refreshSignalStatus();
-    bool isRunning() const { return running_; }
+    bool isRunning() const override { return running_; }
     bool audioEnabled() const { return audioEnabled_; }
     gvfg_audio_format_t audioFormat() const { return audioFormat_; }
     void setAudioVolume(float volume);
@@ -87,7 +91,6 @@ signals:
 private:
     void readLoop();
     void audioReadLoop();
-    void audioPlaybackLoop();
     void writeRecordingFrame(const gvfg_frame_t &frame);
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
     void recordingLoop();
@@ -103,17 +106,10 @@ private:
     gvfg_preview_handle previewHandle_ = nullptr;
     std::thread readThread_;
     std::thread audioThread_;
-    std::thread audioPlaybackThread_;
     std::mutex audioPlaybackMutex_;
-    std::condition_variable audioPlaybackCv_;
-    struct PlaybackAudioPacket
-    {
-        std::vector<uint8_t> pcm;
-        uint64_t timestampNs = 0;
-    };
-    std::deque<PlaybackAudioPacket> audioPlaybackQueue_;
+    gvfg_audio_player audioPlayer_ = nullptr;
+    std::chrono::steady_clock::time_point audioPlaybackRetry_{};
     std::atomic<uint64_t> latestVideoTimestampNs_{0};
-    std::atomic<uint64_t> avSyncEpoch_{0};
     std::atomic_bool stopRequested_{false};
     std::atomic<float> audioVolume_{1.0f};
     bool audioEnabled_ = false;

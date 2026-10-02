@@ -6,10 +6,6 @@
 #endif
 #include <cstdio>
 
-#ifdef GCAP_WIN_MF
-#include "../providers/winmf_provider.h"
-#endif
-
 #ifdef GCAP_WIN_DSHOW
 #include "../providers/dshow_provider.h"
 #endif
@@ -21,12 +17,10 @@ static void cmDebug(const char *msg)
 
 enum class Backend
 {
-    WinMF_CPU,
-    WinMF_GPU,
     DShow,
     Auto
 };
-static Backend g_backend = Backend::WinMF_GPU;
+static Backend g_backend = Backend::DShow;
 
 // 預設 D3D Adapter (-1 = 由系統選擇 default adapter)
 static int g_d3d_adapter_index = -1;
@@ -38,24 +32,20 @@ CaptureManager::CaptureManager()
 {
     switch (g_backend)
     {
-    case Backend::WinMF_CPU:
-        selectedBackendInt_ = GCAP_BACKEND_WINMF_CPU;
-        break;
     case Backend::DShow:
         selectedBackendInt_ = GCAP_BACKEND_DSHOW;
         break;
     case Backend::Auto:
         selectedBackendInt_ = GCAP_BACKEND_AUTO;
         break;
-    case Backend::WinMF_GPU:
     default:
-        selectedBackendInt_ = GCAP_BACKEND_WINMF_GPU;
+        selectedBackendInt_ = GCAP_BACKEND_DSHOW;
         break;
     }
 
-    activeBackendInt_ = selectedBackendInt_ == GCAP_BACKEND_AUTO
-                            ? GCAP_BACKEND_WINMF_GPU
-                            : selectedBackendInt_;
+    activeBackendInt_ = selectedBackendInt_;
+    if (selectedBackendInt_ == GCAP_BACKEND_AUTO)
+        activeBackendInt_ = GCAP_BACKEND_DSHOW;
     rebuildProviderForBackend(activeBackendInt_);
 }
 
@@ -69,16 +59,6 @@ bool CaptureManager::rebuildProviderForBackend(int backendInt)
     case GCAP_BACKEND_DSHOW:
         provider_ = std::make_unique<DShowProvider>();
         activeBackendInt_ = GCAP_BACKEND_DSHOW;
-        return true;
-#endif
-#ifdef GCAP_WIN_MF
-    case GCAP_BACKEND_WINMF_CPU:
-        provider_ = std::make_unique<WinMFProvider>(false);
-        activeBackendInt_ = GCAP_BACKEND_WINMF_CPU;
-        return true;
-    case GCAP_BACKEND_WINMF_GPU:
-        provider_ = std::make_unique<WinMFProvider>(true);
-        activeBackendInt_ = GCAP_BACKEND_WINMF_GPU;
         return true;
 #endif
     default:
@@ -138,12 +118,6 @@ void CaptureManager::setBackendInt(int v)
 {
     switch (v)
     {
-    case GCAP_BACKEND_WINMF_CPU:
-        g_backend = Backend::WinMF_CPU;
-        break;
-    case GCAP_BACKEND_WINMF_GPU:
-        g_backend = Backend::WinMF_GPU;
-        break;
     case GCAP_BACKEND_DSHOW:
         g_backend = Backend::DShow;
         break;
@@ -151,7 +125,7 @@ void CaptureManager::setBackendInt(int v)
         g_backend = Backend::Auto;
         break;
     default:
-        g_backend = Backend::WinMF_GPU;
+        g_backend = Backend::DShow;
         break;
     }
 }
@@ -160,12 +134,7 @@ void CaptureManager::setD3dAdapterInt(int index)
 {
     g_d3d_adapter_index = index;
 
-#ifdef GCAP_WIN_MF
-    // 告訴 WinMFProvider 要改用哪一張 GPU
-    WinMFProvider::setPreferredAdapterIndex(index);
-#else
     (void)index;
-#endif
 }
 
 /**
@@ -194,7 +163,9 @@ gcap_status_t CaptureManager::open(int idx)
 {
     if (selectedBackendInt_ == GCAP_BACKEND_AUTO)
     {
-        const int candidates[] = {GCAP_BACKEND_WINMF_GPU, GCAP_BACKEND_WINMF_CPU, GCAP_BACKEND_DSHOW};
+        const int candidates[] = {
+            GCAP_BACKEND_DSHOW,
+        };
         for (int backendInt : candidates)
         {
             if (openWithBackend(backendInt, idx))
@@ -278,7 +249,9 @@ gcap_status_t CaptureManager::start()
     if (selectedBackendInt_ == GCAP_BACKEND_AUTO && openedDeviceIndex_ >= 0)
     {
         const int current = activeBackendInt_;
-        const int candidates[] = {GCAP_BACKEND_WINMF_GPU, GCAP_BACKEND_WINMF_CPU, GCAP_BACKEND_DSHOW};
+        const int candidates[] = {
+            GCAP_BACKEND_DSHOW,
+        };
         for (int backendInt : candidates)
         {
             if (backendInt == current)
@@ -309,10 +282,6 @@ gcap_status_t CaptureManager::startRecording(const char *pathUtf8)
     if (!provider_)
         return GCAP_ENOTSUP;
 
-#ifdef GCAP_WIN_MF
-    if (auto *p = dynamic_cast<WinMFProvider *>(provider_.get()))
-        return p->startRecording(pathUtf8);
-#endif
 #ifdef GCAP_WIN_DSHOW
     if (auto *p = dynamic_cast<DShowProvider *>(provider_.get()))
         return p->startRecording(pathUtf8);
@@ -325,10 +294,6 @@ gcap_status_t CaptureManager::stopRecording()
     if (!provider_)
         return GCAP_ENOTSUP;
 
-#ifdef GCAP_WIN_MF
-    if (auto *p = dynamic_cast<WinMFProvider *>(provider_.get()))
-        return p->stopRecording();
-#endif
 #ifdef GCAP_WIN_DSHOW
     if (auto *p = dynamic_cast<DShowProvider *>(provider_.get()))
         return p->stopRecording();
@@ -341,10 +306,6 @@ gcap_status_t CaptureManager::setRecordingAudioDevice(const char *deviceIdUtf8)
     if (!provider_)
         return GCAP_ENOTSUP;
 
-#ifdef GCAP_WIN_MF
-    if (auto *p = dynamic_cast<WinMFProvider *>(provider_.get()))
-        return p->setRecordingAudioDevice(deviceIdUtf8);
-#endif
 #ifdef GCAP_WIN_DSHOW
     if (auto *p = dynamic_cast<DShowProvider *>(provider_.get()))
         return p->setRecordingAudioDevice(deviceIdUtf8);

@@ -39,7 +39,8 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
     fileRow->addWidget(openFileButton);
     layout->addLayout(fileRow);
 
-    auto *settings = new QHBoxLayout;
+    auto *formatRow = new QHBoxLayout;
+    auto *dicomRow = new QHBoxLayout;
     formatCombo_ = new QComboBox(this);
     formatCombo_->addItem(QStringLiteral("YUY2 (8-bit 4:2:2, Y0 U Y1 V)"), int(RawPixelFormat::Yuy2));
     formatCombo_->addItem(QStringLiteral("Y210 (10-bit 4:2:2)"), int(RawPixelFormat::Y210));
@@ -80,37 +81,40 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
             this);
     frameSpin_ = new QSpinBox(this);
     frameSpin_->setRange(1, 1);
-    settings->addWidget(new QLabel(QStringLiteral("Format:"), this));
-    settings->addWidget(formatCombo_);
-    settings->addWidget(new QLabel(QStringLiteral("Width:"), this));
-    settings->addWidget(widthSpin_);
-    settings->addWidget(new QLabel(QStringLiteral("Height:"), this));
-    settings->addWidget(heightSpin_);
-    settings->addWidget(new QLabel(QStringLiteral("Stride:"), this));
-    settings->addWidget(strideSpin_);
-    settings->addWidget(hexCheck_);
-    settings->addWidget(reload);
-    settings->addWidget(
+    formatRow->addWidget(new QLabel(QStringLiteral("Format:"), this));
+    formatRow->addWidget(formatCombo_, 1);
+    formatRow->addWidget(new QLabel(QStringLiteral("Width:"), this));
+    formatRow->addWidget(widthSpin_);
+    formatRow->addWidget(new QLabel(QStringLiteral("Height:"), this));
+    formatRow->addWidget(heightSpin_);
+    formatRow->addWidget(new QLabel(QStringLiteral("Stride:"), this));
+    formatRow->addWidget(strideSpin_);
+    formatRow->addWidget(hexCheck_);
+    formatRow->addWidget(reload);
+    layout->addLayout(formatRow);
+
+    dicomRow->addWidget(
         new QLabel(
             QStringLiteral("WC:"),
             this));
 
-    settings->addWidget(
+    dicomRow->addWidget(
         windowCenterSpin_);
 
-    settings->addWidget(
+    dicomRow->addWidget(
         new QLabel(
             QStringLiteral("WW:"),
             this));
 
-    settings->addWidget(
+    dicomRow->addWidget(
         windowWidthSpin_);
 
-    settings->addWidget(
+    dicomRow->addWidget(
         applyWindowButton_);
-    settings->addWidget(new QLabel(QStringLiteral("Frame:"), this));
-    settings->addWidget(frameSpin_);
-    layout->addLayout(settings);
+    dicomRow->addWidget(new QLabel(QStringLiteral("Frame:"), this));
+    dicomRow->addWidget(frameSpin_);
+    dicomRow->addStretch();
+    layout->addLayout(dicomRow);
 
     viewer_ = new RawPreviewWidget(this);
     layout->addWidget(viewer_, 1);
@@ -194,20 +198,17 @@ bool RawInspectorDialog::openFile(
 
 void RawInspectorDialog::chooseFile()
 {
-    QFileDialog dialog(this,
-                       QStringLiteral("Open Pixel Data"),
-                       QFileInfo(path_).absolutePath(),
-                       QStringLiteral(
-                           "Pixel Data (*.raw *.dcm *.dicom);;"
-                           "RAW Frame Files (*.raw);;"
-                           "DICOM Files (*.dcm *.dicom);;"
-                           "All Files (*.*)"));
-#ifdef _WIN32
-    dialog.setOption(QFileDialog::DontUseNativeDialog, true);
-#endif
-    dialog.setFileMode(QFileDialog::ExistingFile);
-    if (dialog.exec() == QDialog::Accepted)
-        openFile(dialog.selectedFiles().value(0));
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("Open Pixel Data"),
+        QFileInfo(path_).absolutePath(),
+        QStringLiteral(
+            "Pixel Data (*.raw *.dcm *.dicom);;"
+            "RAW Frame Files (*.raw);;"
+            "DICOM Files (*.dcm *.dicom);;"
+            "All Files (*.*)"));
+    if (!path.isEmpty())
+        openFile(path);
 }
 
 void RawInspectorDialog::navigateFile(int offset)
@@ -365,8 +366,19 @@ void RawInspectorDialog::loadCurrent()
             frameSpin_->setValue(1);
         }
 
-        const QImage display =
-            dicomFrame_.makeDisplayImage();
+        QImage display;
+        if (dicomFrame_.hasNativeYbrFull422Frame())
+        {
+            // Geometry/inspection placeholder only.  The displayed pixels are
+            // produced from the native YBR buffer by the D3D shader.
+            display = QImage(dicomFrame_.width, dicomFrame_.height,
+                             QImage::Format_RGBA64);
+            display.fill(Qt::black);
+        }
+        else
+        {
+            display = dicomFrame_.makeDisplayImage();
+        }
 
         if (display.isNull())
         {
@@ -460,7 +472,17 @@ void RawInspectorDialog::selectDicomFrame(int oneBasedFrame)
     if (!dicomMode_ || !dicomFrame_.setFrameIndex(oneBasedFrame - 1))
         return;
 
-    const QImage display = dicomFrame_.makeDisplayImage();
+    QImage display;
+    if (dicomFrame_.hasNativeYbrFull422Frame())
+    {
+        display = QImage(dicomFrame_.width, dicomFrame_.height,
+                         QImage::Format_RGBA64);
+        display.fill(Qt::black);
+    }
+    else
+    {
+        display = dicomFrame_.makeDisplayImage();
+    }
     if (display.isNull())
     {
         QMessageBox::warning(this, QStringLiteral("DICOM Frame"),

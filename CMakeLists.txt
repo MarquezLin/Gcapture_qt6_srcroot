@@ -75,7 +75,9 @@ if (WIN32)
           EXISTS "${_candidate}/bin/gvfg.dll" AND
           EXISTS "${_candidate}/lib/gvfg.lib" AND
           EXISTS "${_candidate}/bin/gvfg_preview.dll" AND
-          EXISTS "${_candidate}/lib/gvfg_preview.lib")
+          EXISTS "${_candidate}/lib/gvfg_preview.lib" AND
+          EXISTS "${_candidate}/bin/gvfg_audio_playback.dll" AND
+          EXISTS "${_candidate}/lib/gvfg_audio_playback.lib")
         set(_gvfg_build_dir "${_candidate}")
         break()
       endif()
@@ -101,6 +103,9 @@ if (WIN32)
   if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg_preview.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg_preview.lib")
     message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg_preview.dll and lib/gvfg_preview.lib: ${_gvfg_build_dir}")
   endif()
+  if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg_audio_playback.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg_audio_playback.lib")
+    message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg_audio_playback.dll and lib/gvfg_audio_playback.lib: ${_gvfg_build_dir}")
+  endif()
   add_library(gvfg SHARED IMPORTED GLOBAL)
   set_target_properties(gvfg PROPERTIES
     IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg.dll"
@@ -113,6 +118,13 @@ if (WIN32)
     IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg_preview.dll"
     IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg_preview.lib"
     INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_preview/include;${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
+  )
+
+  add_library(gvfg_audio_playback SHARED IMPORTED GLOBAL)
+  set_target_properties(gvfg_audio_playback PROPERTIES
+    IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg_audio_playback.dll"
+    IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg_audio_playback.lib"
+    INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_audio_playback/include"
   )
 
   message(STATUS "Using external GVFG SDK: ${_gvfg_build_dir}")
