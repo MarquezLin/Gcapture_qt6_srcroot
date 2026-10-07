@@ -6,6 +6,7 @@
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
@@ -14,6 +15,7 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QtConcurrent/QtConcurrentRun>
 #include <utility>
 
 DicomViewerDialog::DicomViewerDialog(QWidget *parent) : QDialog(parent)
@@ -26,11 +28,11 @@ DicomViewerDialog::DicomViewerDialog(QWidget *parent) : QDialog(parent)
     pathLabel_ = new QLabel(this);
     pathLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     pathLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    auto *openFileButton = new QPushButton(QStringLiteral("Open File..."), this);
-    auto *openFolderButton = new QPushButton(QStringLiteral("Open Folder..."), this);
+    openFileButton_ = new QPushButton(QStringLiteral("Open File..."), this);
+    openFolderButton_ = new QPushButton(QStringLiteral("Open Folder..."), this);
     fileRow->addWidget(pathLabel_, 1);
-    fileRow->addWidget(openFileButton);
-    fileRow->addWidget(openFolderButton);
+    fileRow->addWidget(openFileButton_);
+    fileRow->addWidget(openFolderButton_);
     layout->addLayout(fileRow);
 
     auto *seriesRow = new QHBoxLayout;
@@ -81,8 +83,8 @@ DicomViewerDialog::DicomViewerDialog(QWidget *parent) : QDialog(parent)
     bottom->addWidget(buttons);
     layout->addLayout(bottom);
 
-    connect(openFileButton, &QPushButton::clicked, this, &DicomViewerDialog::chooseFile);
-    connect(openFolderButton, &QPushButton::clicked, this, &DicomViewerDialog::chooseFolder);
+    connect(openFileButton_, &QPushButton::clicked, this, &DicomViewerDialog::chooseFile);
+    connect(openFolderButton_, &QPushButton::clicked, this, &DicomViewerDialog::chooseFolder);
     connect(seriesCombo_, &QComboBox::currentIndexChanged,
             this, &DicomViewerDialog::selectSeries);
     connect(sliceSpin_, qOverload<int>(&QSpinBox::valueChanged),
@@ -98,6 +100,10 @@ DicomViewerDialog::DicomViewerDialog(QWidget *parent) : QDialog(parent)
     });
     connect(resetButton, &QPushButton::clicked, viewer_, &RawPreviewWidget::resetView);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    folderScanWatcher_ = new QFutureWatcher<DicomFolderScanResult>(this);
+    connect(folderScanWatcher_, &QFutureWatcher<DicomFolderScanResult>::finished,
+            this, &DicomViewerDialog::finishFolderScan);
     updateControls();
 }
 
@@ -126,23 +132,51 @@ bool DicomViewerDialog::openFile(const QString &path)
     }
     pathLabel_->setText(currentPath_);
     pathLabel_->setToolTip(currentPath_);
-    renderCurrent(true);
+    renderCurrent();
     return true;
 }
 
 bool DicomViewerDialog::openFolder(const QString &path)
 {
-    QStringList errors;
-    QVector<DicomSeries> found = DicomSeriesScanner::scanFolder(path, &errors);
-    if (found.isEmpty())
-    {
-        QMessageBox::warning(this, QStringLiteral("DICOM Folder"),
-                             QStringLiteral("No DICOM image series were found in:\n%1").arg(path));
+    if (path.isEmpty() || folderScanWatcher_->isRunning())
         return false;
+
+    const QString folderPath = QFileInfo(path).absoluteFilePath();
+    openFileButton_->setEnabled(false);
+    openFolderButton_->setEnabled(false);
+    pathLabel_->setText(QStringLiteral("Scanning %1 ...").arg(folderPath));
+    pathLabel_->setToolTip(folderPath);
+
+    folderScanWatcher_->setFuture(QtConcurrent::run([folderPath] {
+        DicomFolderScanResult result;
+        result.folderPath = folderPath;
+        result.series = DicomSeriesScanner::scanFolder(folderPath, &result.errors);
+        return result;
+    }));
+    return true;
+}
+
+void DicomViewerDialog::finishFolderScan()
+{
+    openFileButton_->setEnabled(true);
+    openFolderButton_->setEnabled(true);
+
+    DicomFolderScanResult result = folderScanWatcher_->result();
+    if (!isVisible())
+        return;
+
+    if (result.series.isEmpty())
+    {
+        pathLabel_->setText(currentPath_);
+        pathLabel_->setToolTip(currentPath_);
+        QMessageBox::warning(this, QStringLiteral("DICOM Folder"),
+                             QStringLiteral("No DICOM image series were found in:\n%1")
+                                 .arg(result.folderPath));
+        return;
     }
 
-    currentPath_ = QFileInfo(path).absoluteFilePath();
-    series_ = std::move(found);
+    currentPath_ = result.folderPath;
+    series_ = std::move(result.series);
     pathLabel_->setText(currentPath_);
     pathLabel_->setToolTip(currentPath_);
     {
@@ -153,7 +187,16 @@ bool DicomViewerDialog::openFolder(const QString &path)
         seriesCombo_->setCurrentIndex(0);
     }
     selectSeries(0);
-    return true;
+
+    if (!result.errors.isEmpty())
+    {
+        QMessageBox::information(
+            this, QStringLiteral("DICOM Folder"),
+            QStringLiteral("Loaded %1 series. %2 file(s) were skipped because required "
+                           "DICOM series metadata was missing.")
+                .arg(series_.size())
+                .arg(result.errors.size()));
+    }
 }
 
 void DicomViewerDialog::chooseFile()
@@ -202,14 +245,14 @@ void DicomViewerDialog::selectSlice(int oneBasedSlice)
         QMessageBox::warning(this, QStringLiteral("DICOM Slice"), error);
         return;
     }
-    renderCurrent(true);
+    renderCurrent();
 }
 
 void DicomViewerDialog::selectFrame(int oneBasedFrame)
 {
     if (!frame_.setFrameIndex(oneBasedFrame - 1))
         return;
-    renderCurrent(true);
+    renderCurrent();
 }
 
 void DicomViewerDialog::applyWindow()
@@ -227,9 +270,8 @@ void DicomViewerDialog::applyWindow()
     viewer_->updateDicomDisplay(image);
 }
 
-void DicomViewerDialog::renderCurrent(bool resetView)
+void DicomViewerDialog::renderCurrent()
 {
-    Q_UNUSED(resetView);
     if (!frame_.isValid())
         return;
 

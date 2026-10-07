@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <algorithm>
+#include <tuple>
 
 namespace
 {
@@ -103,17 +104,45 @@ QVector<DicomSeries> DicomSeriesScanner::scanFolder(const QString &folderPath,
 
     for (DicomSeries &series : result)
     {
+        const bool allHaveSlicePosition = std::all_of(
+            series.instances.cbegin(), series.instances.cend(),
+            [](const DicomSeriesInstance &instance) {
+                return instance.hasSlicePosition;
+            });
+        const bool allHaveInstanceNumber = std::all_of(
+            series.instances.cbegin(), series.instances.cend(),
+            [](const DicomSeriesInstance &instance) {
+                return instance.hasInstanceNumber;
+            });
+
         std::stable_sort(series.instances.begin(), series.instances.end(),
-                         [](const DicomSeriesInstance &left,
-                            const DicomSeriesInstance &right) {
-            if (left.hasSlicePosition && right.hasSlicePosition &&
-                left.slicePosition != right.slicePosition)
-                return left.slicePosition < right.slicePosition;
-            if (left.hasInstanceNumber && right.hasInstanceNumber &&
-                left.instanceNumber != right.instanceNumber)
-                return left.instanceNumber < right.instanceNumber;
-            return QString::compare(left.path, right.path,
-                                    Qt::CaseInsensitive) < 0;
+                         [allHaveSlicePosition, allHaveInstanceNumber](
+                             const DicomSeriesInstance &left,
+                             const DicomSeriesInstance &right) {
+            if (allHaveSlicePosition)
+            {
+                return std::tie(left.slicePosition, left.path) <
+                       std::tie(right.slicePosition, right.path);
+            }
+            if (allHaveInstanceNumber)
+            {
+                return std::tie(left.instanceNumber, left.path) <
+                       std::tie(right.instanceNumber, right.path);
+            }
+
+            // Mixed or incomplete metadata must still use one fixed key for
+            // every comparison so std::stable_sort receives a strict ordering.
+            const auto key = [](const DicomSeriesInstance &instance) {
+                if (instance.hasSlicePosition)
+                    return std::tuple<int, double, int, QString>(
+                        0, instance.slicePosition, 0, instance.path.toCaseFolded());
+                if (instance.hasInstanceNumber)
+                    return std::tuple<int, double, int, QString>(
+                        1, 0.0, instance.instanceNumber, instance.path.toCaseFolded());
+                return std::tuple<int, double, int, QString>(
+                    2, 0.0, 0, instance.path.toCaseFolded());
+            };
+            return key(left) < key(right);
         });
     }
 

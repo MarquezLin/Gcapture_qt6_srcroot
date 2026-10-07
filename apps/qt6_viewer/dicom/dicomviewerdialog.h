@@ -12,6 +12,14 @@ class QLabel;
 class QPushButton;
 class QSpinBox;
 class RawPreviewWidget;
+template <typename T> class QFutureWatcher;
+
+struct DicomFolderScanResult
+{
+    QString folderPath;
+    QVector<DicomSeries> series;
+    QStringList errors;
+};
 
 class DicomViewerDialog : public QDialog
 {
@@ -31,7 +39,8 @@ private:
     void selectSlice(int oneBasedSlice);
     void selectFrame(int oneBasedFrame);
     void applyWindow();
-    void renderCurrent(bool resetView);
+    void finishFolderScan();
+    void renderCurrent();
     void updateControls();
 
     QString currentPath_;
@@ -50,6 +59,9 @@ private:
     QDoubleSpinBox *windowCenterSpin_ = nullptr;
     QDoubleSpinBox *windowWidthSpin_ = nullptr;
     QPushButton *applyWindowButton_ = nullptr;
+    QPushButton *openFileButton_ = nullptr;
+    QPushButton *openFolderButton_ = nullptr;
+    QFutureWatcher<DicomFolderScanResult> *folderScanWatcher_ = nullptr;
 };
 
 #endif

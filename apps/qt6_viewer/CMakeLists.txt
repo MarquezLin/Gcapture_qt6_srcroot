@@ -6,8 +6,8 @@ project(qt6_viewer VERSION ${_QT6_VIEWER_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(QT NAMES Qt6 REQUIRED COMPONENTS Widgets Concurrent)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Concurrent)
 # DICOM support
 find_package(DCMTK CONFIG REQUIRED)
 
@@ -141,6 +141,7 @@ target_compile_definitions(qt6_viewer PRIVATE
 # NOTE: do NOT use $<TARGET_LINKER_FILE:...> here; link targets directly.
 target_link_libraries(qt6_viewer PRIVATE
   Qt${QT_VERSION_MAJOR}::Widgets
+  Qt${QT_VERSION_MAJOR}::Concurrent
   gcapture
   gdisplay
   DCMTK::DCMTK
