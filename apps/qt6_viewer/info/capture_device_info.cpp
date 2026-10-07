@@ -54,10 +54,13 @@ static QString formatStatusBlock(const QString &title, const gcap_signal_status_
         return lines.join("\n");
     }
 
-    const double fps = (s.fps_den > 0) ? double(s.fps_num) / double(s.fps_den) : fallbackFps;
+    const bool hasDeclaredFps = s.fps_num > 0 && s.fps_den > 0;
+    const double fps = hasDeclaredFps ? double(s.fps_num) / double(s.fps_den) : fallbackFps;
     const QString fmt = fmtOverride.isEmpty() ? pixFmtToString(s.pixfmt) : fmtOverride;
     lines << QString("Resolution    : %1 x %2").arg(s.width).arg(s.height);
-    lines << QString("Frame Rate    : %1 fps").arg(fps, 0, 'f', 2);
+    lines << (fps > 0.0
+                  ? QString("Frame Rate    : %1 fps").arg(fps, 0, 'f', 2)
+                  : QStringLiteral("Frame Rate    : (unknown)"));
     lines << QString("Sample Format : %1").arg(fmt);
     lines << QString("Sample Family : %1").arg(sampleFamilyToString(s.pixfmt));
     lines << QString("Bit Depth     : %1-bit").arg(s.bit_depth > 0 ? QString::number(s.bit_depth) : QStringLiteral("unknown"));
@@ -78,8 +81,11 @@ QString formatCaptureDeviceInfo(const CaptureDeviceInfo &info, double fallbackFp
     lines << "";
     lines << formatStatusBlock("Current Capture", info.negotiated, fallbackFps, info.captureFormat);
 
-    lines << "";
-    lines << formatStatusBlock("Driver / Pin Probe", info.signalProbe, fallbackFps);
+    if (info.hasSignalProbe())
+    {
+        lines << "";
+        lines << formatStatusBlock("Driver / Pin Probe", info.signalProbe, 0.0);
+    }
 
     if (!info.supportedFormats.isEmpty())
     {
@@ -99,13 +105,24 @@ QString formatCaptureDeviceInfo(const CaptureDeviceInfo &info, double fallbackFp
             lines << QString("- %1").arg(s);
     }
 
-    lines << "";
-    lines << "Device Properties";
-    lines << "────────────";
-    lines << QString("Driver Version : %1").arg(info.driverVersion.isEmpty() ? QStringLiteral("(unknown)") : info.driverVersion);
-    lines << QString("Firmware Ver.  : %1").arg(info.firmwareVersion.isEmpty() ? QStringLiteral("(unknown)") : info.firmwareVersion);
-    lines << QString("Serial Number  : %1").arg(info.serialNumber.isEmpty() ? QStringLiteral("(unknown)") : info.serialNumber);
-    lines << QString("Render Format  : %1").arg(info.renderFormat.isEmpty() ? QStringLiteral("(unknown)") : info.renderFormat);
+    if (!info.sdkVersion.isEmpty() || !info.backendLibraryVersion.isEmpty())
+    {
+        lines << "";
+        lines << "Runtime Versions";
+        lines << "────────────";
+        lines << QString("GVFG SDK Version : %1").arg(info.sdkVersion.isEmpty() ? QStringLiteral("(unknown)") : info.sdkVersion);
+        lines << QString("GigabyteLib Ver. : %1").arg(info.backendLibraryVersion.isEmpty() ? QStringLiteral("(unknown)") : info.backendLibraryVersion);
+    }
+
+    if (info.devicePropertiesApplicable)
+    {
+        lines << "";
+        lines << "Device Properties";
+        lines << "────────────";
+        lines << QString("Driver Version : %1").arg(info.driverVersion.isEmpty() ? QStringLiteral("(unknown)") : info.driverVersion);
+        lines << QString("Firmware Ver.  : %1").arg(info.firmwareVersion.isEmpty() ? QStringLiteral("(unknown)") : info.firmwareVersion);
+        lines << QString("Serial Number  : %1").arg(info.serialNumber.isEmpty() ? QStringLiteral("(unknown)") : info.serialNumber);
+    }
 
     // lines << "";
     // lines << "Notes";

@@ -27,6 +27,17 @@ set(NVAPI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvapi")
 #   third_party/ffmpeg/bin
 set(FFMPEG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ffmpeg" CACHE PATH "FFmpeg root directory")
 
+# Use the repository-owned DCMTK package unless the caller explicitly selects
+# another compatible installation.
+set(_DEFAULT_DCMTK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/dcmtk/cmake")
+if((NOT DCMTK_DIR OR
+    DCMTK_DIR MATCHES "-NOTFOUND$" OR
+    DCMTK_DIR MATCHES "[/\\\\]DCM_[/\\\\]dcmtk-3[.]7[.]0[/\\\\]dcmtk-3[.]7[.]0[/\\\\]build$") AND
+   EXISTS "${_DEFAULT_DCMTK_DIR}/DCMTKConfig.cmake")
+  set(DCMTK_DIR "${_DEFAULT_DCMTK_DIR}" CACHE PATH
+      "Directory containing DCMTKConfig.cmake" FORCE)
+endif()
+
 # Output folders (keep build tree tidy)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

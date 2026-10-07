@@ -18,11 +18,10 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
-#include <QDoubleSpinBox>
 
 RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
 {
-    setWindowTitle(QStringLiteral("Pixel Inspector"));
+    setWindowTitle(QStringLiteral("RAW Pixel Inspector"));
     resize(1200, 780);
 
     auto *layout = new QVBoxLayout(this);
@@ -40,7 +39,6 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
     layout->addLayout(fileRow);
 
     auto *formatRow = new QHBoxLayout;
-    auto *dicomRow = new QHBoxLayout;
     formatCombo_ = new QComboBox(this);
     formatCombo_->addItem(QStringLiteral("YUY2 (8-bit 4:2:2, Y0 U Y1 V)"), int(RawPixelFormat::Yuy2));
     formatCombo_->addItem(QStringLiteral("Y210 (10-bit 4:2:2)"), int(RawPixelFormat::Y210));
@@ -58,29 +56,6 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
     strideSpin_->setValue(3840);
     hexCheck_ = new QCheckBox(QStringLiteral("Hex values"), this);
     auto *reload = new QPushButton(QStringLiteral("Load / Apply"), this);
-    windowCenterSpin_ =
-        new QDoubleSpinBox(this);
-
-    windowWidthSpin_ =
-        new QDoubleSpinBox(this);
-
-    windowCenterSpin_->setRange(
-        -1000000.0,
-        1000000.0);
-
-    windowWidthSpin_->setRange(
-        1.0,
-        2000000.0);
-
-    windowCenterSpin_->setDecimals(3);
-    windowWidthSpin_->setDecimals(3);
-
-    applyWindowButton_ =
-        new QPushButton(
-            QStringLiteral("Apply Window"),
-            this);
-    frameSpin_ = new QSpinBox(this);
-    frameSpin_->setRange(1, 1);
     formatRow->addWidget(new QLabel(QStringLiteral("Format:"), this));
     formatRow->addWidget(formatCombo_, 1);
     formatRow->addWidget(new QLabel(QStringLiteral("Width:"), this));
@@ -92,29 +67,6 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
     formatRow->addWidget(hexCheck_);
     formatRow->addWidget(reload);
     layout->addLayout(formatRow);
-
-    dicomRow->addWidget(
-        new QLabel(
-            QStringLiteral("WC:"),
-            this));
-
-    dicomRow->addWidget(
-        windowCenterSpin_);
-
-    dicomRow->addWidget(
-        new QLabel(
-            QStringLiteral("WW:"),
-            this));
-
-    dicomRow->addWidget(
-        windowWidthSpin_);
-
-    dicomRow->addWidget(
-        applyWindowButton_);
-    dicomRow->addWidget(new QLabel(QStringLiteral("Frame:"), this));
-    dicomRow->addWidget(frameSpin_);
-    dicomRow->addStretch();
-    layout->addLayout(dicomRow);
 
     viewer_ = new RawPreviewWidget(this);
     layout->addWidget(viewer_, 1);
@@ -147,27 +99,7 @@ RawInspectorDialog::RawInspectorDialog(QWidget *parent) : QDialog(parent)
             { zoomLabel_->setText(QStringLiteral("Zoom: %1x").arg(zoom, 0, 'f', 2)); });
     connect(reset, &QPushButton::clicked, viewer_, &RawPreviewWidget::resetView);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(
-        applyWindowButton_,
-        &QPushButton::clicked,
-        this,
-        &RawInspectorDialog::applyDicomWindow);
-    connect(frameSpin_, qOverload<int>(&QSpinBox::valueChanged),
-            this, &RawInspectorDialog::selectDicomFrame);
 }
-
-bool RawInspectorDialog::isDicomFile(
-    const QString &path) const
-{
-    const QString suffix =
-        QFileInfo(path)
-            .suffix()
-            .toLower();
-
-    return suffix == QStringLiteral("dcm") ||
-           suffix == QStringLiteral("dicom");
-}
-
 bool RawInspectorDialog::openFile(
     const QString &path)
 {
@@ -175,37 +107,25 @@ bool RawInspectorDialog::openFile(
         QFileInfo(path)
             .absoluteFilePath();
 
-    dicomMode_ =
-        isDicomFile(path_);
-
     fileLabel_->setText(path_);
     fileLabel_->setToolTip(path_);
 
     refreshFileNavigation();
-    updateModeControls();
-
-    if (!dicomMode_)
-    {
-        inferFromFileName(path_);
-    }
+    inferFromFileName(path_);
 
     loadCurrent();
 
-    return dicomMode_
-               ? dicomFrame_.isValid()
-               : frame_.isValid();
+    return frame_.isValid();
 }
 
 void RawInspectorDialog::chooseFile()
 {
     const QString path = QFileDialog::getOpenFileName(
         this,
-        QStringLiteral("Open Pixel Data"),
+        QStringLiteral("Open RAW Frame"),
         QFileInfo(path_).absolutePath(),
         QStringLiteral(
-            "Pixel Data (*.raw *.dcm *.dicom);;"
             "RAW Frame Files (*.raw);;"
-            "DICOM Files (*.dcm *.dicom);;"
             "All Files (*.*)"));
     if (!path.isEmpty())
         openFile(path);
@@ -323,112 +243,6 @@ void RawInspectorDialog::loadCurrent()
 {
     QString error;
 
-    //
-    // DICOM
-    //
-    if (dicomMode_)
-    {
-        if (!dicomFrame_.load(
-                path_,
-                &error))
-        {
-            viewer_->setDicomFrame(
-                nullptr,
-                QImage());
-
-            QMessageBox::warning(
-                this,
-                QStringLiteral(
-                    "DICOM Pixel Inspector"),
-                error);
-
-            return;
-        }
-
-        if (dicomFrame_.hasWindow)
-        {
-            const QSignalBlocker block1(
-                windowCenterSpin_);
-
-            const QSignalBlocker block2(
-                windowWidthSpin_);
-
-            windowCenterSpin_->setValue(
-                dicomFrame_.windowCenter);
-
-            windowWidthSpin_->setValue(
-                dicomFrame_.windowWidth);
-        }
-
-        {
-            const QSignalBlocker block(frameSpin_);
-            frameSpin_->setRange(1, qMax(1, dicomFrame_.frameCount));
-            frameSpin_->setValue(1);
-        }
-
-        QImage display;
-        if (dicomFrame_.hasNativeYbrFull422Frame())
-        {
-            // Geometry/inspection placeholder only.  The displayed pixels are
-            // produced from the native YBR buffer by the D3D shader.
-            display = QImage(dicomFrame_.width, dicomFrame_.height,
-                             QImage::Format_RGBA64);
-            display.fill(Qt::black);
-        }
-        else
-        {
-            display = dicomFrame_.makeDisplayImage();
-        }
-
-        if (display.isNull())
-        {
-            QMessageBox::warning(
-                this,
-                QStringLiteral(
-                    "DICOM Pixel Inspector"),
-                QStringLiteral(
-                    "Failed to render DICOM image."));
-
-            return;
-        }
-
-        viewer_->setDicomFrame(
-            &dicomFrame_,
-            display);
-
-        pixelLabel_->setText(
-            QStringLiteral(
-                "%1 × %2 | "
-                "DICOM %3 | "
-                "%4-bit stored | Frame %5/%6 | "
-                "WC %7 | WW %8")
-                .arg(dicomFrame_.width)
-                .arg(dicomFrame_.height)
-                .arg(dicomFrame_.photometricInterpretation)
-                .arg(dicomFrame_.bitsStored)
-                .arg(dicomFrame_.frameIndex() + 1)
-                .arg(dicomFrame_.frameCount)
-                .arg(
-                    dicomFrame_.isMonochrome() && dicomFrame_.hasWindow
-                        ? QString::number(
-                              dicomFrame_
-                                  .windowCenter)
-                        : QStringLiteral("-"))
-                .arg(
-                    dicomFrame_.isMonochrome() && dicomFrame_.hasWindow
-                        ? QString::number(
-                              dicomFrame_
-                                  .windowWidth)
-                        : QStringLiteral("-")));
-
-        updateModeControls();
-
-        return;
-    }
-
-    //
-    // 原本 RAW
-    //
     const auto format =
         RawPixelFormat(
             formatCombo_
@@ -465,96 +279,4 @@ void RawInspectorDialog::loadCurrent()
             .arg(frame_.height)
             .arg(frame_.strideBytes)
             .arg(frame_.bytes.size()));
-}
-
-void RawInspectorDialog::selectDicomFrame(int oneBasedFrame)
-{
-    if (!dicomMode_ || !dicomFrame_.setFrameIndex(oneBasedFrame - 1))
-        return;
-
-    QImage display;
-    if (dicomFrame_.hasNativeYbrFull422Frame())
-    {
-        display = QImage(dicomFrame_.width, dicomFrame_.height,
-                         QImage::Format_RGBA64);
-        display.fill(Qt::black);
-    }
-    else
-    {
-        display = dicomFrame_.makeDisplayImage();
-    }
-    if (display.isNull())
-    {
-        QMessageBox::warning(this, QStringLiteral("DICOM Frame"),
-                             QStringLiteral("Failed to render frame %1.").arg(oneBasedFrame));
-        return;
-    }
-    viewer_->setDicomFrame(&dicomFrame_, display);
-    pixelLabel_->setText(QStringLiteral("%1 × %2 | DICOM %3 | %4-bit stored | Frame %5/%6")
-                             .arg(dicomFrame_.width).arg(dicomFrame_.height)
-                             .arg(dicomFrame_.photometricInterpretation)
-                             .arg(dicomFrame_.bitsStored).arg(oneBasedFrame)
-                             .arg(dicomFrame_.frameCount));
-}
-
-void RawInspectorDialog::applyDicomWindow()
-{
-    if (!dicomMode_ ||
-        !dicomFrame_.isValid() ||
-        !dicomFrame_.isMonochrome())
-    {
-        return;
-    }
-
-    const double wc =
-        windowCenterSpin_->value();
-
-    const double ww =
-        windowWidthSpin_->value();
-
-    const QImage image =
-        dicomFrame_.makeDisplayImage(
-            wc,
-            ww);
-
-    if (image.isNull())
-    {
-        QMessageBox::warning(
-            this,
-            QStringLiteral(
-                "DICOM Window"),
-            QStringLiteral(
-                "Failed to apply "
-                "Window Center / Width."));
-
-        return;
-    }
-
-    //
-    // 不 Reset Zoom
-    //
-    viewer_->updateDicomDisplay(
-        image);
-}
-
-void RawInspectorDialog::updateModeControls()
-{
-    const bool raw =
-        !dicomMode_;
-
-    formatCombo_->setEnabled(raw);
-    widthSpin_->setEnabled(raw);
-    heightSpin_->setEnabled(raw);
-    strideSpin_->setEnabled(raw);
-
-    const bool windowing = dicomMode_ &&
-        (!dicomFrame_.isValid() || dicomFrame_.isMonochrome());
-    windowCenterSpin_->setEnabled(windowing);
-
-    windowWidthSpin_->setEnabled(
-        windowing);
-
-    applyWindowButton_->setEnabled(
-        windowing);
-    frameSpin_->setEnabled(dicomMode_ && dicomFrame_.frameCount > 1);
 }

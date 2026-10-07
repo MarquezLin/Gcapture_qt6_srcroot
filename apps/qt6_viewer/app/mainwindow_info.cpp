@@ -241,7 +241,7 @@ void MainWindow::refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps)
     captureInfo_.deviceName = currentDeviceText();
 
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
-    if (gvfg_ && gvfg_->isRunning())
+    if (selectedBackend() == CaptureBackend::Gvfg || (gvfg_ && gvfg_->isRunning()))
         refreshGvfgCaptureInfo();
     else
 #endif
@@ -254,11 +254,8 @@ void MainWindow::refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps)
     updateCapabilityLabel();
 }
 
-void MainWindow::refreshDisplayInfoFromFrame(const QImage &img)
+void MainWindow::refreshDisplayInfoFromCurrentState()
 {
-    displayInfo_.video.size = img.size();
-    displayInfo_.video.fps = runtime_.fps();
-
     QScreen *scr = windowHandle() ? windowHandle()->screen()
                                   : QGuiApplication::primaryScreen();
     if (scr)
@@ -298,20 +295,6 @@ void MainWindow::refreshDisplayInfoFromFrame(const QImage &img)
     else
 #endif
         refreshDirectShowDisplayPipeline();
-}
-
-void MainWindow::refreshDisplayInfoFromCurrentState()
-{
-    if (lastFrameImage_.isNull())
-    {
-        QImage fallback(1, 1, QImage::Format_ARGB32_Premultiplied);
-        refreshDisplayInfoFromFrame(fallback);
-        displayInfo_.video.size = QSize();
-        displayInfo_.video.fps = runtime_.fps();
-        return;
-    }
-
-    refreshDisplayInfoFromFrame(lastFrameImage_);
 }
 
 void MainWindow::refreshSignalInfoDialog()
@@ -394,7 +377,13 @@ void MainWindow::updateBrandDashboard()
                                    .arg(pv.bit_depth)
                              : tr("preview inactive");
         frameCounter = rt.delivered_frames;
-        if (inputConnected)
+        if (frameCounter == 0)
+        {
+            signalText = tr("Waiting for frame");
+            dashboardFps = 0.0;
+            colorText = QStringLiteral("--");
+        }
+        else if (inputConnected)
         {
             dashboardFps = (rt.capture_fps > 0.0) ? rt.capture_fps : dashboardFps;
             if (signal.width > 0 && signal.height > 0)
@@ -533,10 +522,7 @@ void MainWindow::updateRuntimeStatusUi()
             const gvfg_runtime_info_t rt = gvfg_->runtimeInfo();
             const gvfg_signal_status_t signal = gvfg_->signalStatus();
             const QString rawStateKey = gvfgSignalStateKey(signal);
-            const bool waitingForFirstFrame = rt.delivered_frames == 0 &&
-                                              !signal.connected &&
-                                              signal.width == 0 &&
-                                              signal.height == 0;
+            const bool waitingForFirstFrame = rt.delivered_frames == 0;
             if (!waitingForFirstFrame && lastGvfgRawStateKey_ != rawStateKey)
             {
                 MainWindow::postLog(gvfgStatusLogLine(rt, signal));

@@ -54,6 +54,9 @@ struct FfmpegVideoRecordConfig
     int audio_channels = 0;
     int audio_bits_per_sample = 0;
     int audio_bitrate_kbps = 192;
+    // Zero preserves legacy single-file recording. GVFG opts into 2 GiB segments.
+    uint64_t segment_bytes = 0;
+    uint64_t reserve_free_bytes = 256ULL * 1024 * 1024;
 };
 
 struct FfmpegVideoFrameView
@@ -76,12 +79,20 @@ public:
     bool writeFrame(const FfmpegVideoFrameView &frame, std::string *error = nullptr);
     bool writeAudio(const uint8_t *data, size_t bytes, int64_t timeline_pts_ns = -1,
                     std::string *error = nullptr);
-    void close();
+    void close(); // Preserve the existing DirectShow caller and linker symbol.
+    bool close(std::string *error);
     bool isOpen() const { return opened_; }
 
 private:
     bool opened_ = false;
     FfmpegVideoRecordConfig cfg_{};
+    bool checkStorage(std::string *error);
+    bool writePacket(bool audio, std::string *error);
+    bool nextSegment(int64_t origin_ns, std::string *error);
+    unsigned segment_index_ = 1;
+    uint64_t segment_payload_bytes_ = 0;
+    int64_t segment_origin_ns_ = 0;
+    bool closing_ = false;
 
     struct Impl;
     Impl *impl_ = nullptr;

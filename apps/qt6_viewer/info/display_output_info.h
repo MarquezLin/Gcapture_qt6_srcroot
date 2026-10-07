@@ -5,13 +5,6 @@
 
 struct DisplayOutputInfo
 {
-    // ---- Video (what you render / show) ----
-    struct Video
-    {
-        QSize size;       // img.size()
-        double fps = 0.0;
-    } video;
-
     // ---- Desktop / Screen (Qt QScreen) ----
     struct Desktop
     {
@@ -43,9 +36,7 @@ struct DisplayOutputInfo
         Path path = Path::Unknown;
         QString adapterName; // Actual preview-processing GPU when reported.
         int adapterIndex = -1;
-
-        // 你若想也可以加 negotiated pixfmt / bitdepth 等
-        // QString notes;
+        QString renderFormat; // Actual format used by the preview renderer.
     } pipe;
 };
 

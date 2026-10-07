@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <filesystem>
+#include <chrono>
+#include <cstdio>
 
 #ifdef GCAP_ENABLE_FFMPEG
 extern "C" {
@@ -212,6 +215,8 @@ struct FfmpegVideoRecorder::Impl
     AVAudioFifo *audioFifo = nullptr;
     int64_t audioPts = 0;
     bool audioTimelineInitialized = false;
+    std::chrono::steady_clock::time_point storageCheck{};
+    bool headerWritten = false;
 #endif
 };
 
@@ -253,6 +258,12 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     }
 
     cfg_ = cfg;
+    segment_index_ = 1;
+    segment_payload_bytes_ = 0;
+    segment_origin_ns_ = 0;
+    impl_->storageCheck = {};
+    if (cfg.segment_bytes && !checkStorage(error))
+        return false;
     const bool useHevc = !cfg.force_h264 && wantsHevcMain10(cfg.input_format, cfg.force_hevc_main10);
 
     int ret = avformat_alloc_output_context2(&impl_->fmt, nullptr, nullptr, cfg.path.c_str());
@@ -447,6 +458,7 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
         return false;
     }
 
+    impl_->headerWritten = true;
     opened_ = true;
     return true;
 #endif
@@ -566,11 +578,10 @@ bool FfmpegVideoRecorder::writeAudio(const uint8_t *data, size_t bytes,
             av_packet_rescale_ts(impl_->audioPkt, impl_->audioCodec->time_base,
                                  impl_->audioStream->time_base);
             impl_->audioPkt->stream_index = impl_->audioStream->index;
-            const int writeRet = av_interleaved_write_frame(impl_->fmt, impl_->audioPkt);
+            const bool written = writePacket(true, error);
             av_packet_unref(impl_->audioPkt);
-            if (writeRet < 0)
+            if (!written)
             {
-                setErr(error, "AAC mux failed: " + ffErr(writeRet));
                 return false;
             }
         }
@@ -679,11 +690,10 @@ bool FfmpegVideoRecorder::writeFrame(const FfmpegVideoFrameView &view, std::stri
 
         av_packet_rescale_ts(impl_->pkt, impl_->codec->time_base, impl_->stream->time_base);
         impl_->pkt->stream_index = impl_->stream->index;
-        ret = av_interleaved_write_frame(impl_->fmt, impl_->pkt);
+        const bool written = writePacket(false, error);
         av_packet_unref(impl_->pkt);
-        if (ret < 0)
+        if (!written)
         {
-            setErr(error, "av_interleaved_write_frame failed: " + ffErr(ret));
             return false;
         }
     }
@@ -691,10 +701,166 @@ bool FfmpegVideoRecorder::writeFrame(const FfmpegVideoFrameView &view, std::stri
 #endif
 }
 
-void FfmpegVideoRecorder::close()
+bool FfmpegVideoRecorder::checkStorage(std::string *error)
 {
 #ifdef GCAP_ENABLE_FFMPEG
-    if (impl_ && impl_->codec && impl_->fmt && opened_)
+    const auto now = std::chrono::steady_clock::now();
+    if (impl_->storageCheck.time_since_epoch().count() != 0 &&
+        now - impl_->storageCheck < std::chrono::seconds(1))
+        return true;
+    impl_->storageCheck = now;
+    std::error_code ec;
+    auto directory = std::filesystem::u8path(cfg_.path).parent_path();
+    if (directory.empty()) directory = std::filesystem::current_path(ec);
+    const auto space = std::filesystem::space(directory, ec);
+    if (ec || space.available <= cfg_.reserve_free_bytes)
+    {
+        setErr(error, "Recording stopped before disk exhaustion (reserved space), or unable to query storage: " +
+                      cfg_.path + (ec ? " | " + ec.message() : ""));
+        return false;
+    }
+    return true;
+#else
+    (void)error;
+    return false;
+#endif
+}
+
+bool FfmpegVideoRecorder::nextSegment(int64_t originNs, std::string *error)
+{
+#ifdef GCAP_ENABLE_FFMPEG
+    const auto original = std::filesystem::u8path(cfg_.path);
+    char suffix[32]{};
+    std::snprintf(suffix, sizeof(suffix), "_%03u", segment_index_ + 1);
+    const auto path = original.parent_path() /
+        std::filesystem::u8path(original.stem().u8string() + suffix + original.extension().u8string());
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec);
+    if (exists || ec)
+    {
+        setErr(error, "Cannot create recording segment (existing file or path error): " + path.u8string());
+        return false;
+    }
+    // Finish only the old container; keep video/AAC encoders and queued audio alive.
+    int ret = av_write_trailer(impl_->fmt);
+    impl_->headerWritten = false;
+    if (ret < 0)
+    {
+        setErr(error, "Recording segment trailer failed: " + ffErr(ret));
+        return false;
+    }
+    ret = avio_closep(&impl_->fmt->pb);
+    if (ret < 0)
+    {
+        setErr(error, "Recording segment close failed: " + ffErr(ret));
+        return false;
+    }
+    avformat_free_context(impl_->fmt);
+    impl_->fmt = nullptr;
+    impl_->stream = nullptr;
+    impl_->audioStream = nullptr;
+    ret = avformat_alloc_output_context2(&impl_->fmt, nullptr, nullptr, path.u8string().c_str());
+    if (ret < 0 || !impl_->fmt)
+    {
+        setErr(error, "Cannot allocate recording segment: " + path.u8string());
+        return false;
+    }
+    impl_->stream = avformat_new_stream(impl_->fmt, nullptr);
+    if (!impl_->stream || avcodec_parameters_from_context(impl_->stream->codecpar, impl_->codec) < 0)
+    {
+        setErr(error, "Cannot create video stream for recording segment");
+        return false;
+    }
+    impl_->stream->time_base = impl_->codec->time_base;
+    if (impl_->codec->codec_id == AV_CODEC_ID_HEVC)
+        impl_->stream->codecpar->codec_tag = MKTAG('h', 'v', 'c', '1');
+    if (impl_->audioCodec)
+    {
+        impl_->audioStream = avformat_new_stream(impl_->fmt, nullptr);
+        if (!impl_->audioStream || avcodec_parameters_from_context(impl_->audioStream->codecpar, impl_->audioCodec) < 0)
+        {
+            setErr(error, "Cannot create audio stream for recording segment");
+            return false;
+        }
+        impl_->audioStream->time_base = impl_->audioCodec->time_base;
+    }
+    ret = avio_open(&impl_->fmt->pb, path.u8string().c_str(), AVIO_FLAG_WRITE);
+    if (ret >= 0) ret = avformat_write_header(impl_->fmt, nullptr);
+    if (ret < 0)
+    {
+        setErr(error, "Cannot open recording segment " + path.u8string() + ": " + ffErr(ret));
+        return false;
+    }
+    segment_origin_ns_ = originNs;
+    impl_->headerWritten = true;
+    segment_payload_bytes_ = 0;
+    ++segment_index_;
+    return true;
+#else
+    (void)originNs; (void)error;
+    return false;
+#endif
+}
+
+bool FfmpegVideoRecorder::writePacket(bool audio, std::string *error)
+{
+#ifdef GCAP_ENABLE_FFMPEG
+    AVPacket *packet = audio ? impl_->audioPkt : impl_->pkt;
+    AVStream *stream = audio ? impl_->audioStream : impl_->stream;
+    const AVRational packetTimeBase = stream->time_base;
+    if (cfg_.segment_bytes && !closing_)
+    {
+        if (!checkStorage(error)) return false;
+        const int64_t position = avio_tell(impl_->fmt->pb);
+        const uint64_t used = (std::max)(segment_payload_bytes_,
+            static_cast<uint64_t>((std::max)(int64_t{0}, position)));
+        // Leave 64 MiB for a GOP, interleaving, and the final MP4 index.
+        const uint64_t margin = (std::min<uint64_t>)(64ULL * 1024 * 1024, cfg_.segment_bytes / 4);
+        if (used >= cfg_.segment_bytes - margin && !audio && (packet->flags & AV_PKT_FLAG_KEY))
+        {
+            const int64_t origin = packet->dts != AV_NOPTS_VALUE ? packet->dts : packet->pts;
+            if (origin == AV_NOPTS_VALUE ||
+                !nextSegment(av_rescale_q(origin, packetTimeBase, AVRational{1, 1'000'000'000}), error))
+                return false;
+            stream = impl_->stream;
+            av_packet_rescale_ts(packet, packetTimeBase, stream->time_base);
+        }
+        else if (used + static_cast<uint64_t>(packet->size) >= cfg_.segment_bytes - margin / 2)
+        {
+            setErr(error, "Recording stopped safely: segment limit reached without a video keyframe | " + cfg_.path);
+            return false;
+        }
+    }
+    const int64_t offset = av_rescale_q(segment_origin_ns_, AVRational{1, 1'000'000'000}, stream->time_base);
+    if (packet->pts != AV_NOPTS_VALUE) packet->pts -= offset;
+    if (packet->dts != AV_NOPTS_VALUE) packet->dts -= offset;
+    packet->stream_index = stream->index;
+    segment_payload_bytes_ += static_cast<uint64_t>(packet->size);
+    const int ret = av_interleaved_write_frame(impl_->fmt, packet);
+    if (ret < 0 || (impl_->fmt->pb && impl_->fmt->pb->error < 0))
+    {
+        setErr(error, "Recording write failed: " + ffErr(ret < 0 ? ret : impl_->fmt->pb->error) +
+                      " | " + cfg_.path + " | segment " + std::to_string(segment_index_));
+        return false;
+    }
+    return true;
+#else
+    (void)audio; (void)error;
+    return false;
+#endif
+}
+
+void FfmpegVideoRecorder::close()
+{
+    close(nullptr);
+}
+
+bool FfmpegVideoRecorder::close(std::string *error)
+{
+    bool success = true;
+    closing_ = true;
+#ifdef GCAP_ENABLE_FFMPEG
+    if (impl_ && impl_->codec && impl_->fmt && opened_ && impl_->headerWritten)
     {
         avcodec_send_frame(impl_->codec, nullptr);
         while (true)
@@ -706,22 +872,60 @@ void FfmpegVideoRecorder::close()
                 break;
             av_packet_rescale_ts(impl_->pkt, impl_->codec->time_base, impl_->stream->time_base);
             impl_->pkt->stream_index = impl_->stream->index;
-            av_interleaved_write_frame(impl_->fmt, impl_->pkt);
+            if (!writePacket(false, error)) success = false;
             av_packet_unref(impl_->pkt);
         }
         if (impl_->audioCodec)
         {
+            // Do not discard the final partial AAC frame when stopping.
+            const int remaining = av_audio_fifo_size(impl_->audioFifo);
+            if (remaining > 0)
+            {
+                AVFrame *tail = av_frame_alloc();
+                int tailRet = AVERROR(ENOMEM);
+                if (tail)
+                {
+                    tail->nb_samples = remaining;
+                    tail->format = impl_->audioCodec->sample_fmt;
+                    tail->sample_rate = impl_->audioCodec->sample_rate;
+                    tail->pts = impl_->audioPts;
+                    av_channel_layout_copy(&tail->ch_layout, &impl_->audioCodec->ch_layout);
+                    tailRet = av_frame_get_buffer(tail, 0);
+                    if (tailRet >= 0)
+                        tailRet = av_audio_fifo_read(impl_->audioFifo,
+                            reinterpret_cast<void **>(tail->extended_data), remaining);
+                    if (tailRet >= 0) tailRet = avcodec_send_frame(impl_->audioCodec, tail);
+                    av_frame_free(&tail);
+                }
+                if (tailRet < 0)
+                {
+                    setErr(error, "AAC final frame failed: " + ffErr(tailRet));
+                    success = false;
+                }
+                while (avcodec_receive_packet(impl_->audioCodec, impl_->audioPkt) >= 0)
+                {
+                    av_packet_rescale_ts(impl_->audioPkt, impl_->audioCodec->time_base,
+                                         impl_->audioStream->time_base);
+                    if (!writePacket(true, error)) success = false;
+                    av_packet_unref(impl_->audioPkt);
+                }
+            }
             avcodec_send_frame(impl_->audioCodec, nullptr);
             while (avcodec_receive_packet(impl_->audioCodec, impl_->audioPkt) >= 0)
             {
                 av_packet_rescale_ts(impl_->audioPkt, impl_->audioCodec->time_base,
                                      impl_->audioStream->time_base);
                 impl_->audioPkt->stream_index = impl_->audioStream->index;
-                av_interleaved_write_frame(impl_->fmt, impl_->audioPkt);
+                if (!writePacket(true, error)) success = false;
                 av_packet_unref(impl_->audioPkt);
             }
         }
-        av_write_trailer(impl_->fmt);
+        const int trailerRet = av_write_trailer(impl_->fmt);
+        if (trailerRet < 0)
+        {
+            setErr(error, "Recording trailer failed: " + ffErr(trailerRet) + " | " + cfg_.path);
+            success = false;
+        }
     }
     if (impl_)
     {
@@ -748,7 +952,14 @@ void FfmpegVideoRecorder::close()
         if (impl_->fmt)
         {
             if (!(impl_->fmt->oformat->flags & AVFMT_NOFILE) && impl_->fmt->pb)
-                avio_closep(&impl_->fmt->pb);
+            {
+                const int closeRet = avio_closep(&impl_->fmt->pb);
+                if (closeRet < 0)
+                {
+                    setErr(error, "Recording file close failed: " + ffErr(closeRet) + " | " + cfg_.path);
+                    success = false;
+                }
+            }
             avformat_free_context(impl_->fmt);
             impl_->fmt = nullptr;
         }
@@ -756,7 +967,10 @@ void FfmpegVideoRecorder::close()
         impl_->audioStream = nullptr;
         impl_->audioPts = 0;
         impl_->audioTimelineInitialized = false;
+        impl_->headerWritten = false;
     }
 #endif
     opened_ = false;
+    closing_ = false;
+    return success;
 }

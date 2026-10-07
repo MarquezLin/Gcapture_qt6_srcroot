@@ -8,9 +8,9 @@ static QString pipelineToString(const DisplayOutputInfo::Pipeline &p)
     case Path::DirectShow:
         return QStringLiteral("DirectShow preview path");
     case Path::Gvfg:
-        return QStringLiteral("YUY2 -> RGB: GPU shader path (GVFG)");
+        return QStringLiteral("GVFG preview path");
     default:
-        return QStringLiteral("NV12 -> RGBA: (unknown)");
+        return QStringLiteral("Preview path: unknown");
     }
 }
 
@@ -40,20 +40,7 @@ QString formatDisplayOutputInfo(const DisplayOutputInfo &info)
 {
     QStringList lines;
 
-    // 1) Video
-    if (info.video.size.isValid())
-    {
-        lines << QString("Video Format: %1x%2 @ %3 fps (Device Output)")
-                     .arg(info.video.size.width())
-                     .arg(info.video.size.height())
-                     .arg(info.video.fps, 0, 'f', 2);
-    }
-    else
-    {
-        lines << "Video Format: (unknown)";
-    }
-
-    // 2) Desktop
+    // 1) Desktop
     if (info.desktop.size.isValid())
     {
         lines << QString("Desktop: %1x%2 @ %3 Hz, %4 bpp")
@@ -67,7 +54,7 @@ QString formatDisplayOutputInfo(const DisplayOutputInfo &info)
         lines << "Desktop: (unknown)";
     }
 
-    // 3) Output color
+    // 2) Output color
     if (info.color.valid)
     {
         lines << QString("Output Color Depth: %1 bpc").arg(info.color.bitsPerColor);
@@ -80,8 +67,10 @@ QString formatDisplayOutputInfo(const DisplayOutputInfo &info)
         lines << "Output Color Info: unavailable";
     }
 
-    // 4) Pipeline
+    // 3) Pipeline
     lines << pipelineToString(info.pipe);
+    lines << QString("Preview Render Format: %1")
+                 .arg(info.pipe.renderFormat.isEmpty() ? QStringLiteral("(unknown)") : info.pipe.renderFormat);
     lines << previewGpuToString(info.pipe);
 
     return lines.join('\n');

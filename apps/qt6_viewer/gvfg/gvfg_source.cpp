@@ -641,6 +641,15 @@ void GvfgSource::readLoop()
         const gvfg_status_t st = handle_ ? gvfg_read_channel_frame(handle_, GVFG_CHANNEL_0, &frame, 200) : GVFG_ESTATE;
         if (st == GVFG_OK)
         {
+            {
+                std::lock_guard<std::mutex> lock(signalMutex_);
+                cachedSignal_.connected = 1;
+                cachedSignal_.channel = GVFG_CHANNEL_0;
+                cachedSignal_.width = frame.width;
+                cachedSignal_.height = frame.height;
+                cachedSignal_.pixel_format = frame.pixel_format;
+                cachedSignal_.bit_depth = frame.bit_depth;
+            }
             latestVideoTimestampNs_.store(frame.timestamp_ns, std::memory_order_release);
             {
                 std::lock_guard<std::mutex> lock(recordingMutex_);

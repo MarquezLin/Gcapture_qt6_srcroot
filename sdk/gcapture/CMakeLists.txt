@@ -124,6 +124,7 @@ if (WIN32)
 
   if (MSVC)
     target_compile_options(gcapture PRIVATE /utf-8)
+    target_compile_options(gcapture_ffmpeg_recorder PRIVATE /utf-8)
   endif()
 endif()
 

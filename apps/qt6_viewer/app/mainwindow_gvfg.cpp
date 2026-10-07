@@ -293,12 +293,29 @@ void MainWindow::stopGvfgRecording(bool showSummary)
 
 void MainWindow::refreshGvfgCaptureInfo()
 {
+    captureInfo_.backendName = QStringLiteral("GVFG");
+    const char *sdkVersion = gvfg_get_version();
+    const char *gigabyteLibVersion = gvfg_get_gigabyte_lib_version();
+    captureInfo_.sdkVersion = sdkVersion ? QString::fromLatin1(sdkVersion) : QString();
+    captureInfo_.backendLibraryVersion = gigabyteLibVersion ? QString::fromLatin1(gigabyteLibVersion) : QString();
+    captureInfo_.driverVersion.clear();
+    captureInfo_.firmwareVersion.clear();
+    captureInfo_.serialNumber.clear();
+    captureInfo_.devicePropertiesApplicable = false;
+
     if (!gvfg_ || !gvfg_->isRunning())
+    {
+        captureInfo_.signal = {};
+        captureInfo_.signalProbe = {};
+        captureInfo_.negotiated = {};
+        captureInfo_.frameSource.clear();
+        captureInfo_.pathName.clear();
+        captureInfo_.captureFormat.clear();
         return;
+    }
 
     const gvfg_runtime_info_t runtime = gvfg_->runtimeInfo();
     const gvfg_signal_status_t signal = gvfg_->signalStatus();
-    const gvfg_preview_info_t preview = gvfg_->previewInfo();
 
     gcap_signal_status_t fpgaSignal{};
     fpgaSignal.width = signal.width;
@@ -307,6 +324,11 @@ void MainWindow::refreshGvfgCaptureInfo()
     fpgaSignal.bit_depth = signal.bit_depth;
     fpgaSignal.csp = GCAP_CSP_BT709;
     fpgaSignal.range = GCAP_RANGE_LIMITED;
+
+    if (runtime.capture_fps > 0.0 && std::isfinite(runtime.capture_fps))
+    {
+        gvfgRecordingRate(runtime.capture_fps, fpgaSignal.fps_num, fpgaSignal.fps_den);
+    }
 
     gcap_signal_status_t dmaBuffer{};
     if (signal.connected && runtime.delivered_frames > 0)
@@ -317,24 +339,18 @@ void MainWindow::refreshGvfgCaptureInfo()
         dmaBuffer.bit_depth = signal.bit_depth;
         dmaBuffer.csp = GCAP_CSP_BT709;
         dmaBuffer.range = GCAP_RANGE_LIMITED;
+        dmaBuffer.fps_num = fpgaSignal.fps_num;
+        dmaBuffer.fps_den = fpgaSignal.fps_den;
     }
 
     captureInfo_.signal = fpgaSignal;
-    captureInfo_.signalProbe = fpgaSignal;
+    captureInfo_.signalProbe = {};
     captureInfo_.negotiated = dmaBuffer;
-    captureInfo_.backendName = QStringLiteral("GVFG");
     captureInfo_.frameSource = QStringLiteral("GVFG capture frame");
     captureInfo_.pathName = QStringLiteral("FPGA reported signal -> gvfg_read_frame");
     captureInfo_.captureFormat = signal.connected && runtime.delivered_frames > 0
                                      ? QString::fromLatin1(gvfg_pixel_format_name(signal.pixel_format))
                                      : QStringLiteral("--");
-    captureInfo_.renderFormat = signal.connected && preview.active
-                                    ? QStringLiteral("gvfg_preview %1x%2 %3 %4bit")
-                                          .arg(preview.width)
-                                          .arg(preview.height)
-                                          .arg(QString::fromUtf8(preview.pixel_format))
-                                          .arg(preview.bit_depth)
-                                    : QStringLiteral("App-owned render");
 }
 
 void MainWindow::refreshGvfgDisplayPipeline()
@@ -346,5 +362,12 @@ void MainWindow::refreshGvfgDisplayPipeline()
     const gvfg_preview_info_t preview = gvfg_->previewInfo();
     displayInfo_.pipe.adapterName = QString::fromUtf8(preview.adapter_name);
     displayInfo_.pipe.adapterIndex = preview.adapter_index;
+    displayInfo_.pipe.renderFormat = preview.active
+                                         ? QStringLiteral("gvfg_preview %1x%2 %3 %4bit")
+                                               .arg(preview.width)
+                                               .arg(preview.height)
+                                               .arg(QString::fromUtf8(preview.pixel_format))
+                                               .arg(preview.bit_depth)
+                                         : QStringLiteral("App-owned render");
 }
 #endif

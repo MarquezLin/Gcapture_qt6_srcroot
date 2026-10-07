@@ -26,14 +26,13 @@ GVFG backend、GVFG 錄影與 FFmpeg LGPL 檢查都是必要功能，不提供�
 
 ## 3. GVFG 特殊功能如何開啟
 
-Windows build 會固定加入兩個 compile definitions：
+Windows build 會固定加入 GVFG backend compile definition：
 
 ```text
 QT6_VIEWER_ENABLE_GVFG_BACKEND
-QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS
 ```
 
-它們不是目前可分開切換的 CMake cache options。
+它不是目前可切換的 CMake cache option。
 
 ### `QT6_VIEWER_ENABLE_GVFG_BACKEND`
 
@@ -65,12 +64,12 @@ monotonic SDK delivery clock。`qt6_viewer` 的即時監聽與錄影都使用這
 這是 software delivery timestamp，不是 driver／hardware capture timestamp。它能修正
 Application delivery 與 audio sample clock 的長期漂移，但不代表硬體層精準同步。
 
-### `QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS`
+### 診斷工具入口
 
-會把 register dialog 編入程式，但預設仍隱藏。必須加啟動參數才會顯示：
+Windows Viewer 會編入 register dialog，但預設仍隱藏。必須加啟動參數才會顯示：
 
 ```bat
-qt6_viewer.exe --gvfg-registers
+qt6_viewer.exe -register
 ```
 
 這會顯示 GVFG register 工具，供內部 read/write register 與硬體診斷使用。不要在客戶版本公開這個入口。
@@ -78,6 +77,20 @@ qt6_viewer.exe --gvfg-registers
 RAW Pixel Inspector 也屬於內部分析用途，可檢查 YUY2（`Y0 U0 Y1 V0`）、Y210、NV12、
 BGRA8、RGBA8 與 ABGR2101010／RGB10A2 raw frame。`Open File...` 可直接選擇另一個 raw；
 `Previous`／`Next` 會依檔名順序切換同一資料夾內的 raw，並重新套用檔名與 JSON sidecar metadata。
+
+工具入口各自由獨立參數控制，沒有指定時維持隱藏：
+
+```bat
+qt6_viewer.exe -raw
+qt6_viewer.exe -dicom
+qt6_viewer.exe -register
+qt6_viewer.exe -all
+```
+
+參數可以合併，例如 `qt6_viewer.exe -raw -dicom` 會同時顯示 RAW Pixel Inspector 與
+DICOM Viewer；`-register` 只控制 GVFG register 工具，`-all` 會一次顯示上述所有工具。
+Customer 與 Internal 使用同一顆、包含診斷 exports 的 `gvfg.dll`；客戶套件的邊界是
+不提供 `gvfg_debug.h` 與診斷 UI，而不是另外編譯一顆缺少診斷 exports 的 DLL。
 
 ## 4. 建置順序
 

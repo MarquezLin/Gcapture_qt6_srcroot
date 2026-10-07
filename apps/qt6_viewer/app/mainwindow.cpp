@@ -9,6 +9,7 @@
 
 #include "./ui_mainwindow.h"
 #include <QVBoxLayout>
+#include <QAction>
 #include <QPushButton>
 #include <QComboBox>
 #include <QCheckBox>
@@ -30,11 +31,12 @@
 #include <QSignalBlocker>
 #include "edid_reader.h"
 #include "rawinspectordialog.h"
+#include "dicomviewerdialog.h"
 #include "procamp.h"
 #include "previewwindow.h"
 #include "displayinfodialog.h"
 #include "inputinfodialog.h"
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS)
+#if defined(_WIN32)
 #include "registerdialog.h"
 #endif
 #include <QFileDialog>
@@ -188,6 +190,7 @@ MainWindow::~MainWindow()
         g_mainWindow = nullptr;
     }
     delete rawInspectorDlg_;
+    delete dicomViewerDlg_;
     delete previewWindow_;
     delete ui;
 }
@@ -829,12 +832,9 @@ void MainWindow::onOpenRawInspect()
 
     const QString path = QFileDialog::getOpenFileName(
         this,
-        tr("Open Pixel Data"),
+        tr("Open RAW Frame"),
         QString(),
-        tr("Pixel Data (*.raw *.dcm *.dicom);;"
-           "RAW Frame Files (*.raw);;"
-           "DICOM Files (*.dcm *.dicom);;"
-           "All Files (*.*)"));
+        tr("RAW Frame Files (*.raw);;All Files (*.*)"));
 
     if (wasTimerActive && runtimeStatusTimer_)
         runtimeStatusTimer_->start();
@@ -853,11 +853,22 @@ void MainWindow::onOpenRawInspect()
     MainWindow::postLog(QStringLiteral("[RAW Inspector] opened %1").arg(path));
 }
 
+void MainWindow::onOpenDicomViewer()
+{
+    if (!dicomViewerDlg_)
+        dicomViewerDlg_ = new DicomViewerDialog(this);
+    dicomViewerDlg_->show();
+    dicomViewerDlg_->raise();
+    dicomViewerDlg_->activateWindow();
+}
+
 void MainWindow::setupRegisterTools()
 {
-#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND) && defined(QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS)
+#if defined(_WIN32)
+    const QStringList arguments = QCoreApplication::arguments();
     if (!ui->actionGvfgRegisters ||
-        !QCoreApplication::arguments().contains(QStringLiteral("--gvfg-registers")))
+        (!arguments.contains(QStringLiteral("-register")) &&
+         !arguments.contains(QStringLiteral("-all"))))
         return;
 
     ui->actionGvfgRegisters->setVisible(true);
@@ -873,20 +884,37 @@ void MainWindow::setupRegisterTools()
 
 void MainWindow::setInspectorTools()
 {
-    const bool enabled =
-        QCoreApplication::arguments().contains(
-            QStringLiteral("--inspector"));
+    const QStringList arguments = QCoreApplication::arguments();
+    const bool allEnabled =
+        arguments.contains(QStringLiteral("-all"));
+    const bool rawEnabled =
+        allEnabled || arguments.contains(QStringLiteral("-raw"));
+    const bool dicomEnabled =
+        allEnabled || arguments.contains(QStringLiteral("-dicom"));
 
     if (ui->actionOpenRawInspector)
     {
-        ui->actionOpenRawInspector->setVisible(enabled);
-        ui->actionOpenRawInspector->setEnabled(enabled);
+        ui->actionOpenRawInspector->setText(tr("Open RAW Pixel Inspector..."));
+        ui->actionOpenRawInspector->setVisible(rawEnabled);
+        ui->actionOpenRawInspector->setEnabled(rawEnabled);
+    }
+
+    if (!openDicomViewerAction_ && ui->menuOpen)
+    {
+        openDicomViewerAction_ = ui->menuOpen->addAction(tr("Open DICOM Viewer..."));
+        connect(openDicomViewerAction_, &QAction::triggered,
+                this, &MainWindow::onOpenDicomViewer);
+    }
+    if (openDicomViewerAction_)
+    {
+        openDicomViewerAction_->setVisible(dicomEnabled);
+        openDicomViewerAction_->setEnabled(dicomEnabled);
     }
 
     if (ui->btnOpenRawInspector)
     {
-        ui->btnOpenRawInspector->setVisible(enabled);
-        ui->btnOpenRawInspector->setEnabled(enabled);
+        ui->btnOpenRawInspector->setVisible(rawEnabled);
+        ui->btnOpenRawInspector->setEnabled(rawEnabled);
     }
 }
 

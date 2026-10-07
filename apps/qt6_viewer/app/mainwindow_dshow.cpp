@@ -286,6 +286,10 @@ void MainWindow::refreshDirectShowCaptureInfo(bool throttleDeviceProps)
     if (!directShow_ || !directShow_->isOpen())
         return;
 
+    captureInfo_.sdkVersion.clear();
+    captureInfo_.backendLibraryVersion.clear();
+    captureInfo_.devicePropertiesApplicable = true;
+
     gcap_signal_status_t signal{};
     if (directShow_->signalStatus(&signal) == GCAP_OK)
         captureInfo_.signal = signal;
@@ -301,7 +305,6 @@ void MainWindow::refreshDirectShowCaptureInfo(bool throttleDeviceProps)
         captureInfo_.captureFormat = runtime.negotiated_desc[0]
                                          ? QString::fromUtf8(runtime.negotiated_desc)
                                          : QString::fromUtf8(runtime.source_format);
-        captureInfo_.renderFormat = QString::fromUtf8(runtime.render_format);
     }
 
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
@@ -329,5 +332,6 @@ void MainWindow::refreshDirectShowDisplayPipeline()
     {
         displayInfo_.pipe.adapterName = QString::fromUtf8(runtime.preview_adapter_name);
         displayInfo_.pipe.adapterIndex = runtime.preview_adapter_index;
+        displayInfo_.pipe.renderFormat = QString::fromUtf8(runtime.render_format);
     }
 }

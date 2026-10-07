@@ -26,6 +26,7 @@ class CaptureBackendCatalog;
 class CaptureSource;
 class DirectShowSource;
 class GvfgSource;
+class QAction;
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -65,6 +66,7 @@ private slots:
     void onShowDisplayInfo();
     void onSnapshot();
     void onOpenRawInspect();
+    void onOpenDicomViewer();
 
     void on_btnPreview_clicked();
 
@@ -107,6 +109,8 @@ private:
     DisplayOutputInfo displayInfo_;
     previewwindow *previewWindow_ = nullptr;
     class RawInspectorDialog *rawInspectorDlg_ = nullptr;
+    class DicomViewerDialog *dicomViewerDlg_ = nullptr;
+    QAction *openDicomViewerAction_ = nullptr;
 
     qint64 lastPropsQueryMs_ = 0;
     std::optional<CaptureBackend> cachedDeviceCapsBackend_;
@@ -145,7 +149,6 @@ private:
     void invalidateDeviceCapabilityCache();
     void updateCapabilityLabel();
     void refreshCaptureInfoFromSdkAndRuntime(bool throttleDeviceProps);
-    void refreshDisplayInfoFromFrame(const QImage &img);
     void refreshDisplayInfoFromCurrentState();
     void refreshSignalInfoDialog();
     void refreshDisplayInfoDialog();

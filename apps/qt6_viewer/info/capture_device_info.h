@@ -13,12 +13,14 @@ struct CaptureDeviceInfo
     QString frameSource;
     QString pathName;
     QString captureFormat;
-    QString renderFormat;
     QStringList supportedFormats;
     QStringList propertyPages;
+    QString sdkVersion;
+    QString backendLibraryVersion;
     QString driverVersion;
     QString firmwareVersion;
     QString serialNumber;
+    bool devicePropertiesApplicable = false;
 
     bool hasSignal() const { return signal.width > 0 && signal.height > 0; }
     bool hasSignalProbe() const { return signalProbe.width > 0 && signalProbe.height > 0; }

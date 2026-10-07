@@ -50,6 +50,10 @@ set(VIEWER_SOURCES
   raw/rawinspectordialog.cpp
   dicom/dicomframe.h
   dicom/dicomframe.cpp
+  dicom/dicomseries.h
+  dicom/dicomseries.cpp
+  dicom/dicomviewerdialog.h
+  dicom/dicomviewerdialog.cpp
 )
 
 set(VIEWER_DESIGN_ASSETS
@@ -95,7 +99,6 @@ endif()
 if (WIN32)
   target_compile_definitions(qt6_viewer PRIVATE
     QT6_VIEWER_ENABLE_GVFG_BACKEND
-    QT6_VIEWER_ENABLE_GVFG_INTERNAL_TOOLS
   )
 endif()
 

@@ -356,6 +356,7 @@ void GvfgSource::recordingLoop()
 
     FfmpegVideoRecordConfig cfg{};
     cfg.path = config.path;
+    cfg.segment_bytes = 2ULL * 1024 * 1024 * 1024;
     cfg.width = width;
     cfg.height = height;
     cfg.fps_num = config.fpsNum;
@@ -526,6 +527,7 @@ void GvfgSource::recordingLoop()
             ++recordingFrames_;
         }
     }
-    recorder.close();
+    if (!recorder.close(&error))
+        emit errorOccurred(QStringLiteral("GVFG recording finalization failed: %1").arg(QString::fromStdString(error)));
 #endif
 }
