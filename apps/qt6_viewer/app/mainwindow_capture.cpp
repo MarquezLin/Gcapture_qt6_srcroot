@@ -220,6 +220,13 @@ void MainWindow::onRecord()
 
 void MainWindow::setupBackendControls()
 {
+    if (ui->comboRecordingSegment && ui->comboRecordingSegment->count() == 0)
+    {
+        ui->comboRecordingSegment->addItem(QStringLiteral("5 minutes"), 5 * 60);
+        ui->comboRecordingSegment->addItem(QStringLiteral("10 minutes"), 10 * 60);
+        ui->comboRecordingSegment->setCurrentIndex(1);
+    }
+
     if (!ui->comboBackend)
         return;
 
@@ -246,6 +253,20 @@ void MainWindow::setupBackendControls()
     }
 
     refreshPixelFormatOptions(false);
+}
+
+uint32_t MainWindow::recordingSegmentSeconds() const
+{
+    if (!ui || !ui->comboRecordingSegment)
+        return 10 * 60;
+    const int seconds = ui->comboRecordingSegment->currentData().toInt();
+    return seconds > 0 ? static_cast<uint32_t>(seconds) : 10U * 60U;
+}
+
+void MainWindow::setRecordingControlsEnabled(bool enabled)
+{
+    if (ui && ui->comboRecordingSegment)
+        ui->comboRecordingSegment->setEnabled(enabled);
 }
 
 CaptureBackend MainWindow::selectedBackend() const

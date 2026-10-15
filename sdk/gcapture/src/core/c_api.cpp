@@ -601,6 +601,13 @@ extern "C"
         return h->mgr.startRecording(path_utf8);
     }
 
+    gcap_status_t gcap_set_recording_segment_duration(gcap_handle h, uint32_t seconds)
+    {
+        if (!h)
+            return GCAP_EINVAL;
+        return h->mgr.setRecordingSegmentDuration(seconds);
+    }
+
     gcap_status_t gcap_stop_recording(gcap_handle h)
     {
         if (!h)

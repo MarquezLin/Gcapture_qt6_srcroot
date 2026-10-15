@@ -20,13 +20,15 @@ bool recordingFrameHasRows(const gvfg_frame_t &frame, int minRowBytes)
 }
 } // namespace
 
-bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error)
+bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps,
+                                uint32_t segmentDurationSeconds, QString *error)
 {
 #ifndef QT6_VIEWER_ENABLE_GVFG_RECORDING
     Q_UNUSED(path);
     Q_UNUSED(fpsNum);
     Q_UNUSED(fpsDen);
     Q_UNUSED(bitrateKbps);
+    Q_UNUSED(segmentDurationSeconds);
     if (error)
         *error = QStringLiteral("GVFG recording is not enabled in this build because FFmpeg headers/libs were not found.");
     return false;
@@ -134,6 +136,7 @@ bool GvfgSource::startRecording(const QString &path, int fpsNum, int fpsDen, int
         recordingConfig_.fpsNum = fpsNum > 0 ? fpsNum : 30;
         recordingConfig_.fpsDen = fpsDen > 0 ? fpsDen : 1;
         recordingConfig_.bitrateKbps = bitrateKbps > 0 ? bitrateKbps : 8000;
+        recordingConfig_.segmentDurationSeconds = segmentDurationSeconds;
         recording_ = false;
         recordingOpenPending_ = true;
         recordingStopRequested_ = false;
@@ -297,13 +300,16 @@ void GvfgSource::writeRecordingFrame(const gvfg_frame_t &frame)
             const uint64_t elapsedNs = frame.timestamp_ns > recordingTimelineOriginNs_
                                            ? frame.timestamp_ns - recordingTimelineOriginNs_
                                            : 0;
-            const uint64_t ptsDenominator = 1'000'000'000ULL *
-                                            static_cast<uint64_t>(recordingConfig_.fpsDen);
-            int64_t timestampPts = static_cast<int64_t>(
-                (elapsedNs * static_cast<uint64_t>(recordingConfig_.fpsNum) +
-                 ptsDenominator / 2) / ptsDenominator);
+            int64_t timestampPts = ffmpegVideoPtsFromNanoseconds(
+                elapsedNs, recordingConfig_.fpsNum, recordingConfig_.fpsDen);
             if (timestampPts <= recordingLastVideoPts_)
-                timestampPts = recordingLastVideoPts_ + 1;
+            {
+                // Two deliveries can map to one encoder tick. Inventing a new
+                // tick for every duplicate would make video run ahead of audio.
+                freeRecordingSlots_.push_back(slotIndex);
+                ++recordingDroppedFrames_;
+                return;
+            }
             slot->pts = timestampPts;
             recordingLastVideoPts_ = timestampPts;
             recordingCopyInProgress_ = true;
@@ -357,12 +363,13 @@ void GvfgSource::recordingLoop()
     FfmpegVideoRecordConfig cfg{};
     cfg.path = config.path;
     cfg.segment_bytes = 2ULL * 1024 * 1024 * 1024;
+    cfg.segment_duration_ns = static_cast<uint64_t>(config.segmentDurationSeconds) * 1'000'000'000ULL;
     cfg.width = width;
     cfg.height = height;
     cfg.fps_num = config.fpsNum;
     cfg.fps_den = config.fpsDen;
     cfg.bitrate_kbps = config.bitrateKbps;
-    cfg.input_format = GCAP_FMT_NV12;
+    cfg.input_format = FfmpegVideoPixelFormat::Nv12;
     cfg.force_h264 = true;
     cfg.audio_enabled = audioEnabled_;
     cfg.audio_sample_rate = static_cast<int>(audioFormat_.sample_rate);
@@ -500,7 +507,7 @@ void GvfgSource::recordingLoop()
         }
 
         FfmpegVideoFrameView view{};
-        view.format = GCAP_FMT_NV12;
+        view.format = FfmpegVideoPixelFormat::Nv12;
         view.width = queued.width;
         view.height = queued.height;
         view.data[0] = recordingNv12Buffer_.data();

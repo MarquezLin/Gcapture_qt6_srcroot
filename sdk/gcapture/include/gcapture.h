@@ -501,7 +501,7 @@ extern "C"
      *
      * Parameters:
      *   path_utf8 - Output file path, UTF-8. MP4 is the intended container for
-     *               current FFmpeg/MF recorder paths.
+     *               current FFmpeg recorder path.
      *
      * Notes:
      *   Use gcap_get_recording_info() after profile/backend selection to show the
@@ -509,6 +509,15 @@ extern "C"
      *   during recording to inspect counters supported by the active backend.
      */
     GCAP_API gcap_status_t gcap_start_recording(gcap_handle h, const char *path_utf8);
+
+    /**
+     * Set the maximum duration of each recording segment.
+     *
+     * Call before gcap_start_recording(). A value of zero disables the duration
+     * limit. The DirectShow recorder also keeps its 2 GiB capacity limit; the
+     * first limit reached starts a new segment at the next video keyframe.
+     */
+    GCAP_API gcap_status_t gcap_set_recording_segment_duration(gcap_handle h, uint32_t seconds);
 
     /** Stop active recording. Safe to call when recording is not active; backend may return GCAP_ESTATE. */
     GCAP_API gcap_status_t gcap_stop_recording(gcap_handle h);

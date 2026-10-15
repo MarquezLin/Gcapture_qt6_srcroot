@@ -7,6 +7,7 @@ EXPORTS
     gcap_set_callbacks
     gcap_start
     gcap_start_recording
+    gcap_set_recording_segment_duration
     gcap_stop_recording
     gcap_set_recording_audio_device
     gcap_set_backend

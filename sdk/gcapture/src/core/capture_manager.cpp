@@ -289,6 +289,19 @@ gcap_status_t CaptureManager::startRecording(const char *pathUtf8)
     return GCAP_ENOTSUP;
 }
 
+gcap_status_t CaptureManager::setRecordingSegmentDuration(uint32_t seconds)
+{
+    if (!provider_)
+        return GCAP_ENOTSUP;
+
+#ifdef GCAP_WIN_DSHOW
+    if (auto *p = dynamic_cast<DShowProvider *>(provider_.get()))
+        return p->setRecordingSegmentDuration(seconds);
+#endif
+    (void)seconds;
+    return GCAP_ENOTSUP;
+}
+
 gcap_status_t CaptureManager::stopRecording()
 {
     if (!provider_)

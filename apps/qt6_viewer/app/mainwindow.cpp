@@ -38,6 +38,7 @@
 #include "inputinfodialog.h"
 #if defined(_WIN32)
 #include "registerdialog.h"
+#include "osddialog.h"
 #endif
 #include <QFileDialog>
 #include <QFileInfo>
@@ -101,8 +102,14 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow), directShow_(std::make_unique<DirectShowSource>())
 {
     ui->setupUi(this);
-    resize(1180, 740);
-    setMinimumSize(980, 680);
+    setMinimumSize(1100, 720);
+    QSize initialSize(1440, 900);
+    if (const QScreen *screen = QGuiApplication::primaryScreen())
+    {
+        const QSize screenLimit = screen->availableGeometry().size() - QSize(32, 32);
+        initialSize = initialSize.boundedTo(screenLimit).expandedTo(minimumSize());
+    }
+    resize(initialSize);
     ui->controlPanel->setMinimumWidth(390);
     ui->controlPanel->setMaximumWidth(450);
     setWindowTitle(QStringLiteral("GIGABYTE Video Capture utility v%1").arg(QString::fromLatin1(QT6_VIEWER_VERSION)));
@@ -134,6 +141,7 @@ MainWindow::MainWindow(QWidget *parent)
                 if (message.startsWith(QStringLiteral("GVFG recording stopped:")))
                 {
                     recording_ = false;
+                    setRecordingControlsEnabled(true);
                     if (ui->btnRecord)
                         ui->btnRecord->setText(QStringLiteral("Record"));
                     if (ui->statusbar)
@@ -891,6 +899,8 @@ void MainWindow::setInspectorTools()
         allEnabled || arguments.contains(QStringLiteral("-raw"));
     const bool dicomEnabled =
         allEnabled || arguments.contains(QStringLiteral("-dicom"));
+    const bool osdEnabled =
+        allEnabled || arguments.contains(QStringLiteral("-osd"));
 
     if (ui->actionOpenRawInspector)
     {
@@ -910,6 +920,26 @@ void MainWindow::setInspectorTools()
         openDicomViewerAction_->setVisible(dicomEnabled);
         openDicomViewerAction_->setEnabled(dicomEnabled);
     }
+
+#if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
+    if (!openOsdToolAction_ && ui->menuView)
+    {
+        openOsdToolAction_ = ui->menuView->addAction(tr("GVFG OSD Tool..."));
+        connect(openOsdToolAction_, &QAction::triggered, this, [this]()
+                {
+                    if (!osdDialog_)
+                        osdDialog_ = new OsdDialog(gvfg_, this);
+                    osdDialog_->show();
+                    osdDialog_->raise();
+                    osdDialog_->activateWindow();
+                });
+    }
+    if (openOsdToolAction_)
+    {
+        openOsdToolAction_->setVisible(osdEnabled);
+        openOsdToolAction_->setEnabled(osdEnabled);
+    }
+#endif
 
     if (ui->btnOpenRawInspector)
     {

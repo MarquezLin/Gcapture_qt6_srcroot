@@ -81,6 +81,8 @@ if (WIN32)
     dialogs/register/registerdialog.h
     dialogs/register/registerdialog.cpp
     dialogs/register/registerdialog.ui
+    dialogs/osd/osddialog.h
+    dialogs/osd/osddialog.cpp
   )
 endif()
 
@@ -115,6 +117,7 @@ target_include_directories(qt6_viewer PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/inputinfo
   ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/procamp
   ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/register
+  ${CMAKE_CURRENT_SOURCE_DIR}/dialogs/osd
   ${CMAKE_CURRENT_SOURCE_DIR}/info
   ${CMAKE_CURRENT_SOURCE_DIR}/preview
   ${CMAKE_CURRENT_SOURCE_DIR}/raw
@@ -130,7 +133,7 @@ if (WIN32)
   if (TARGET gvfg_audio_playback)
     target_link_libraries(qt6_viewer PRIVATE gvfg_audio_playback)
   endif()
-  target_link_libraries(qt6_viewer PRIVATE gcapture_ffmpeg_recorder)
+  target_link_libraries(qt6_viewer PRIVATE capture_ffmpeg_recorder)
 endif()
 
 target_compile_definitions(qt6_viewer PRIVATE
@@ -159,7 +162,7 @@ endif()
 # its small C++ interface and the feature flag used by GvfgSource.
 if (WIN32)
   target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_GVFG_RECORDING)
-  message(STATUS "qt6_viewer: GVFG recording uses gcapture_ffmpeg_recorder")
+  message(STATUS "qt6_viewer: GVFG recording uses capture_ffmpeg_recorder")
 endif()
 
 if (MSVC)

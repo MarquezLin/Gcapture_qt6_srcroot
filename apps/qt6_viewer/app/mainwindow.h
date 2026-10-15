@@ -27,6 +27,7 @@ class CaptureSource;
 class DirectShowSource;
 class GvfgSource;
 class QAction;
+class OsdDialog;
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -111,6 +112,8 @@ private:
     class RawInspectorDialog *rawInspectorDlg_ = nullptr;
     class DicomViewerDialog *dicomViewerDlg_ = nullptr;
     QAction *openDicomViewerAction_ = nullptr;
+    QAction *openOsdToolAction_ = nullptr;
+    OsdDialog *osdDialog_ = nullptr;
 
     qint64 lastPropsQueryMs_ = 0;
     std::optional<CaptureBackend> cachedDeviceCapsBackend_;
@@ -189,6 +192,8 @@ private:
     bool showCaptureErrorAndClose(const QString &action, gcap_status_t st, const char *apiName = nullptr);
     void stopRecordingSession(bool showSummary);
     QString chooseRecordingPath(const QDateTime &suggestedTime);
+    uint32_t recordingSegmentSeconds() const;
+    void setRecordingControlsEnabled(bool enabled);
     void dispatchFrameImage(const QImage &img);
     void refreshFrameDependentUi(const QImage &img);
     void logFramePacketIfNeeded(const gcap_frame_packet_t &pkt);

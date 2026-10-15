@@ -39,15 +39,16 @@ audio monitoring，以及 DirectShow 錄影結果回報。共用的
 `mainwindow_capture.cpp` 只負責分派，不直接實作 backend 擷取或錄影設定。
 
 DirectShow 的錄影控制位於 `DShowProvider`，但實際編碼與封裝使用下方的
-共用 `gcapture_ffmpeg_recorder`。這不表示 GVFG 錄影會進入 DirectShow
+共用 `capture_ffmpeg_recorder`。這不表示 GVFG 錄影會進入 DirectShow
 provider；兩條路徑只共用 recorder helper。
 
 ## 共用錄影 Helper
 
-`gcapture_ffmpeg_recorder` 是 DirectShow SDK 與 GVFG viewer 明確共用的
+`capture_ffmpeg_recorder` 是 DirectShow SDK 與 GVFG viewer 明確共用的
 錄影邊界。Viewer 會連結這個 target，不會直接編譯
 `sdk/gcapture/src/providers` 內的檔案，也不會把該私有目錄加入 include path。
-其實作位於 `sdk/gcapture/src/recording`。
+其實作位於 backend-neutral 的 `sdk/recording`，不依賴 `gcapture.h`、
+`gcap_pixfmt_t` 或任何 `gcap_*` API。
 
 Capture ownership 與 preview 仍由各 backend 自己負責；只有已複製完成的
 video frame／audio data 可以交給共用 recorder。
@@ -58,7 +59,7 @@ video frame／audio data 可以交給共用 recorder。
 - DirectShow video、RAW、audio、preview 都由 `sdk/gcapture` 的 DirectShow
   實作負責。
 - 兩者只在「已複製完成、準備編碼的資料」這一層共用
-  `gcapture_ffmpeg_recorder`。
+  `capture_ffmpeg_recorder`。
 
 ## 後續修改原則
 

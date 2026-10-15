@@ -19,6 +19,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -60,6 +61,9 @@ public:
     int openedDeviceIndex() const { return openedDeviceIndex_; }
     bool zeroCopyEnabled() const { return zeroCopyEnabled_; }
     bool setVideoFormat(gvfg_pixel_format_t format);
+    bool setOsd(const QString &text, int x, int y, uint32_t fontSizePx,
+                uint32_t colorRgb, QString *error);
+    bool clearOsd(QString *error);
     void clearPreview();
     void pollEvents();
     bool refreshSignalStatus();
@@ -67,7 +71,8 @@ public:
     bool audioEnabled() const { return audioEnabled_; }
     gvfg_audio_format_t audioFormat() const { return audioFormat_; }
     void setAudioVolume(float volume);
-    bool startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps, QString *error);
+    bool startRecording(const QString &path, int fpsNum, int fpsDen, int bitrateKbps,
+                        uint32_t segmentDurationSeconds, QString *error);
     void stopRecording();
     bool isRecording() const;
     uint64_t recordingFrames() const;
@@ -89,6 +94,16 @@ signals:
     void signalStatusChanged(bool connected);
 
 private:
+    struct OsdSettings
+    {
+        QByteArray text;
+        int x = 0;
+        int y = 0;
+        uint32_t fontSizePx = 0;
+        uint32_t colorRgb = 0x00ffffffu;
+    };
+
+    gvfg_status_t applyOsdSettings(const OsdSettings &settings);
     void readLoop();
     void audioReadLoop();
     void writeRecordingFrame(const gvfg_frame_t &frame);
@@ -99,6 +114,8 @@ private:
     gvfg_handle handle_ = nullptr;
     int openedDeviceIndex_ = -1;
     bool zeroCopyEnabled_ = false;
+    // Applied UI settings outlive SDK sessions, including Stop and failed Start.
+    std::optional<OsdSettings> osdSettings_;
     mutable std::mutex signalMutex_;
     std::condition_variable signalCv_;
     std::atomic_bool signalConnected_{false};
@@ -141,6 +158,7 @@ private:
         int fpsNum = 30;
         int fpsDen = 1;
         int bitrateKbps = 8000;
+        uint32_t segmentDurationSeconds = 600;
     };
 
     bool recordingOpenPending_ = false;

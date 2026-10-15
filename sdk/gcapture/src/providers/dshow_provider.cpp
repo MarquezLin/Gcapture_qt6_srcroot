@@ -390,6 +390,20 @@ namespace
         return fmt == GCAP_FMT_NV12 || fmt == GCAP_FMT_YUY2 || fmt == GCAP_FMT_ARGB || fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
     }
 
+    static bool toFfmpegPixelFormat(gcap_pixfmt_t source,
+                                    FfmpegVideoPixelFormat &destination)
+    {
+        switch (source)
+        {
+        case GCAP_FMT_NV12: destination = FfmpegVideoPixelFormat::Nv12; return true;
+        case GCAP_FMT_YUY2: destination = FfmpegVideoPixelFormat::Yuy2; return true;
+        case GCAP_FMT_ARGB: destination = FfmpegVideoPixelFormat::Bgra32; return true;
+        case GCAP_FMT_P010: destination = FfmpegVideoPixelFormat::P010; return true;
+        case GCAP_FMT_Y210: destination = FfmpegVideoPixelFormat::Y210; return true;
+        default: return false;
+        }
+    }
+
 
     static bool ffmpegUseHevc(gcap_pixfmt_t fmt)
     {
@@ -3257,13 +3271,17 @@ gcap_status_t DShowProvider::startRecording(const char *pathUtf8)
     auto rec = std::make_unique<FfmpegVideoRecorder>();
     FfmpegVideoRecordConfig cfg{};
     cfg.path = pathUtf8;
+    cfg.segment_bytes = 2ULL * 1024 * 1024 * 1024;
+    cfg.segment_duration_ns = static_cast<uint64_t>(recordingSegmentDurationSeconds_) * 1'000'000'000ULL;
     cfg.width = width_;
     cfg.height = height_;
     cfg.fps_num = 30;
     cfg.fps_den = 1;
-    cfg.input_format = recFmt;
+    if (!toFfmpegPixelFormat(recFmt, cfg.input_format))
+        return GCAP_ENOTSUP;
     cfg.force_hevc_main10 = ffmpegUseHevc(recFmt);
-    cfg.bitrate_kbps = gcap_ffmpeg_recommended_bitrate_kbps(cfg.width, cfg.height, cfg.fps_num, cfg.fps_den, cfg.input_format);
+    cfg.bitrate_kbps = ffmpegRecommendedBitrateKbps(
+        cfg.width, cfg.height, cfg.fps_num, cfg.fps_den, cfg.input_format);
 
     std::string err;
     if (!rec->open(cfg, &err))
@@ -3297,10 +3315,18 @@ gcap_status_t DShowProvider::startRecording(const char *pathUtf8)
 
     char msg[512] = {};
     sprintf_s(msg,
-              "[DShow][Record] start FFmpeg MP4 recording: %dx%d %s input=%.2ffps output=30fps codec=%s bitrate=%dkbps mode=latest-frame-cfr audio=off",
+              "[DShow][Record] start FFmpeg MP4 recording: %dx%d %s input=%.2ffps output=30fps codec=%s bitrate=%dkbps mode=latest-frame-cfr audio=off segment=%us/2GiB",
               width_, height_, profileFormatName(recFmt), negotiatedFpsDen_ ? (double)negotiatedFpsNum_ / (double)negotiatedFpsDen_ : 0.0,
-              ffmpegRecordCodecName(recFmt), cfg.bitrate_kbps);
+              ffmpegRecordCodecName(recFmt), cfg.bitrate_kbps, recordingSegmentDurationSeconds_);
     dshow_log(msg);
+    return GCAP_OK;
+}
+
+gcap_status_t DShowProvider::setRecordingSegmentDuration(uint32_t seconds)
+{
+    if (recordingThreadRunning_.load())
+        return GCAP_ESTATE;
+    recordingSegmentDurationSeconds_ = seconds;
     return GCAP_OK;
 }
 
@@ -3469,7 +3495,11 @@ void DShowProvider::recordingWorkerLoop()
         lastFrameId = last.pkt.frame_id;
 
         FfmpegVideoFrameView view{};
-        view.format = last.pkt.format;
+        if (!toFfmpegPixelFormat(last.pkt.format, view.format))
+        {
+            ++recordingUnsupportedFrames_;
+            continue;
+        }
         view.width = last.pkt.width;
         view.height = last.pkt.height;
         view.data[0] = last.bytes.data() + last.planeOffset[0];

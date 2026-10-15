@@ -5,11 +5,22 @@
 #include <cstdint>
 #include <string>
 
-#include "gcapture.h"
-
-inline int gcap_ffmpeg_recommended_bitrate_kbps(int width, int height, int fps_num, int fps_den, gcap_pixfmt_t input_format)
+enum class FfmpegVideoPixelFormat
 {
-    const bool useHevc = input_format == GCAP_FMT_P010 || input_format == GCAP_FMT_Y210;
+    Nv12,
+    Yuy2,
+    Bgra32,
+    P010,
+    Y210,
+    V210,
+    R210
+};
+
+inline int ffmpegRecommendedBitrateKbps(int width, int height, int fps_num, int fps_den,
+                                       FfmpegVideoPixelFormat input_format)
+{
+    const bool useHevc = input_format == FfmpegVideoPixelFormat::P010 ||
+                         input_format == FfmpegVideoPixelFormat::Y210;
     if (width <= 0 || height <= 0)
         return useHevc ? 12000 : 8000;
 
@@ -39,7 +50,7 @@ struct FfmpegVideoRecordConfig
     int fps_num = 30;
     int fps_den = 1;
     int bitrate_kbps = 8000;
-    gcap_pixfmt_t input_format = GCAP_FMT_NV12;
+    FfmpegVideoPixelFormat input_format = FfmpegVideoPixelFormat::Nv12;
 
     // Auto-selected by input_format:
     //   NV12/YUY2/ARGB -> H.264 8-bit
@@ -54,20 +65,27 @@ struct FfmpegVideoRecordConfig
     int audio_channels = 0;
     int audio_bits_per_sample = 0;
     int audio_bitrate_kbps = 192;
-    // Zero preserves legacy single-file recording. GVFG opts into 2 GiB segments.
+    // Either limit can trigger a new independently playable segment at a video keyframe.
+    // Zero disables the corresponding limit.
     uint64_t segment_bytes = 0;
+    uint64_t segment_duration_ns = 0;
     uint64_t reserve_free_bytes = 256ULL * 1024 * 1024;
 };
 
 struct FfmpegVideoFrameView
 {
-    gcap_pixfmt_t format = GCAP_FMT_NV12;
+    FfmpegVideoPixelFormat format = FfmpegVideoPixelFormat::Nv12;
     int width = 0;
     int height = 0;
     const uint8_t *data[4] = {};
     int stride[4] = {};
     int64_t pts = 0; // in encoder time_base units
 };
+
+// Overflow-safe conversion from the shared recording clock to encoder ticks.
+int64_t ffmpegVideoPtsFromNanoseconds(uint64_t elapsed_ns, int fps_num, int fps_den);
+
+struct AVPacket;
 
 class FfmpegVideoRecorder
 {
@@ -88,6 +106,8 @@ private:
     FfmpegVideoRecordConfig cfg_{};
     bool checkStorage(std::string *error);
     bool writePacket(bool audio, std::string *error);
+    bool drainPackets(bool force, std::string *error);
+    bool writeMuxPacket(bool audio, AVPacket *packet, std::string *error);
     bool nextSegment(int64_t origin_ns, std::string *error);
     unsigned segment_index_ = 1;
     uint64_t segment_payload_bytes_ = 0;

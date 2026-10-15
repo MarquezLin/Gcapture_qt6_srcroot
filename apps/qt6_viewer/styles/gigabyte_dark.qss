@@ -197,6 +197,87 @@ QListWidget:focus {
     border-color: #2aa7ff;
 }
 
+QDialog#gvfgOsdTool > QSpinBox {
+    background: #080e15;
+    color: #d8e6f3;
+    border: 1px solid #2a4358;
+    border-radius: 5px;
+    padding: 6px 28px 6px 8px;
+    min-height: 20px;
+    selection-background-color: #176fa7;
+    selection-color: #ffffff;
+}
+
+QDialog#gvfgOsdTool > QSpinBox:hover,
+QDialog#gvfgOsdTool > QSpinBox:focus {
+    border-color: #2aa7ff;
+}
+
+QDialog#gvfgOsdTool > QSpinBox QLineEdit {
+    background: transparent;
+    color: #d8e6f3;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    selection-background-color: #176fa7;
+    selection-color: #ffffff;
+}
+
+QDialog#gvfgOsdTool > QSpinBox:disabled {
+    background: #0b1016;
+    color: #627283;
+    border-color: #1d2b38;
+}
+
+QDialog#gvfgOsdTool > QSpinBox QLineEdit:disabled {
+    color: #627283;
+}
+
+QDialog#gvfgOsdTool > QSpinBox::up-button,
+QDialog#gvfgOsdTool > QSpinBox::down-button {
+    subcontrol-origin: border;
+    width: 24px;
+    background: #162536;
+    border-left: 1px solid #2a4358;
+}
+
+QDialog#gvfgOsdTool > QSpinBox::up-button {
+    subcontrol-position: top right;
+    border-top-right-radius: 5px;
+}
+
+QDialog#gvfgOsdTool > QSpinBox::down-button {
+    subcontrol-position: bottom right;
+    border-bottom-right-radius: 5px;
+}
+
+QDialog#gvfgOsdTool > QSpinBox::up-button:hover,
+QDialog#gvfgOsdTool > QSpinBox::down-button:hover {
+    background: #1f3449;
+}
+
+QDialog#gvfgOsdTool > QSpinBox::up-button:pressed,
+QDialog#gvfgOsdTool > QSpinBox::down-button:pressed {
+    background: #0f6da7;
+}
+
+QDialog#gvfgOsdTool > QSpinBox::up-button:disabled,
+QDialog#gvfgOsdTool > QSpinBox::down-button:disabled {
+    background: #111821;
+}
+
+QDialog#gvfgOsdTool > QSpinBox::up-arrow {
+    image: url(:/new/prefix1/image/icon_chevron_up.svg);
+    width: 12px;
+    height: 12px;
+}
+
+QDialog#gvfgOsdTool > QSpinBox::down-arrow {
+    image: url(:/new/prefix1/image/icon_chevron_down.svg);
+    width: 12px;
+    height: 12px;
+}
+
 QAbstractItemView {
     background: #080e15;
     color: #d8e6f3;

@@ -47,6 +47,7 @@ public:
     gcap_status_t exportSnapshot(const gcap_snapshot_export_desc_t &description,
                                  gcap_snapshot_export_result_t *result) const;
     gcap_status_t startRecording(const char *pathUtf8);
+    gcap_status_t setRecordingSegmentDuration(uint32_t seconds);
     void stopRecording();
     gcap_status_t recordingInfo(gcap_recording_info_t *info) const;
     gcap_status_t recordingStats(gcap_recording_stats_t *stats) const;

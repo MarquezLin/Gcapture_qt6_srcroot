@@ -101,6 +101,15 @@ void MainWindow::toggleDirectShowRecording()
     if (fullPath.isEmpty())
         return;
     const QDateTime now = QDateTime::currentDateTime();
+    const uint32_t segmentSeconds = recordingSegmentSeconds();
+    const gcap_status_t segmentStatus = directShow_->setRecordingSegmentDuration(segmentSeconds);
+    if (segmentStatus != GCAP_OK)
+    {
+        QMessageBox::warning(this, QStringLiteral("Record"),
+                             QStringLiteral("Set recording segment duration failed: %1")
+                                 .arg(QString::fromUtf8(gcap_strerror(segmentStatus))));
+        return;
+    }
     const gcap_status_t status = directShow_->startRecording(fullPath.toUtf8().constData());
     if (status != GCAP_OK)
     {
@@ -110,6 +119,7 @@ void MainWindow::toggleDirectShowRecording()
     }
 
     recording_ = true;
+    setRecordingControlsEnabled(false);
     ui->btnRecord->setText(QStringLiteral("Stop Rec"));
     recordStartTime_ = now;
     recordPath_ = fullPath;
@@ -119,11 +129,12 @@ void MainWindow::toggleDirectShowRecording()
     {
         const int width = runtime_.width() > 0 ? runtime_.width() : currentProfile_.width;
         const int height = runtime_.height() > 0 ? runtime_.height() : currentProfile_.height;
-        ui->statusbar->showMessage(QStringLiteral("Record mode: %1 | Encoder: %2 | %3 x %4")
+        ui->statusbar->showMessage(QStringLiteral("Record mode: %1 | Encoder: %2 | %3 x %4 | Segment: %5 min / 2 GiB")
                                        .arg(recordModeLabel(*directShow_))
                                        .arg(recordEncoderName_)
                                        .arg(width)
-                                       .arg(height));
+                                       .arg(height)
+                                       .arg(segmentSeconds / 60));
     }
 }
 
@@ -131,6 +142,7 @@ void MainWindow::stopDirectShowRecording(bool showSummary)
 {
     directShow_->stopRecording();
     recording_ = false;
+    setRecordingControlsEnabled(true);
     ui->btnRecord->setText(QStringLiteral("Record"));
     if (!showSummary || recordPath_.isEmpty() || !recordStartTime_.isValid())
         return;

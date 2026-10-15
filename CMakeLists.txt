@@ -48,6 +48,7 @@ set(GVFG_STANDALONE_ROOT "${_DEFAULT_GVFG_STANDALONE_ROOT}" CACHE PATH "GVFG sta
 set(GVFG_STANDALONE_BUILD_DIR "${GVFG_STANDALONE_ROOT}/build" CACHE PATH "GVFG standalone SDK build root or directory containing bin/gvfg.dll and lib/gvfg.lib")
 
 # SDK / DLLs
+add_subdirectory(sdk/recording)
 add_subdirectory(sdk/gcapture)
 add_subdirectory(sdk/gdisplay)
 

@@ -48,6 +48,7 @@ public:
     bool exportPreviewSceneRgb10(const char *basePathUtf8, int rawFlags, bool exportTiff, bool exportStats, bool exportGigabyteRaw) override;
     bool getRecordingStats(gcap_recording_stats_t &out) override;
     gcap_status_t startRecording(const char *pathUtf8);
+    gcap_status_t setRecordingSegmentDuration(uint32_t seconds);
     gcap_status_t stopRecording();
     gcap_status_t setRecordingAudioDevice(const char *device_id_utf8);
 
@@ -156,6 +157,7 @@ private:
     uint64_t recordingUnsupportedFrames_ = 0;
     uint32_t recordingFpsNum_ = 30;
     uint32_t recordingFpsDen_ = 1;
+    uint32_t recordingSegmentDurationSeconds_ = 600;
     std::mutex recorderMutex_;
     std::string rec_audio_device_id_;
     std::thread recordingThread_;

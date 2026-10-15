@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 namespace
 {
@@ -128,6 +129,73 @@ bool GvfgSource::open(int deviceIndex, bool zeroCopyEnabled)
     return true;
 }
 
+bool GvfgSource::setOsd(const QString &text, int x, int y,
+                        uint32_t fontSizePx, uint32_t colorRgb, QString *error)
+{
+    if (error)
+        error->clear();
+    if (text.isEmpty() || text.size() > GVFG_OSD_MAX_TEXT_CHARACTERS || fontSizePx == 0)
+    {
+        if (error)
+            *error = QStringLiteral("OSD requires 1 to %1 printable ASCII characters and a non-zero font size.")
+                         .arg(GVFG_OSD_MAX_TEXT_CHARACTERS);
+        return false;
+    }
+    for (const QChar character : text)
+    {
+        if (character.unicode() < 0x20 || character.unicode() > 0x7e)
+        {
+            if (error)
+                *error = QStringLiteral("OSD text must contain only printable English ASCII characters.");
+            return false;
+        }
+    }
+
+    OsdSettings settings{text.toLatin1(), x, y, fontSizePx, colorRgb & 0x00ffffffu};
+    if (handle_)
+    {
+        const gvfg_status_t status = applyOsdSettings(settings);
+        if (status != GVFG_OK)
+        {
+            if (error)
+                *error = gvfgErrorMessage("gvfg_set_channel_osd", status, handle_);
+            return false;
+        }
+    }
+    osdSettings_ = std::move(settings);
+    return true;
+}
+
+gvfg_status_t GvfgSource::applyOsdSettings(const OsdSettings &settings)
+{
+    gvfg_channel_osd_config_t config{};
+    config.text = settings.text.constData();
+    config.text_length = static_cast<uint32_t>(settings.text.size());
+    config.x = settings.x;
+    config.y = settings.y;
+    config.font_size_px = settings.fontSizePx;
+    config.color_rgb = settings.colorRgb;
+    return gvfg_set_channel_osd(handle_, GVFG_CHANNEL_0, &config);
+}
+
+bool GvfgSource::clearOsd(QString *error)
+{
+    if (error)
+        error->clear();
+    if (handle_)
+    {
+        const gvfg_status_t status = gvfg_clear_channel_osd(handle_, GVFG_CHANNEL_0);
+        if (status != GVFG_OK)
+        {
+            if (error)
+                *error = gvfgErrorMessage("gvfg_clear_channel_osd", status, handle_);
+            return false;
+        }
+    }
+    osdSettings_.reset();
+    return true;
+}
+
 QString gvfgErrorMessage(const char *apiName, gvfg_status_t status,
                          gvfg_handle handle, int channel)
 {
@@ -204,6 +272,17 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
                                    .arg(audioFormat_.sample_rate)
                                    .arg(audioFormat_.channels)
                                    .arg(audioFormat_.bits_per_sample));
+            setPreview(nullptr, previewBitDepthMode);
+            return false;
+        }
+    }
+
+    if (osdSettings_)
+    {
+        st = applyOsdSettings(*osdSettings_);
+        if (st != GVFG_OK)
+        {
+            emit errorOccurred(gvfgErrorMessage("gvfg_set_channel_osd", st, handle_));
             setPreview(nullptr, previewBitDepthMode);
             return false;
         }

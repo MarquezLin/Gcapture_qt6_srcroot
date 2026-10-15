@@ -117,6 +117,11 @@ gcap_status_t DirectShowSource::startRecording(const char *pathUtf8)
     return handle_ ? gcap_start_recording(handle_, pathUtf8) : GCAP_ESTATE;
 }
 
+gcap_status_t DirectShowSource::setRecordingSegmentDuration(uint32_t seconds)
+{
+    return handle_ ? gcap_set_recording_segment_duration(handle_, seconds) : GCAP_ESTATE;
+}
+
 void DirectShowSource::stopRecording()
 {
     if (handle_)

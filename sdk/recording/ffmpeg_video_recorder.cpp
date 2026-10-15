@@ -6,8 +6,10 @@
 #include <filesystem>
 #include <chrono>
 #include <cstdio>
+#include <deque>
+#include <limits>
 
-#ifdef GCAP_ENABLE_FFMPEG
+#ifdef CAPTURE_ENABLE_FFMPEG
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -23,7 +25,7 @@ extern "C" {
 
 namespace
 {
-#ifdef GCAP_ENABLE_FFMPEG
+#ifdef CAPTURE_ENABLE_FFMPEG
 static std::string ffErr(int err)
 {
     char buf[AV_ERROR_MAX_STRING_SIZE] = {};
@@ -37,44 +39,45 @@ static void setErr(std::string *out, const std::string &msg)
         *out = msg;
 }
 
-static const char *fmtName(gcap_pixfmt_t fmt)
+static const char *fmtName(FfmpegVideoPixelFormat fmt)
 {
     switch (fmt)
     {
-    case GCAP_FMT_NV12: return "NV12";
-    case GCAP_FMT_YUY2: return "YUY2";
-    case GCAP_FMT_ARGB: return "ARGB32/RGB32";
-    case GCAP_FMT_P010: return "P010";
-    case GCAP_FMT_Y210: return "Y210";
-    case GCAP_FMT_V210: return "V210";
-    case GCAP_FMT_R210: return "R210";
+    case FfmpegVideoPixelFormat::Nv12: return "NV12";
+    case FfmpegVideoPixelFormat::Yuy2: return "YUY2";
+    case FfmpegVideoPixelFormat::Bgra32: return "BGRA32";
+    case FfmpegVideoPixelFormat::P010: return "P010";
+    case FfmpegVideoPixelFormat::Y210: return "Y210";
+    case FfmpegVideoPixelFormat::V210: return "V210";
+    case FfmpegVideoPixelFormat::R210: return "R210";
     default: return "UNKNOWN";
     }
 }
 
-static AVPixelFormat avInputFormat(gcap_pixfmt_t fmt)
+static AVPixelFormat avInputFormat(FfmpegVideoPixelFormat fmt)
 {
     switch (fmt)
     {
-    case GCAP_FMT_NV12: return AV_PIX_FMT_NV12;
-    case GCAP_FMT_YUY2: return AV_PIX_FMT_YUYV422;
-    case GCAP_FMT_ARGB:
+    case FfmpegVideoPixelFormat::Nv12: return AV_PIX_FMT_NV12;
+    case FfmpegVideoPixelFormat::Yuy2: return AV_PIX_FMT_YUYV422;
+    case FfmpegVideoPixelFormat::Bgra32:
         // DirectShow RGB32/ARGB32 samples arrive in little-endian BGRA byte order.
         return AV_PIX_FMT_BGRA;
-    case GCAP_FMT_P010: return AV_PIX_FMT_P010LE;
-    case GCAP_FMT_Y210: return AV_PIX_FMT_Y210LE;
+    case FfmpegVideoPixelFormat::P010: return AV_PIX_FMT_P010LE;
+    case FfmpegVideoPixelFormat::Y210: return AV_PIX_FMT_Y210LE;
     default: return AV_PIX_FMT_NONE;
     }
 }
 
-static bool supportedInput(gcap_pixfmt_t fmt)
+static bool supportedInput(FfmpegVideoPixelFormat fmt)
 {
     return avInputFormat(fmt) != AV_PIX_FMT_NONE;
 }
 
-static bool wantsHevcMain10(gcap_pixfmt_t fmt, bool force)
+static bool wantsHevcMain10(FfmpegVideoPixelFormat fmt, bool force)
 {
-    return force || fmt == GCAP_FMT_P010 || fmt == GCAP_FMT_Y210;
+    return force || fmt == FfmpegVideoPixelFormat::P010 ||
+           fmt == FfmpegVideoPixelFormat::Y210;
 }
 
 static const AVCodec *findEncoderByNameList(const char *const *names)
@@ -202,7 +205,7 @@ static AVSampleFormat pcmSampleFormat(int bits)
 
 struct FfmpegVideoRecorder::Impl
 {
-#ifdef GCAP_ENABLE_FFMPEG
+#ifdef CAPTURE_ENABLE_FFMPEG
     AVFormatContext *fmt = nullptr;
     AVCodecContext *codec = nullptr;
     AVStream *stream = nullptr;
@@ -217,8 +220,26 @@ struct FfmpegVideoRecorder::Impl
     bool audioTimelineInitialized = false;
     std::chrono::steady_clock::time_point storageCheck{};
     bool headerWritten = false;
+    // Stable codec time bases; container time bases change at each rollover.
+    std::deque<AVPacket *> pendingVideo;
+    std::deque<AVPacket *> pendingAudio;
+    uint64_t pendingBytes = 0;
 #endif
 };
+
+int64_t ffmpegVideoPtsFromNanoseconds(uint64_t elapsedNs, int fpsNum, int fpsDen)
+{
+#ifdef CAPTURE_ENABLE_FFMPEG
+    if (fpsNum <= 0 || fpsDen <= 0 ||
+        elapsedNs > static_cast<uint64_t>((std::numeric_limits<int64_t>::max)()))
+        return -1;
+    return av_rescale_q(static_cast<int64_t>(elapsedNs),
+                        AVRational{1, 1'000'000'000}, AVRational{fpsDen, fpsNum});
+#else
+    (void)elapsedNs; (void)fpsNum; (void)fpsDen;
+    return -1;
+#endif
+}
 
 FfmpegVideoRecorder::FfmpegVideoRecorder()
 {
@@ -234,10 +255,10 @@ FfmpegVideoRecorder::~FfmpegVideoRecorder()
 
 bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *error)
 {
-#ifndef GCAP_ENABLE_FFMPEG
+#ifndef CAPTURE_ENABLE_FFMPEG
     (void)cfg;
     if (error)
-        *error = "FFmpeg support is not enabled. Set FFMPEG_ROOT or use vcpkg and rebuild with GCAP_ENABLE_FFMPEG.";
+        *error = "FFmpeg support is not enabled. Set FFMPEG_ROOT and rebuild capture_ffmpeg_recorder.";
     return false;
 #else
     close();
@@ -262,7 +283,7 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
     segment_payload_bytes_ = 0;
     segment_origin_ns_ = 0;
     impl_->storageCheck = {};
-    if (cfg.segment_bytes && !checkStorage(error))
+    if ((cfg.segment_bytes || cfg.segment_duration_ns) && !checkStorage(error))
         return false;
     const bool useHevc = !cfg.force_h264 && wantsHevcMain10(cfg.input_format, cfg.force_hevc_main10);
 
@@ -467,7 +488,7 @@ bool FfmpegVideoRecorder::open(const FfmpegVideoRecordConfig &cfg, std::string *
 bool FfmpegVideoRecorder::writeAudio(const uint8_t *data, size_t bytes,
                                      int64_t timelinePtsNs, std::string *error)
 {
-#ifndef GCAP_ENABLE_FFMPEG
+#ifndef CAPTURE_ENABLE_FFMPEG
     (void)data;
     (void)bytes;
     (void)timelinePtsNs;
@@ -488,7 +509,7 @@ bool FfmpegVideoRecorder::writeAudio(const uint8_t *data, size_t bytes,
         return false;
     }
 
-    const int inputSamples = static_cast<int>(bytes / static_cast<size_t>(blockAlign));
+    int inputSamples = static_cast<int>(bytes / static_cast<size_t>(blockAlign));
     if (timelinePtsNs >= 0)
     {
         const int sampleRate = impl_->audioCodec->sample_rate;
@@ -506,7 +527,34 @@ bool FfmpegVideoRecorder::writeAudio(const uint8_t *data, size_t bytes,
             const int64_t predictedPts = impl_->audioPts + queuedSamples + resamplerDelay;
             const int64_t driftSamples = desiredPts - predictedPts;
             const int64_t correctionLimit = std::max<int64_t>(1, sampleRate / 200); // 5 ms
-            if (driftSamples > correctionLimit || driftSamples < -correctionLimit)
+            const int64_t discontinuityLimit = sampleRate / 4; // 250 ms
+            if (driftSamples > discontinuityLimit)
+            {
+                // Preserve missing time (e.g. dropped PCM packets) as silence,
+                // rather than compressing the remainder of the audio timeline.
+                if (driftSamples > static_cast<int64_t>(sampleRate) * 10 ||
+                    swr_set_compensation(impl_->swr, 0, 0) < 0 ||
+                    swr_inject_silence(impl_->swr, static_cast<int>(driftSamples)) < 0)
+                {
+                    setErr(error, "Audio timestamp gap exceeds the recording recovery limit");
+                    return false;
+                }
+            }
+            else if (driftSamples < -discontinuityLimit)
+            {
+                // Discard overlapping input, keeping already queued PCM and
+                // its original PTS. Never relabel old samples as new content.
+                if (swr_set_compensation(impl_->swr, 0, 0) < 0)
+                {
+                    setErr(error, "Cannot reset audio timestamp compensation");
+                    return false;
+                }
+                const int skipped = static_cast<int>((std::min<int64_t>)(inputSamples, -driftSamples));
+                data += static_cast<size_t>(skipped) * blockAlign;
+                inputSamples -= skipped;
+                if (!inputSamples) return true;
+            }
+            else if (driftSamples > correctionLimit || driftSamples < -correctionLimit)
             {
                 const int correction = static_cast<int>(
                     std::clamp<int64_t>(driftSamples, -correctionLimit, correctionLimit));
@@ -597,7 +645,7 @@ bool FfmpegVideoRecorder::writeAudio(const uint8_t *data, size_t bytes,
 
 bool FfmpegVideoRecorder::writeFrame(const FfmpegVideoFrameView &view, std::string *error)
 {
-#ifndef GCAP_ENABLE_FFMPEG
+#ifndef CAPTURE_ENABLE_FFMPEG
     (void)view;
     if (error)
         *error = "FFmpeg support is not enabled";
@@ -703,7 +751,7 @@ bool FfmpegVideoRecorder::writeFrame(const FfmpegVideoFrameView &view, std::stri
 
 bool FfmpegVideoRecorder::checkStorage(std::string *error)
 {
-#ifdef GCAP_ENABLE_FFMPEG
+#ifdef CAPTURE_ENABLE_FFMPEG
     const auto now = std::chrono::steady_clock::now();
     if (impl_->storageCheck.time_since_epoch().count() != 0 &&
         now - impl_->storageCheck < std::chrono::seconds(1))
@@ -728,7 +776,7 @@ bool FfmpegVideoRecorder::checkStorage(std::string *error)
 
 bool FfmpegVideoRecorder::nextSegment(int64_t originNs, std::string *error)
 {
-#ifdef GCAP_ENABLE_FFMPEG
+#ifdef CAPTURE_ENABLE_FFMPEG
     const auto original = std::filesystem::u8path(cfg_.path);
     char suffix[32]{};
     std::snprintf(suffix, sizeof(suffix), "_%03u", segment_index_ + 1);
@@ -804,28 +852,106 @@ bool FfmpegVideoRecorder::nextSegment(int64_t originNs, std::string *error)
 
 bool FfmpegVideoRecorder::writePacket(bool audio, std::string *error)
 {
-#ifdef GCAP_ENABLE_FFMPEG
+#ifdef CAPTURE_ENABLE_FFMPEG
     AVPacket *packet = audio ? impl_->audioPkt : impl_->pkt;
+    if (!impl_->audioCodec || (!cfg_.segment_bytes && !cfg_.segment_duration_ns))
+        return writeMuxPacket(audio, packet, error);
+
+    // Wait for both streams before committing packets. In particular, audio
+    // older than a rollover keyframe must still go into the old container.
+    AVPacket *copy = av_packet_clone(packet);
+    if (!copy)
+    {
+        setErr(error, "Cannot queue recording packet");
+        return false;
+    }
+    const AVRational sourceBase = audio ? impl_->audioStream->time_base : impl_->stream->time_base;
+    const AVRational codecBase = audio ? impl_->audioCodec->time_base : impl_->codec->time_base;
+    av_packet_rescale_ts(copy, sourceBase, codecBase);
+    auto &queue = audio ? impl_->pendingAudio : impl_->pendingVideo;
+    queue.push_back(copy);
+    impl_->pendingBytes += static_cast<uint64_t>(copy->size);
+    if (!drainPackets(false, error)) return false;
+    if (impl_->pendingBytes > 64ULL * 1024 * 1024 ||
+        impl_->pendingVideo.size() + impl_->pendingAudio.size() > 4096)
+    {
+        setErr(error, "Recording stopped safely: audio/video packet interleave backlog exceeded its limit");
+        return false;
+    }
+    return true;
+#else
+    (void)audio; (void)error;
+    return false;
+#endif
+}
+
+bool FfmpegVideoRecorder::drainPackets(bool force, std::string *error)
+{
+#ifdef CAPTURE_ENABLE_FFMPEG
+    while ((!impl_->pendingVideo.empty() && !impl_->pendingAudio.empty()) ||
+           (force && (!impl_->pendingVideo.empty() || !impl_->pendingAudio.empty())))
+    {
+        bool audio = impl_->pendingVideo.empty();
+        if (!audio && !impl_->pendingAudio.empty())
+        {
+            const auto timestamp = [](const AVPacket *p) {
+                return p->dts != AV_NOPTS_VALUE ? p->dts : p->pts;
+            };
+            audio = av_compare_ts(timestamp(impl_->pendingAudio.front()), impl_->audioCodec->time_base,
+                                  timestamp(impl_->pendingVideo.front()), impl_->codec->time_base) < 0;
+        }
+        auto &queue = audio ? impl_->pendingAudio : impl_->pendingVideo;
+        AVPacket *packet = queue.front();
+        queue.pop_front();
+        impl_->pendingBytes -= static_cast<uint64_t>(packet->size);
+        const AVRational codecBase = audio ? impl_->audioCodec->time_base : impl_->codec->time_base;
+        const AVRational muxBase = audio ? impl_->audioStream->time_base : impl_->stream->time_base;
+        av_packet_rescale_ts(packet, codecBase, muxBase);
+        const bool success = writeMuxPacket(audio, packet, error);
+        av_packet_free(&packet);
+        if (!success) return false;
+    }
+    return true;
+#else
+    (void)force; (void)error;
+    return false;
+#endif
+}
+
+bool FfmpegVideoRecorder::writeMuxPacket(bool audio, AVPacket *packet, std::string *error)
+{
+#ifdef CAPTURE_ENABLE_FFMPEG
     AVStream *stream = audio ? impl_->audioStream : impl_->stream;
     const AVRational packetTimeBase = stream->time_base;
-    if (cfg_.segment_bytes && !closing_)
+    if ((cfg_.segment_bytes || cfg_.segment_duration_ns) && !closing_)
     {
         if (!checkStorage(error)) return false;
         const int64_t position = avio_tell(impl_->fmt->pb);
         const uint64_t used = (std::max)(segment_payload_bytes_,
             static_cast<uint64_t>((std::max)(int64_t{0}, position)));
+        const int64_t packetTimestamp = packet->dts != AV_NOPTS_VALUE ? packet->dts : packet->pts;
+        const int64_t packetTimestampNs = packetTimestamp == AV_NOPTS_VALUE
+                                              ? AV_NOPTS_VALUE
+                                              : av_rescale_q(packetTimestamp, packetTimeBase,
+                                                             AVRational{1, 1'000'000'000});
+        const bool durationReached = cfg_.segment_duration_ns && packetTimestampNs != AV_NOPTS_VALUE &&
+                                     packetTimestampNs >= segment_origin_ns_ &&
+                                     static_cast<uint64_t>(packetTimestampNs - segment_origin_ns_) >=
+                                         cfg_.segment_duration_ns;
         // Leave 64 MiB for a GOP, interleaving, and the final MP4 index.
-        const uint64_t margin = (std::min<uint64_t>)(64ULL * 1024 * 1024, cfg_.segment_bytes / 4);
-        if (used >= cfg_.segment_bytes - margin && !audio && (packet->flags & AV_PKT_FLAG_KEY))
+        const uint64_t margin = cfg_.segment_bytes
+                                    ? (std::min<uint64_t>)(64ULL * 1024 * 1024, cfg_.segment_bytes / 4)
+                                    : 0;
+        const bool sizeReached = cfg_.segment_bytes && used >= cfg_.segment_bytes - margin;
+        if (!audio && (packet->flags & AV_PKT_FLAG_KEY) && (durationReached || sizeReached))
         {
-            const int64_t origin = packet->dts != AV_NOPTS_VALUE ? packet->dts : packet->pts;
-            if (origin == AV_NOPTS_VALUE ||
-                !nextSegment(av_rescale_q(origin, packetTimeBase, AVRational{1, 1'000'000'000}), error))
+            if (packetTimestampNs == AV_NOPTS_VALUE || !nextSegment(packetTimestampNs, error))
                 return false;
             stream = impl_->stream;
             av_packet_rescale_ts(packet, packetTimeBase, stream->time_base);
         }
-        else if (used + static_cast<uint64_t>(packet->size) >= cfg_.segment_bytes - margin / 2)
+        else if (cfg_.segment_bytes &&
+                 used + static_cast<uint64_t>(packet->size) >= cfg_.segment_bytes - margin / 2)
         {
             setErr(error, "Recording stopped safely: segment limit reached without a video keyframe | " + cfg_.path);
             return false;
@@ -845,7 +971,7 @@ bool FfmpegVideoRecorder::writePacket(bool audio, std::string *error)
     }
     return true;
 #else
-    (void)audio; (void)error;
+    (void)audio; (void)packet; (void)error;
     return false;
 #endif
 }
@@ -859,7 +985,7 @@ bool FfmpegVideoRecorder::close(std::string *error)
 {
     bool success = true;
     closing_ = true;
-#ifdef GCAP_ENABLE_FFMPEG
+#ifdef CAPTURE_ENABLE_FFMPEG
     if (impl_ && impl_->codec && impl_->fmt && opened_ && impl_->headerWritten)
     {
         avcodec_send_frame(impl_->codec, nullptr);
@@ -920,6 +1046,7 @@ bool FfmpegVideoRecorder::close(std::string *error)
                 av_packet_unref(impl_->audioPkt);
             }
         }
+        if (!drainPackets(true, error)) success = false;
         const int trailerRet = av_write_trailer(impl_->fmt);
         if (trailerRet < 0)
         {
@@ -929,6 +1056,12 @@ bool FfmpegVideoRecorder::close(std::string *error)
     }
     if (impl_)
     {
+        for (auto &queue : {&impl_->pendingVideo, &impl_->pendingAudio})
+        {
+            for (AVPacket *packet : *queue) av_packet_free(&packet);
+            queue->clear();
+        }
+        impl_->pendingBytes = 0;
         if (impl_->sws)
         {
             sws_freeContext(impl_->sws);

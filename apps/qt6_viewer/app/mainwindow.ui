@@ -6,14 +6,14 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1180</width>
-    <height>740</height>
+    <width>1440</width>
+    <height>900</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
-    <width>980</width>
-    <height>680</height>
+    <width>1100</width>
+    <height>720</height>
    </size>
   </property>
   <property name="windowTitle">
@@ -580,7 +580,21 @@ QPushButton#btnStop:pressed {
              </property>
             </widget>
            </item>
-           <item row="3" column="0" colspan="2">
+           <item row="3" column="0">
+            <widget class="QLabel" name="labelRecordingSegment">
+             <property name="text">
+              <string>Recording segment</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="1">
+            <widget class="QComboBox" name="comboRecordingSegment">
+             <property name="toolTip">
+              <string>Start a new MP4 segment at the next video keyframe when this duration or 2 GiB is reached.</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="0" colspan="2">
             <widget class="QPushButton" name="btnShowEdid">
              <property name="minimumSize">
               <size>
@@ -597,7 +611,7 @@ QPushButton#btnStop:pressed {
              </property>
             </widget>
            </item>
-           <item row="4" column="0" colspan="2">
+           <item row="5" column="0" colspan="2">
             <widget class="QPushButton" name="btnOpenRawInspector">
              <property name="enabled">
               <bool>false</bool>
