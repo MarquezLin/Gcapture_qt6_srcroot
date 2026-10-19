@@ -6,6 +6,9 @@ project(qt6_viewer VERSION ${_QT6_VIEWER_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(GVFG_VIEWER_ENABLE_CONSOLE
+  "Show a Windows console for the viewer's existing Qt logs" ON)
+
 find_package(QT NAMES Qt6 REQUIRED COMPONENTS Widgets Concurrent)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Concurrent)
 # DICOM support
@@ -243,7 +246,7 @@ else()
   message(WARNING "edid-decode executable not found: ${EDID_DECODE_EXE}")
 endif()
 
-# Bundle / subsystem settings (Windows GUI)
+# Bundle / subsystem settings (Windows GUI by default).
 if (QT_VERSION VERSION_LESS 6.1.0)
   set(BUNDLE_ID_OPTION MACOSX_BUNDLE_GUI_IDENTIFIER com.example.qt6_viewer)
 endif()
@@ -255,6 +258,13 @@ set_target_properties(qt6_viewer PROPERTIES
   MACOSX_BUNDLE TRUE
   WIN32_EXECUTABLE TRUE
 )
+
+if (WIN32 AND GVFG_VIEWER_ENABLE_CONSOLE)
+  # Equivalent to qmake CONFIG += console. Keep the existing main() and
+  # message handler: Qt logs already flow to stdout/stderr and the log file.
+  set_target_properties(qt6_viewer PROPERTIES WIN32_EXECUTABLE FALSE)
+  target_compile_definitions(qt6_viewer PRIVATE QT6_VIEWER_ENABLE_DELIVERY_DIAGNOSTICS)
+endif()
 
 include(GNUInstallDirs)
 install(TARGETS qt6_viewer

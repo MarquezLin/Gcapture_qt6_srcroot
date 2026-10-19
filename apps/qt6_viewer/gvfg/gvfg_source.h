@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QByteArray>
 #include <QImage>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 
@@ -45,6 +46,18 @@ public:
         uint64_t frameId = 0;
     };
 
+    struct OsdPlacement
+    {
+        QSize textSize;
+        QSize frameSize;
+        bool frameKnown() const { return frameSize.width() > 0 && frameSize.height() > 0; }
+        bool fits() const
+        {
+            return !frameKnown() || (textSize.width() <= frameSize.width() &&
+                                     textSize.height() <= frameSize.height());
+        }
+    };
+
     explicit GvfgSource(QObject *parent = nullptr);
     ~GvfgSource() override;
 
@@ -61,6 +74,8 @@ public:
     int openedDeviceIndex() const { return openedDeviceIndex_; }
     bool zeroCopyEnabled() const { return zeroCopyEnabled_; }
     bool setVideoFormat(gvfg_pixel_format_t format);
+    bool osdPlacement(const QString &text, uint32_t fontSizePx,
+                      OsdPlacement *placement, QString *error) const;
     bool setOsd(const QString &text, int x, int y, uint32_t fontSizePx,
                 uint32_t colorRgb, QString *error);
     bool clearOsd(QString *error);
@@ -92,6 +107,7 @@ signals:
     void eventOccurred(const QString &message);
     void errorOccurred(const QString &message);
     void signalStatusChanged(bool connected);
+    void osdFrameSizeChanged();
 
 private:
     struct OsdSettings
@@ -101,9 +117,16 @@ private:
         int y = 0;
         uint32_t fontSizePx = 0;
         uint32_t colorRgb = 0x00ffffffu;
+        uint32_t textWidth = 0;
+        uint32_t textHeight = 0;
     };
 
     gvfg_status_t applyOsdSettings(const OsdSettings &settings);
+    bool normalizeOsdSettings(OsdSettings &settings, OsdPlacement *placement,
+                              QString *error) const;
+    void adjustOsdForFrameSize();
+    void reportOsdSizeWarning(const OsdPlacement &placement);
+    void cacheSignalStatus(const gvfg_signal_status_t &status);
     void readLoop();
     void audioReadLoop();
     void writeRecordingFrame(const gvfg_frame_t &frame);
@@ -116,10 +139,19 @@ private:
     bool zeroCopyEnabled_ = false;
     // Applied UI settings outlive SDK sessions, including Stop and failed Start.
     std::optional<OsdSettings> osdSettings_;
+    QString osdSizeWarning_;
+    // Even epoch = stable; odd = a GUI-thread OSD API call is in progress.
+    // readLoop never reads GUI-owned osdSettings_ directly.
+    std::atomic<uint64_t> osdDiagnosticEpoch_{0};
+    std::atomic_bool osdDiagnosticEnabled_{false};
+    std::atomic_bool osdDiagnosticVisible_{false};
+    std::atomic<uint32_t> osdDiagnosticTextWidth_{0};
+    std::atomic<uint32_t> osdDiagnosticTextHeight_{0};
     mutable std::mutex signalMutex_;
     std::condition_variable signalCv_;
     std::atomic_bool signalConnected_{false};
     gvfg_signal_status_t cachedSignal_{};
+    uint64_t signalGeometryGeneration_ = 0; // Protected by signalMutex_.
     gvfg_preview_handle previewHandle_ = nullptr;
     std::thread readThread_;
     std::thread audioThread_;

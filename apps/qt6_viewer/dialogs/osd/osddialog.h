@@ -20,6 +20,7 @@ private:
     void apply();
     void clear();
     void updateColorButton();
+    bool updatePlacement();
 
     GvfgSource *source_ = nullptr;
     QLineEdit *text_ = nullptr;
@@ -27,6 +28,8 @@ private:
     QSpinBox *y_ = nullptr;
     QSpinBox *fontSize_ = nullptr;
     QPushButton *colorButton_ = nullptr;
+    QPushButton *applyButton_ = nullptr;
+    QLabel *boundsStatus_ = nullptr;
     QLabel *status_ = nullptr;
     unsigned int colorRgb_ = 0x00ffffffu;
 };
