@@ -9,7 +9,7 @@
 
 #include <gvfg_capture.h>
 #include <gvfg_preview.h>
-#include <gvfg_audio_playback.h>
+#include <gvfg_playback.h>
 #include "backend/capture_source.h"
 
 #include <atomic>
@@ -66,9 +66,9 @@ public:
     bool open(int deviceIndex, bool zeroCopyEnabled);
     CaptureBackend backend() const override { return CaptureBackend::Gvfg; }
     void close() override;
-    bool start(void *previewHwnd, int deviceIndex, int previewBitDepthMode,
+    bool start(void *previewHwnd, int deviceIndex,
                bool zeroCopyEnabled, bool audioEnabled);
-    bool setPreview(void *previewHwnd, int previewBitDepthMode);
+    bool setPreview(void *previewHwnd);
     void stop() override;
     bool isOpen() const override { return handle_ != nullptr; }
     int openedDeviceIndex() const { return openedDeviceIndex_; }
@@ -79,7 +79,6 @@ public:
     bool setOsd(const QString &text, int x, int y, uint32_t fontSizePx,
                 uint32_t colorRgb, QString *error);
     bool clearOsd(QString *error);
-    void clearPreview();
     void pollEvents();
     bool refreshSignalStatus();
     bool isRunning() const override { return running_; }
@@ -106,6 +105,7 @@ signals:
     void frameReady(const QImage &image);
     void eventOccurred(const QString &message);
     void errorOccurred(const QString &message);
+    void audioPlaybackWarning(const QString &message);
     void signalStatusChanged(bool connected);
     void osdFrameSizeChanged();
 
@@ -129,6 +129,7 @@ private:
     void cacheSignalStatus(const gvfg_signal_status_t &status);
     void readLoop();
     void audioReadLoop();
+    void resetPlaybackTimeline();
     void writeRecordingFrame(const gvfg_frame_t &frame);
 #ifdef QT6_VIEWER_ENABLE_GVFG_RECORDING
     void recordingLoop();
@@ -152,12 +153,10 @@ private:
     std::atomic_bool signalConnected_{false};
     gvfg_signal_status_t cachedSignal_{};
     uint64_t signalGeometryGeneration_ = 0; // Protected by signalMutex_.
-    gvfg_preview_handle previewHandle_ = nullptr;
+    gvfg_playback playback_ = nullptr;
     std::thread readThread_;
     std::thread audioThread_;
-    std::mutex audioPlaybackMutex_;
-    gvfg_audio_player audioPlayer_ = nullptr;
-    std::chrono::steady_clock::time_point audioPlaybackRetry_{};
+    mutable std::mutex playbackMutex_;
     std::atomic<uint64_t> latestVideoTimestampNs_{0};
     std::atomic_bool stopRequested_{false};
     std::atomic<float> audioVolume_{1.0f};

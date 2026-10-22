@@ -119,34 +119,42 @@ zero-copy 模式仍保留獨立輸出及完整複製，不修改 driver buffer�
 GVFG is imported from a sibling standalone SDK by default:
 
 ```text
-../../GVFG_Standalone
+../GVFG_Standalone/GVFG_SDK
 ```
 
 The expected external layout is:
 
 ```text
-GVFG_Standalone/
+GVFG_Standalone/GVFG_SDK/
   sdk/gvfg/include/gvfg_capture.h
+  helpers/gvfg_playback/include/gvfg_playback.h
   helpers/gvfg_preview/include/gvfg_preview.h
+  helpers/gvfg_audio_playback/include/gvfg_audio_playback.h
   build/<config>/bin/gvfg.dll
-  build/<config>/bin/gvfg_preview.dll
+  build/<config>/bin/gvfg_playback.dll
   build/<config>/lib/gvfg.lib
-  build/<config>/lib/gvfg_preview.lib
+  build/<config>/lib/gvfg_playback.lib
 ```
 
 GPU frame-to-buffer conversion is exported directly by `gvfg.dll` through
 `gvfg_gpu_convert_to_buffer()` in `gvfg_capture.h`.
 
+If the GVFG playback audio output fails, monitoring is disabled and a single
+non-modal warning is shown. Video capture and recording continue, including
+recording audio when the capture source still delivers it. Stop and start capture
+to recreate the playback handle and retry monitoring. Other playback or capture
+errors retain their normal handling.
+
 GVFG integration is required for Windows builds. Relevant CMake paths:
 
 ```text
-GVFG_STANDALONE_ROOT=<path-to-GVFG_Standalone>
+GVFG_STANDALONE_ROOT=<path-to-GVFG_Standalone/GVFG_SDK>
 GVFG_STANDALONE_BUILD_DIR=<path-containing-bin-and-lib>
 ```
 
 If the direct `GVFG_STANDALONE_BUILD_DIR` does not contain the required files, CMake scans
 `GVFG_STANDALONE_ROOT/build/*` and uses the first directory containing
-`bin/gvfg.dll` and `lib/gvfg.lib`.
+`bin/gvfg.dll`, `lib/gvfg.lib`, `bin/gvfg_playback.dll` and `lib/gvfg_playback.lib`.
 
 ## Packaging
 
@@ -156,7 +164,7 @@ If the direct `GVFG_STANDALONE_BUILD_DIR` does not contain the required files, C
 - `gcapture.dll`
 - `gdisplay.dll`
 - `gvfg.dll`
-- `gvfg_preview.dll`
+- `gvfg_playback.dll`
 - FFmpeg runtime DLLs when present
 
 Then it runs `windeployqt` and creates a release zip.

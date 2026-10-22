@@ -10,8 +10,11 @@ GVFG 與 DirectShow 的生命週期、資源 ownership 和相依性混在一起�
 `GVFG_Standalone` 產出：
 
 - `gvfg`：裝置與 frame 擷取
-- `gvfg_preview`：D3D preview
-- `gvfg_audio_playback`：WASAPI 音訊播放
+- `gvfg_playback`：公開影音播放 API，統一管理時鐘、緩衝與同步
+
+Audio／Preview 是 Standalone SDK 內部靜態 backend，不是 Viewer 要個別匯入的 DLL。
+Viewer 的 GvfgSource 只操作 `gvfg_playback_*`。RAW／DICOM 單張顯示也使用
+`gvfg_playback_present_image()`，不直接呼叫 Preview backend。
 
 GVFG 擷取不可繞道使用 `sdk/gcapture`。由 GVFG SDK 擁有的 frame 或
 audio packet，必須在對應的 release 呼叫之前完成使用，或先複製到
@@ -50,8 +53,12 @@ provider；兩條路徑只共用 recorder helper。
 其實作位於 backend-neutral 的 `sdk/recording`，不依賴 `gcapture.h`、
 `gcap_pixfmt_t` 或任何 `gcap_*` API。
 
-Capture ownership 與 preview 仍由各 backend 自己負責；只有已複製完成的
-video frame／audio data 可以交給共用 recorder。
+Capture ownership 由各擷取 backend 管理。GVFG preview 交給統一 Playback；
+只有已複製完成的 video frame／audio data 可以交給共用 recorder。
+Playback 的過期預覽退休不會移除 recorder queue 的副本，預覽略過數不能當成錄影掉格數。
+
+同步設計與使用方式見
+[Playback 手冊](../../GVFG_Standalone/docs/GVFG_PLAYBACK_API.md)。
 
 換句話說：
 

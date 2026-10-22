@@ -33,7 +33,7 @@ echo [package] Configuration: Release
 echo [package] Source: "%SOURCE_BIN%"
 echo [package] Output: "%ZIP_PATH%"
 
-for %%F in (qt6_viewer.exe gcapture.dll gdisplay.dll gvfg.dll gvfg_preview.dll gvfg_audio_playback.dll) do (
+for %%F in (qt6_viewer.exe gcapture.dll gdisplay.dll gvfg.dll gvfg_playback.dll) do (
     if not exist "%SOURCE_BIN%\%%F" (
         echo [package] ERROR: Required application file not found: %%F
         goto fail
@@ -66,7 +66,7 @@ if exist "%STAGE_ROOT%" rmdir /S /Q "%STAGE_ROOT%" || goto fail
 mkdir "%STAGE_DIR%" || goto fail
 
 echo [package] Copy application files...
-for %%F in (qt6_viewer.exe gcapture.dll gdisplay.dll gvfg.dll gvfg_preview.dll gvfg_audio_playback.dll) do (
+for %%F in (qt6_viewer.exe gcapture.dll gdisplay.dll gvfg.dll gvfg_playback.dll) do (
     copy /Y "%SOURCE_BIN%\%%F" "%STAGE_DIR%\" >nul || goto fail
 )
 copy /Y "%FFMPEG_BIN%\*.dll" "%STAGE_DIR%\" >nul || goto fail

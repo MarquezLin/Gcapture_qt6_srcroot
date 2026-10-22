@@ -475,7 +475,7 @@ void MainWindow::updateRuntimeStatusUi()
 #endif
     if (ui->comboPixelFormat)
         ui->comboPixelFormat->setEnabled(!gvfgStreamActive);
-    // GVFG preview always uses gvfg_preview's native render path. The generic
+    // GVFG preview uses the Playback helper's native render path. The generic
     // DirectShow preview bit-depth selector is intentionally not applied there.
     if (ui->labelBitDepth)
         ui->labelBitDepth->setVisible(!gvfgSelected);

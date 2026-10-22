@@ -97,25 +97,23 @@ Customer 與 Internal 使用同一顆、包含診斷 exports 的 `gvfg.dll`；�
 ### 第一步：先建置 Standalone
 
 ```bat
-cd C:\Users\mark\Desktop\GcaptureSDK\GVFG_Standalone
+cd C:\Users\mark\Desktop\GcaptureSDK\GVFG_SDK\GVFG_Standalone\GVFG_SDK
 
-cmake -S . -B build_release ^
-  -DBUILD_GVFG_SAMPLES=ON ^
-  -DCMAKE_PREFIX_PATH=C:\Qt\6.10.2\msvc2022_64
+cmake -S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-cmake --build build_release --config Release --target gvfg_qt_preview
+cmake --build build_release --target gvfg gvfg_playback
 ```
 
 ### 第二步：configure srcroot
 
 ```bat
-cd C:\Users\mark\Desktop\GcaptureSDK\qt6\srcroot
+cd C:\Users\mark\Desktop\GcaptureSDK\GVFG_SDK\srcroot
 
 cmake -S . -B build_release -G Ninja ^
   -DCMAKE_BUILD_TYPE=Release ^
   -DCMAKE_PREFIX_PATH=C:\Qt\6.10.2\msvc2022_64 ^
-  -DGVFG_STANDALONE_ROOT=C:\Users\mark\Desktop\GcaptureSDK\GVFG_Standalone ^
-  -DGVFG_STANDALONE_BUILD_DIR=C:\Users\mark\Desktop\GcaptureSDK\GVFG_Standalone\build_release
+  -DGVFG_STANDALONE_ROOT=C:\Users\mark\Desktop\GcaptureSDK\GVFG_SDK\GVFG_Standalone\GVFG_SDK ^
+  -DGVFG_STANDALONE_BUILD_DIR=C:\Users\mark\Desktop\GcaptureSDK\GVFG_SDK\GVFG_Standalone\GVFG_SDK\build_release
 ```
 
 ### 第三步：建置 viewer
@@ -134,10 +132,10 @@ build_release/bin/qt6_viewer.exe
 
 ## 5. Standalone build 自動搜尋
 
-若 `GVFG_STANDALONE_BUILD_DIR` 指向 `GVFG_Standalone/build`，而不是直接指向某個 configuration，top-level CMake 會掃描其子目錄：
+若 `GVFG_STANDALONE_BUILD_DIR` 指向 `GVFG_Standalone/GVFG_SDK/build`，而不是直接指向某個 configuration，top-level CMake 會掃描其子目錄：
 
 1. 優先尋找同 compiler 且名稱以 `-Release` 或目前 `CMAKE_BUILD_TYPE` 結尾的目錄。
-2. 確認同時存在 `gvfg.dll/lib` 與 `gvfg_preview.dll/lib`。
+2. 確認同時存在 `gvfg.dll/lib` 與 `gvfg_playback.dll/lib`。
 3. 找不到偏好版本時，才 fallback 到第一個完整 build。
 
 為避免誤連 Debug 或舊 DLL，內部正式測試仍建議直接指定完整 build directory。
@@ -149,7 +147,7 @@ build_release/bin/qt6_viewer.exe
 - `gcapture.dll`
 - `gdisplay.dll`
 - `gvfg.dll`
-- `gvfg_preview.dll`
+- `gvfg_playback.dll`
 - `third_party/ffmpeg/bin` 內的 runtime DLL 與工具
 - `EDID_DECODE_EXE` 指定的 `edid-decode.exe`
 
@@ -176,15 +174,15 @@ third_party/edid-decode/vs/x64/Release/edid-decode.exe
 
 viewer source 與 Standalone header 版本不同。同步 enum 名稱後，重新 configure，確認 compiler include path 指向正確 `GVFG_STANDALONE_ROOT`。
 
-### 找不到 `gvfg.dll`／`gvfg_preview.dll`
+### 找不到 `gvfg.dll`／`gvfg_playback.dll`
 
 確認 `GVFG_STANDALONE_BUILD_DIR` 下有：
 
 ```text
 bin/gvfg.dll
-bin/gvfg_preview.dll
+bin/gvfg_playback.dll
 lib/gvfg.lib
-lib/gvfg_preview.lib
+lib/gvfg_playback.lib
 ```
 
 ### EDID 顯示 `edid-decode.exe not found`

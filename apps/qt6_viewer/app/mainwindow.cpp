@@ -133,6 +133,16 @@ MainWindow::MainWindow(QWidget *parent)
     connect(gvfg_, &GvfgSource::frameReady, this, &MainWindow::sigFrame, Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::eventOccurred, this, [](const QString &message)
             { MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message)); }, Qt::QueuedConnection);
+    connect(gvfg_, &GvfgSource::audioPlaybackWarning, this, [this](const QString &message)
+            {
+                MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message), true);
+                setAudioMonitoringStatus(QStringLiteral("Playback disabled"), message);
+                auto *warning = new QMessageBox(QMessageBox::Warning, QStringLiteral("Audio monitoring"),
+                    message, QMessageBox::Ok, this);
+                warning->setAttribute(Qt::WA_DeleteOnClose);
+                warning->setModal(false);
+                warning->show();
+            }, Qt::QueuedConnection);
     connect(gvfg_, &GvfgSource::errorOccurred, this, [this](const QString &message)
             {
                 MainWindow::postLog(QStringLiteral("[GVFG] %1").arg(message), true);
@@ -152,7 +162,6 @@ MainWindow::MainWindow(QWidget *parent)
             {
                 if (!connected && gvfg_ && gvfg_->isRunning())
                 {
-                    gvfg_->clearPreview();
                     clearPreviewSurface();
                 }
                 if (selectedBackend() == CaptureBackend::Gvfg && gvfg_ && !gvfg_->isRunning() && ui->btnStart)
@@ -607,10 +616,8 @@ void MainWindow::applyPreviewSettingsToActiveSession()
 #if defined(_WIN32) && defined(QT6_VIEWER_ENABLE_GVFG_BACKEND)
     if (gvfg_ && gvfg_->isRunning())
     {
-        const bool ok = gvfg_->setPreview(previewWindow_ ? previewWindow_->previewHwnd() : nullptr,
-                                          selectedPreviewBitDepthMode());
-        MainWindow::postLog(QStringLiteral("[Preview] GVFG requested %1%2")
-                                .arg(selectedPreviewBitDepthText())
+        const bool ok = gvfg_->setPreview(previewWindow_ ? previewWindow_->previewHwnd() : nullptr);
+        MainWindow::postLog(QStringLiteral("[Preview] GVFG preview window updated%1")
                                 .arg(ok ? QString() : QStringLiteral(" failed")),
                             !ok);
         updateRuntimeStatusUi();

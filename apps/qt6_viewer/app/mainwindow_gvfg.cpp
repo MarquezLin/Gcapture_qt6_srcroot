@@ -99,7 +99,7 @@ bool MainWindow::startGvfgCapture(void *previewHwnd)
     currentProfile_.fps_den = 0;
 
     const bool audioEnabled = !ui->checkAudioMonitoring || ui->checkAudioMonitoring->isChecked();
-    if (!gvfg_->start(previewHwnd, deviceIndex_, selectedPreviewBitDepthMode(),
+    if (!gvfg_->start(previewHwnd, deviceIndex_,
                       zeroCopyEnabled, audioEnabled))
     {
         gvfg_->close();

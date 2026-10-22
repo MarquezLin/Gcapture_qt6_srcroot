@@ -355,7 +355,7 @@ void GvfgSource::close()
     cacheSignalStatus({});
 }
 
-bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMode,
+bool GvfgSource::start(void *previewHwnd, int deviceIndex,
                        bool zeroCopyEnabled, bool audioEnabled)
 {
     stop();
@@ -368,7 +368,7 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         emit errorOccurred(QStringLiteral("GVFG start blocked: cannot refresh the input signal."));
         return false;
     }
-    if (!setPreview(previewHwnd, previewBitDepthMode))
+    if (!setPreview(previewHwnd))
         return false;
 
     if (!signalStatus().connected)
@@ -383,7 +383,7 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
     {
         emit errorOccurred(gvfgErrorMessage(
             "gvfg_set_channel_audio_enabled", st, handle_));
-        setPreview(nullptr, previewBitDepthMode);
+        setPreview(nullptr);
         return false;
     }
 
@@ -395,19 +395,17 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         {
             emit errorOccurred(gvfgErrorMessage(
                 "gvfg_get_channel_audio_format", st, handle_));
-            setPreview(nullptr, previewBitDepthMode);
+            setPreview(nullptr);
             return false;
         }
         if (audioFormat_.sample_rate == 0 || audioFormat_.channels == 0 ||
-            (audioFormat_.bits_per_sample != 8 &&
-             audioFormat_.bits_per_sample != 16 &&
-             audioFormat_.bits_per_sample != 32))
+            audioFormat_.bits_per_sample != 16)
         {
             emit errorOccurred(QStringLiteral("GVFG audio format is not supported by the WASAPI playback helper: %1 Hz, %2 ch, %3-bit")
                                    .arg(audioFormat_.sample_rate)
                                    .arg(audioFormat_.channels)
                                    .arg(audioFormat_.bits_per_sample));
-            setPreview(nullptr, previewBitDepthMode);
+            setPreview(nullptr);
             return false;
         }
     }
@@ -420,7 +418,7 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         if (!normalizeOsdSettings(settings, &placement, &error))
         {
             emit errorOccurred(error);
-            setPreview(nullptr, previewBitDepthMode);
+            setPreview(nullptr);
             return false;
         }
         // A setting saved without a known frame size may turn out not to fit.
@@ -430,7 +428,7 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
         if (st != GVFG_OK)
         {
             emit errorOccurred(gvfgErrorMessage("gvfg_set_channel_osd", st, handle_));
-            setPreview(nullptr, previewBitDepthMode);
+            setPreview(nullptr);
             return false;
         }
         osdSettings_ = std::move(settings);
@@ -440,10 +438,23 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
     if (st != GVFG_OK)
     {
         emit errorOccurred(gvfgErrorMessage("gvfg_start_channel", st, handle_));
-        setPreview(nullptr, previewBitDepthMode);
+        setPreview(nullptr);
         return false;
     }
 
+    gvfg_playback_config_t playbackConfig{};
+    gvfg_playback_default_config(&playbackConfig);
+    playbackConfig.mode = audioEnabled ? GVFG_PLAYBACK_AUDIO_VIDEO : GVFG_PLAYBACK_VIDEO_ONLY;
+    playbackConfig.audio_format = {audioFormat_.sample_rate, static_cast<uint16_t>(audioFormat_.channels),
+                                  static_cast<uint16_t>(audioFormat_.bits_per_sample)};
+    const auto playbackStatus = gvfg_playback_start(playback_, &playbackConfig);
+    if (playbackStatus != GVFG_PLAYBACK_OK)
+    {
+        emit errorOccurred(QStringLiteral("GVFG playback start failed: %1").arg(QString::fromUtf8(gvfg_playback_strerror(playbackStatus))));
+        gvfg_stop_channel(handle_, GVFG_CHANNEL_0);
+        return false;
+    }
+    gvfg_playback_set_volume(playback_, audioVolume_.load());
     running_ = true;
     audioEnabled_ = audioEnabled;
     latestVideoTimestampNs_.store(0, std::memory_order_release);
@@ -457,46 +468,23 @@ bool GvfgSource::start(void *previewHwnd, int deviceIndex, int previewBitDepthMo
     return true;
 }
 
-bool GvfgSource::setPreview(void *previewHwnd, int previewBitDepthMode)
+bool GvfgSource::setPreview(void *previewHwnd)
 {
-    if (!handle_)
-        return false;
-
-    Q_UNUSED(previewBitDepthMode);
-
-    if (!previewHwnd)
-    {
-        if (previewHandle_)
-        {
-            gvfg_preview_destroy(previewHandle_);
-            previewHandle_ = nullptr;
-        }
-        return true;
-    }
-
-    if (!previewHandle_)
-    {
-        const gvfg_preview_status_t st = gvfg_preview_create(&previewHandle_);
-        if (st != GVFG_PREVIEW_OK || !previewHandle_)
-        {
-            emit errorOccurred(QStringLiteral("gvfg_preview_create failed: %1").arg(QString::fromUtf8(gvfg_preview_strerror(st))));
-            previewHandle_ = nullptr;
-            return false;
-        }
-    }
-
-    const gvfg_preview_status_t st = gvfg_preview_attach_window(previewHandle_, previewHwnd);
-    if (st != GVFG_PREVIEW_OK)
-    {
-        emit errorOccurred(QStringLiteral("gvfg_preview_attach_window failed: %1").arg(QString::fromUtf8(gvfg_preview_strerror(st))));
-        return false;
-    }
-    return true;
+    if (!handle_) return false;
+    // Control calls run on the HWND thread; submissions use the same mutex.
+    std::lock_guard<std::mutex> lock(playbackMutex_);
+    if (!playback_ && gvfg_playback_create(&playback_) != GVFG_PLAYBACK_OK) return false;
+    const auto status = gvfg_playback_attach_window(playback_, previewHwnd);
+    if (status != GVFG_PLAYBACK_OK)
+        emit errorOccurred(QString::fromUtf8(gvfg_playback_strerror(status)));
+    return status == GVFG_PLAYBACK_OK;
 }
 
 void GvfgSource::setAudioVolume(float volume)
 {
     audioVolume_.store(std::clamp(volume, 0.0f, 2.0f), std::memory_order_release);
+    std::lock_guard<std::mutex> lock(playbackMutex_);
+    if (playback_) gvfg_playback_set_volume(playback_, audioVolume_.load());
 }
 
 void GvfgSource::stop()
@@ -510,16 +498,11 @@ void GvfgSource::stop()
     if (audioThread_.joinable())
         audioThread_.join();
     {
-        std::lock_guard<std::mutex> lock(audioPlaybackMutex_);
-        gvfg_audio_player_destroy(audioPlayer_);
-        audioPlayer_ = nullptr;
+        std::lock_guard<std::mutex> lock(playbackMutex_);
+        gvfg_playback_destroy(playback_);
+        playback_ = nullptr;
     }
     stopRecording();
-    if (previewHandle_)
-    {
-        gvfg_preview_destroy(previewHandle_);
-        previewHandle_ = nullptr;
-    }
     if (handle_)
         gvfg_stop_channel(handle_, GVFG_CHANNEL_0);
     audioEnabled_ = false;
@@ -534,6 +517,7 @@ void GvfgSource::stop()
 
 void GvfgSource::audioReadLoop()
 {
+    bool monitoringFailed = false;
     while (!stopRequested_.load(std::memory_order_acquire))
     {
         {
@@ -589,56 +573,30 @@ void GvfgSource::audioReadLoop()
         }
 #endif
 
-        QString playbackError;
-        bool playbackStarted = false;
+        // Continue capture and the recording queue after monitoring fails.
+        if (monitoringFailed) continue;
+        gvfg_playback_status_t playbackStatus;
         {
-            std::lock_guard<std::mutex> lock(audioPlaybackMutex_);
-            if (!audioPlayer_ && std::chrono::steady_clock::now() >= audioPlaybackRetry_)
-            {
-                gvfg_audio_player next = nullptr;
-                gvfg_audio_playback_status_t status = gvfg_audio_player_create(&next);
-                gvfg_audio_playback_format_t outputFormat{};
-                outputFormat.sample_rate = audioFormat_.sample_rate;
-                outputFormat.channels = audioFormat_.channels;
-                outputFormat.bits_per_sample = audioFormat_.bits_per_sample;
-                if (status == GVFG_AUDIO_PLAYBACK_OK)
-                    status = gvfg_audio_player_start(next, &outputFormat);
-                if (status == GVFG_AUDIO_PLAYBACK_OK)
-                {
-                    audioPlayer_ = next;
-                    gvfg_audio_player_set_volume(audioPlayer_, audioVolume_.load(std::memory_order_acquire));
-                    const uint64_t videoTimestampNs = latestVideoTimestampNs_.load(std::memory_order_acquire);
-                    if (videoTimestampNs != 0)
-                        gvfg_audio_player_update_video_timestamp(audioPlayer_, videoTimestampNs);
-                    playbackStarted = true;
-                }
-                else
-                {
-                    playbackError = QString::fromUtf8(gvfg_audio_player_strerror(status));
-                    gvfg_audio_player_destroy(next);
-                    audioPlaybackRetry_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-                }
-            }
-            if (audioPlayer_)
-            {
-                gvfg_audio_player_set_volume(audioPlayer_, audioVolume_.load(std::memory_order_acquire));
-                const auto status = gvfg_audio_player_write_timed(
-                    audioPlayer_, pcm.data(), static_cast<uint32_t>(pcm.size()), frame.timestamp_ns);
-                if (status != GVFG_AUDIO_PLAYBACK_OK && status != GVFG_AUDIO_PLAYBACK_EQUEUE_FULL)
-                {
-                    playbackError = QString::fromUtf8(gvfg_audio_player_strerror(status));
-                    gvfg_audio_player failed = audioPlayer_;
-                    audioPlayer_ = nullptr;
-                    gvfg_audio_player_destroy(failed);
-                    audioPlaybackRetry_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-                }
-            }
+            std::lock_guard<std::mutex> lock(playbackMutex_);
+            playbackStatus = gvfg_playback_submit_audio(playback_, pcm.data(),
+                static_cast<uint32_t>(pcm.size()), frame.timestamp_ns);
         }
-        if (playbackStarted)
-            emit eventOccurred(QStringLiteral("Audio playback started via GVFG WASAPI helper: %1 Hz, %2 ch, %3-bit PCM")
-                                   .arg(audioFormat_.sample_rate).arg(audioFormat_.channels).arg(audioFormat_.bits_per_sample));
-        if (!playbackError.isEmpty())
-            emit errorOccurred(QStringLiteral("GVFG audio helper unavailable: %1; retrying.").arg(playbackError));
+        if (playbackStatus == GVFG_PLAYBACK_EAUDIO)
+        {
+            monitoringFailed = true;
+            emit audioPlaybackWarning(QStringLiteral(
+                "Audio monitoring has been disabled because its output failed. "
+                "Video capture and any active recording continue. Stop and start capture to retry audio.\n%1")
+                .arg(QString::fromUtf8(gvfg_playback_strerror(playbackStatus))));
+            continue;
+        }
+        if (playbackStatus != GVFG_PLAYBACK_OK)
+        {
+            emit errorOccurred(QStringLiteral("GVFG audio playback stopped: %1").arg(QString::fromUtf8(gvfg_playback_strerror(playbackStatus))));
+            stopRequested_.store(true, std::memory_order_release);
+            QMetaObject::invokeMethod(this, [this] { stop(); }, Qt::QueuedConnection);
+            break;
+        }
     }
 }
 
@@ -715,10 +673,14 @@ bool GvfgSource::setVideoFormat(gvfg_pixel_format_t format)
     return true;
 }
 
-void GvfgSource::clearPreview()
+void GvfgSource::resetPlaybackTimeline()
 {
-    if (previewHandle_)
-        gvfg_preview_clear(previewHandle_);
+    std::lock_guard<std::mutex> lock(playbackMutex_);
+    if (playback_) {
+        const auto status = gvfg_playback_reset_timeline(playback_);
+        if (status != GVFG_PLAYBACK_OK)
+            emit errorOccurred(QStringLiteral("GVFG playback reset failed: %1").arg(QString::fromUtf8(gvfg_playback_strerror(status))));
+    }
 }
 
 void GvfgSource::cacheSignalStatus(const gvfg_signal_status_t &status)
@@ -765,30 +727,18 @@ void GvfgSource::pollEvents()
         {
             signalConnected_.store(false, std::memory_order_release);
             latestVideoTimestampNs_.store(0, std::memory_order_release);
-            {
-                std::lock_guard<std::mutex> lock(audioPlaybackMutex_);
-                if (audioPlayer_)
-                    gvfg_audio_player_reset_timeline(audioPlayer_);
-            }
+            resetPlaybackTimeline();
         }
         else if (eventType == GVFG_EVENT_VIDEO_FORMAT_CHANGED)
         {
             latestVideoTimestampNs_.store(0, std::memory_order_release);
-            {
-                std::lock_guard<std::mutex> lock(audioPlaybackMutex_);
-                if (audioPlayer_)
-                    gvfg_audio_player_reset_timeline(audioPlayer_);
-            }
+            resetPlaybackTimeline();
         }
         else if (eventType == GVFG_EVENT_VIDEO_INPUT_PLUGIN)
         {
             signalConnected_.store(true, std::memory_order_release);
             latestVideoTimestampNs_.store(0, std::memory_order_release);
-            {
-                std::lock_guard<std::mutex> lock(audioPlaybackMutex_);
-                if (audioPlayer_)
-                    gvfg_audio_player_reset_timeline(audioPlayer_);
-            }
+            resetPlaybackTimeline();
             signalCv_.notify_all();
         }
         eventType = GVFG_EVENT_UNKNOWN;
@@ -833,16 +783,16 @@ gvfg_status_t GvfgSource::writeRegister(uint32_t offset, uint32_t value) const
 gvfg_preview_info_t GvfgSource::previewInfo() const
 {
     gvfg_preview_info_t info{};
-    if (previewHandle_)
-        gvfg_preview_get_info(previewHandle_, &info);
+    std::lock_guard<std::mutex> lock(playbackMutex_);
+    if (playback_) gvfg_playback_get_preview_info(playback_, &info);
     return info;
 }
 
 gvfg_preview_stats_t GvfgSource::previewStats() const
 {
     gvfg_preview_stats_t stats{};
-    if (previewHandle_)
-        gvfg_preview_get_stats(previewHandle_, &stats);
+    std::lock_guard<std::mutex> lock(playbackMutex_);
+    if (playback_) gvfg_playback_get_preview_stats(playback_, &stats);
     return stats;
 }
 
@@ -973,9 +923,9 @@ void GvfgSource::readLoop()
                 }
             }
 
-            if (previewHandle_)
             {
-                gvfg_preview_frame_t previewFrame{};
+                gvfg_playback_video_frame_t playbackFrame{};
+                auto &previewFrame = playbackFrame.image;
                 previewFrame.data = frame.data;
                 previewFrame.data_size = frame.data_size;
                 previewFrame.width = frame.width;
@@ -984,7 +934,19 @@ void GvfgSource::readLoop()
                 previewFrame.bit_depth = frame.bit_depth;
                 previewFrame.row_bytes = frame.row_stride_bytes;
                 previewFrame.frame_id = frame.frame_id;
-                gvfg_preview_render_frame(previewHandle_, &previewFrame);
+                playbackFrame.timestamp_ns = frame.timestamp_ns;
+                gvfg_playback_status_t playbackStatus;
+                {
+                    std::lock_guard<std::mutex> lock(playbackMutex_);
+                    playbackStatus = gvfg_playback_submit_video(playback_, &playbackFrame);
+                }
+                if (playbackStatus != GVFG_PLAYBACK_OK)
+                {
+                    // Release below before queued GUI teardown joins the readers.
+                    emit errorOccurred(QStringLiteral("GVFG video playback stopped: %1").arg(QString::fromUtf8(gvfg_playback_strerror(playbackStatus))));
+                    stopRequested_.store(true, std::memory_order_release);
+                    QMetaObject::invokeMethod(this, [this] { stop(); }, Qt::QueuedConnection);
+                }
             }
 
             bool snapshotRequested = false;
@@ -1181,11 +1143,6 @@ void GvfgSource::readLoop()
                 }
             }
 #endif
-            {
-                std::lock_guard<std::mutex> lock(audioPlaybackMutex_);
-                if (audioPlayer_)
-                    gvfg_audio_player_update_video_timestamp(audioPlayer_, frame.timestamp_ns);
-            }
             continue;
         }
 

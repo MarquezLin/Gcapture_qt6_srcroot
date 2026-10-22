@@ -130,11 +130,8 @@ target_include_directories(qt6_viewer PRIVATE
 
 if (WIN32)
   target_link_libraries(qt6_viewer PRIVATE gvfg)
-  if (TARGET gvfg_preview)
-    target_link_libraries(qt6_viewer PRIVATE gvfg_preview)
-  endif()
-  if (TARGET gvfg_audio_playback)
-    target_link_libraries(qt6_viewer PRIVATE gvfg_audio_playback)
+  if (TARGET gvfg_playback)
+    target_link_libraries(qt6_viewer PRIVATE gvfg_playback)
   endif()
   target_link_libraries(qt6_viewer PRIVATE capture_ffmpeg_recorder)
 endif()
@@ -188,22 +185,18 @@ add_custom_command(TARGET qt6_viewer POST_BUILD
 
 # Copy GVFG SDK DLL next to qt6_viewer.exe
 if (WIN32)
+  # Refresh deployed DLLs even when an SDK rebuild leaves its import library unchanged.
+  set_property(TARGET qt6_viewer APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:gvfg>)
   add_custom_command(TARGET qt6_viewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       $<TARGET_FILE:gvfg>
       $<TARGET_FILE_DIR:qt6_viewer>
   )
-  if (TARGET gvfg_preview)
+  if (TARGET gvfg_playback)
+    set_property(TARGET qt6_viewer APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:gvfg_playback>)
     add_custom_command(TARGET qt6_viewer POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:gvfg_preview>
-        $<TARGET_FILE_DIR:qt6_viewer>
-    )
-  endif()
-  if (TARGET gvfg_audio_playback)
-    add_custom_command(TARGET qt6_viewer POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:gvfg_audio_playback>
+        $<TARGET_FILE:gvfg_playback>
         $<TARGET_FILE_DIR:qt6_viewer>
     )
   endif()

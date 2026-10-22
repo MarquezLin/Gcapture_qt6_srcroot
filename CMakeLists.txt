@@ -60,7 +60,9 @@ if (WIN32)
   set(_gvfg_build_dir "${GVFG_STANDALONE_BUILD_DIR}")
   if (_gvfg_build_dir AND
       (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg.dll" OR
-       NOT EXISTS "${_gvfg_build_dir}/lib/gvfg.lib"))
+       NOT EXISTS "${_gvfg_build_dir}/lib/gvfg.lib" OR
+       NOT EXISTS "${_gvfg_build_dir}/bin/gvfg_playback.dll" OR
+       NOT EXISTS "${_gvfg_build_dir}/lib/gvfg_playback.lib"))
     file(GLOB _gvfg_build_candidates LIST_DIRECTORIES true "${_gvfg_build_dir}/*")
 
     # Prefer a build produced by the same compiler and configuration as this
@@ -86,10 +88,8 @@ if (WIN32)
           _candidate_name MATCHES "${_gvfg_preferred_suffix}$" AND
           EXISTS "${_candidate}/bin/gvfg.dll" AND
           EXISTS "${_candidate}/lib/gvfg.lib" AND
-          EXISTS "${_candidate}/bin/gvfg_preview.dll" AND
-          EXISTS "${_candidate}/lib/gvfg_preview.lib" AND
-          EXISTS "${_candidate}/bin/gvfg_audio_playback.dll" AND
-          EXISTS "${_candidate}/lib/gvfg_audio_playback.lib")
+          EXISTS "${_candidate}/bin/gvfg_playback.dll" AND
+          EXISTS "${_candidate}/lib/gvfg_playback.lib")
         set(_gvfg_build_dir "${_candidate}")
         break()
       endif()
@@ -97,9 +97,13 @@ if (WIN32)
 
     foreach(_candidate IN LISTS _gvfg_build_candidates)
       if ((NOT EXISTS "${_gvfg_build_dir}/bin/gvfg.dll" OR
-           NOT EXISTS "${_gvfg_build_dir}/lib/gvfg.lib") AND
+           NOT EXISTS "${_gvfg_build_dir}/lib/gvfg.lib" OR
+           NOT EXISTS "${_gvfg_build_dir}/bin/gvfg_playback.dll" OR
+           NOT EXISTS "${_gvfg_build_dir}/lib/gvfg_playback.lib") AND
           EXISTS "${_candidate}/bin/gvfg.dll" AND
-          EXISTS "${_candidate}/lib/gvfg.lib")
+          EXISTS "${_candidate}/lib/gvfg.lib" AND
+          EXISTS "${_candidate}/bin/gvfg_playback.dll" AND
+          EXISTS "${_candidate}/lib/gvfg_playback.lib")
         set(_gvfg_build_dir "${_candidate}")
         break()
       endif()
@@ -112,11 +116,8 @@ if (WIN32)
   if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg.lib")
     message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg.dll and lib/gvfg.lib: ${_gvfg_build_dir}")
   endif()
-  if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg_preview.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg_preview.lib")
-    message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg_preview.dll and lib/gvfg_preview.lib: ${_gvfg_build_dir}")
-  endif()
-  if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg_audio_playback.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg_audio_playback.lib")
-    message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg_audio_playback.dll and lib/gvfg_audio_playback.lib: ${_gvfg_build_dir}")
+  if (NOT EXISTS "${_gvfg_build_dir}/bin/gvfg_playback.dll" OR NOT EXISTS "${_gvfg_build_dir}/lib/gvfg_playback.lib")
+    message(FATAL_ERROR "GVFG_STANDALONE_BUILD_DIR must contain bin/gvfg_playback.dll and lib/gvfg_playback.lib: ${_gvfg_build_dir}")
   endif()
   add_library(gvfg SHARED IMPORTED GLOBAL)
   set_target_properties(gvfg PROPERTIES
@@ -125,18 +126,11 @@ if (WIN32)
     INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
   )
 
-  add_library(gvfg_preview SHARED IMPORTED GLOBAL)
-  set_target_properties(gvfg_preview PROPERTIES
-    IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg_preview.dll"
-    IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg_preview.lib"
-    INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_preview/include;${GVFG_STANDALONE_ROOT}/sdk/gvfg/include"
-  )
-
-  add_library(gvfg_audio_playback SHARED IMPORTED GLOBAL)
-  set_target_properties(gvfg_audio_playback PROPERTIES
-    IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg_audio_playback.dll"
-    IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg_audio_playback.lib"
-    INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_audio_playback/include"
+  add_library(gvfg_playback SHARED IMPORTED GLOBAL)
+  set_target_properties(gvfg_playback PROPERTIES
+    IMPORTED_LOCATION "${_gvfg_build_dir}/bin/gvfg_playback.dll"
+    IMPORTED_IMPLIB "${_gvfg_build_dir}/lib/gvfg_playback.lib"
+    INTERFACE_INCLUDE_DIRECTORIES "${GVFG_STANDALONE_ROOT}/helpers/gvfg_audio_playback/include;${GVFG_STANDALONE_ROOT}/helpers/gvfg_playback/include;${GVFG_STANDALONE_ROOT}/helpers/gvfg_preview/include"
   )
 
   message(STATUS "Using external GVFG SDK: ${_gvfg_build_dir}")

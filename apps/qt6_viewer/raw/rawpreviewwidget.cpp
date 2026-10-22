@@ -1,6 +1,6 @@
 #include "rawpreviewwidget.h"
 
-#include "gvfg_preview.h"
+#include "gvfg_playback.h"
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -52,16 +52,16 @@ RawPreviewWidget::RawPreviewWidget(QWidget *parent) : QWidget(parent)
     d3dSurface_->setAutoFillBackground(false);
     d3dSurface_->hide();
 
-    gvfg_preview_handle handle = nullptr;
-    if (gvfg_preview_create(&handle) == GVFG_PREVIEW_OK &&
-        gvfg_preview_attach_window(handle, reinterpret_cast<void *>(d3dSurface_->winId())) == GVFG_PREVIEW_OK)
+    gvfg_playback handle = nullptr;
+    if (gvfg_playback_create(&handle) == GVFG_PLAYBACK_OK &&
+        gvfg_playback_attach_window(handle, reinterpret_cast<void *>(d3dSurface_->winId())) == GVFG_PLAYBACK_OK)
     {
         previewHandle_ = handle;
         d3dReady_ = true;
     }
     else if (handle)
     {
-        gvfg_preview_destroy(handle);
+        gvfg_playback_destroy(handle);
     }
 }
 
@@ -69,9 +69,8 @@ RawPreviewWidget::~RawPreviewWidget()
 {
     if (previewHandle_)
     {
-        auto handle = static_cast<gvfg_preview_handle>(previewHandle_);
-        gvfg_preview_shutdown(handle);
-        gvfg_preview_destroy(handle);
+        auto handle = static_cast<gvfg_playback>(previewHandle_);
+        gvfg_playback_destroy(handle);
     }
 }
 
@@ -145,15 +144,8 @@ void RawPreviewWidget::updateD3dPreview()
     // Size the HWND before the worker creates/resizes its swapchain for this
     // frame; otherwise the first present can use the child's default size.
     updateD3dSurfaceGeometry();
-    auto handle = static_cast<gvfg_preview_handle>(previewHandle_);
+    auto handle = static_cast<gvfg_playback>(previewHandle_);
     const int sourceBitDepth = nativeYbr422 ? dicomFrame_->bitsStored : 16;
-    if (gvfg_preview_wait_idle(handle, 1000) != GVFG_PREVIEW_OK ||
-        gvfg_preview_prepare(handle, preview_.width(), preview_.height(), sourceBitDepth) != GVFG_PREVIEW_OK)
-    {
-        d3dSurface_->hide();
-        return;
-    }
-
     gvfg_preview_frame_t frame{};
     frame.data = nativeYbr422
                      ? static_cast<const void *>(dicomFrame_->nativeYbrFull422FrameData())
@@ -173,7 +165,7 @@ void RawPreviewWidget::updateD3dPreview()
                           ? dicomFrame_->nativeYbrFull422RowBytes()
                           : preview_.bytesPerLine();
 
-    if (gvfg_preview_render_frame(handle, &frame) != GVFG_PREVIEW_OK)
+    if (gvfg_playback_present_image(handle, &frame) != GVFG_PLAYBACK_OK)
     {
         d3dSurface_->hide();
         return;
